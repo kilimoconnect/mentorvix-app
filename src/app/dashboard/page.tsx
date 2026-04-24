@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence, useMotionValue, useSpring, useInView } from "framer-motion";
 
-const EASE = EASE as [number, number, number, number];
+const EASE = [0.22, 1, 0.36, 1] as [number, number, number, number];
 import { createClient } from "@/lib/supabase/client";
 import {
   LayoutDashboard, FilePlus2, FolderOpen, BarChart3, Landmark,
