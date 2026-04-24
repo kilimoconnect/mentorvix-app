@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import {
   LayoutDashboard,
   FilePlus2,
@@ -109,8 +111,31 @@ const RECENT = [
 ];
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [userName, setUserName] = useState("...");
+  const [businessName, setBusinessName] = useState("...");
+  const [userInitial, setUserInitial] = useState("?");
   const score = 68;
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return;
+      const meta = user.user_metadata;
+      const name = meta?.full_name || user.email?.split("@")[0] || "User";
+      const biz = meta?.business_name || "Your Business";
+      setUserName(name);
+      setBusinessName(biz);
+      setUserInitial(name.charAt(0).toUpperCase());
+    });
+  }, []);
+
+  const handleSignOut = async () => {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.push("/login");
+  };
 
   const Sidebar = ({ mobile = false }: { mobile?: boolean }) => (
     <aside
@@ -159,7 +184,7 @@ export default function DashboardPage() {
             {label}
           </Link>
         ))}
-        <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-red-400 hover:bg-red-50 hover:text-red-500 transition-colors">
+        <button onClick={handleSignOut} className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-red-400 hover:bg-red-50 hover:text-red-500 transition-colors">
           <LogOut style={{ width: 18, height: 18 }} className="flex-shrink-0" />
           Sign out
         </button>
@@ -208,9 +233,9 @@ export default function DashboardPage() {
 
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold" style={{ background: "#0e7490" }}>
-              J
+              {userInitial}
             </div>
-            <span className="hidden sm:block text-sm font-medium text-slate-700">John Banda</span>
+            <span className="hidden sm:block text-sm font-medium text-slate-700">{userName}</span>
           </div>
         </header>
 
@@ -228,8 +253,8 @@ export default function DashboardPage() {
                 <div className="absolute top-0 right-0 w-48 h-48 rounded-full opacity-10" style={{ background: "white", transform: "translate(30%, -30%)" }} />
                 <div className="relative">
                   <p className="text-cyan-200 text-sm font-medium">Welcome back,</p>
-                  <h2 className="text-2xl font-bold mt-0.5">John Banda</h2>
-                  <p className="text-cyan-100 text-sm mt-1">Banda General Supplies · Zambia</p>
+                  <h2 className="text-2xl font-bold mt-0.5">{userName}</h2>
+                  <p className="text-cyan-100 text-sm mt-1">{businessName}</p>
                   <div className="mt-4">
                     <Link
                       href="/dashboard/apply"

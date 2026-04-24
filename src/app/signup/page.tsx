@@ -5,18 +5,12 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Mail, Lock, User, Building2, ArrowRight, ShieldCheck, ChevronDown } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 
 const INDUSTRIES = [
-  "Retail & Trade",
-  "Agriculture & Farming",
-  "Construction",
-  "Transport & Logistics",
-  "Food & Hospitality",
-  "Healthcare",
-  "Manufacturing",
-  "Technology",
-  "Education",
-  "Other",
+  "Retail & Trade", "Agriculture & Farming", "Construction",
+  "Transport & Logistics", "Food & Hospitality", "Healthcare",
+  "Manufacturing", "Technology", "Education", "Other",
 ];
 
 const STAGES = [
@@ -30,15 +24,13 @@ export default function SignupPage() {
   const [step, setStep] = useState(1);
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
   const [form, setForm] = useState({
-    name: "",
-    email: "",
-    password: "",
-    businessName: "",
-    industry: "",
-    stage: "",
-    country: "",
+    name: "", email: "", password: "",
+    businessName: "", industry: "", stage: "", country: "",
   });
+
+  const update = (field: string, value: string) => setForm({ ...form, [field]: value });
 
   const handleStep1 = (e: React.FormEvent) => {
     e.preventDefault();
@@ -48,11 +40,54 @@ export default function SignupPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    await new Promise((r) => setTimeout(r, 1400));
+    setError("");
+
+    const supabase = createClient();
+
+    // Sign up — email confirmation disabled in Supabase dashboard
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email: form.email,
+      password: form.password,
+      options: {
+        data: {
+          full_name: form.name,
+          business_name: form.businessName,
+          industry: form.industry,
+          business_stage: form.stage,
+          country: form.country,
+        },
+      },
+    });
+
+    if (signUpError) {
+      setError(signUpError.message);
+      setLoading(false);
+      return;
+    }
+
+    // Insert profile row
+    if (data.user) {
+      await supabase.from("profiles").upsert({
+        id: data.user.id,
+        full_name: form.name,
+        business_name: form.businessName,
+        industry: form.industry,
+        business_stage: form.stage,
+        country: form.country,
+      });
+    }
+
     router.push("/dashboard");
+    router.refresh();
   };
 
-  const update = (field: string, value: string) => setForm({ ...form, [field]: value });
+  const handleGoogle = async () => {
+    const supabase = createClient();
+    await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: `${window.location.origin}/dashboard` },
+    });
+  };
 
   return (
     <div className="min-h-screen flex">
@@ -65,16 +100,12 @@ export default function SignupPage() {
 
         <div className="text-white space-y-8">
           <div>
-            <h2 className="text-4xl font-bold leading-tight">
-              Start Your <br />
-              Funding Journey.
-            </h2>
+            <h2 className="text-4xl font-bold leading-tight">Start Your <br />Funding Journey.</h2>
             <p className="text-cyan-100 mt-3 max-w-sm">
               Join thousands of business owners who got funded with Mentorvix.
             </p>
           </div>
 
-          {/* Step indicator */}
           <div className="space-y-4">
             {[
               { n: 1, label: "Create your account" },
@@ -95,10 +126,7 @@ export default function SignupPage() {
                     </svg>
                   ) : n}
                 </div>
-                <span
-                  className="text-sm font-medium"
-                  style={{ color: step >= n ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.5)" }}
-                >
+                <span className="text-sm font-medium" style={{ color: step >= n ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.5)" }}>
                   {label}
                 </span>
               </div>
@@ -122,15 +150,15 @@ export default function SignupPage() {
           {step === 1 && (
             <>
               <div className="mb-8">
-                <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: "#0e7490" }}>
-                  Step 1 of 2
-                </p>
+                <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: "#0e7490" }}>Step 1 of 2</p>
                 <h1 className="text-2xl font-bold text-slate-900">Create your account</h1>
                 <p className="text-slate-500 mt-1 text-sm">Free forever — no credit card required</p>
               </div>
 
-              {/* Google */}
-              <button className="w-full flex items-center justify-center gap-3 border border-slate-200 rounded-xl py-3 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors mb-6">
+              <button
+                onClick={handleGoogle}
+                className="w-full flex items-center justify-center gap-3 border border-slate-200 rounded-xl py-3 px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors mb-6"
+              >
                 <svg className="w-5 h-5" viewBox="0 0 24 24">
                   <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
                   <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
@@ -151,14 +179,9 @@ export default function SignupPage() {
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Full name</label>
                   <div className="relative">
                     <User className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input
-                      type="text"
-                      required
-                      value={form.name}
-                      onChange={(e) => update("name", e.target.value)}
+                    <input type="text" required value={form.name} onChange={(e) => update("name", e.target.value)}
                       placeholder="John Banda"
-                      className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500 transition-colors placeholder:text-slate-300"
-                    />
+                      className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500 transition-colors placeholder:text-slate-300" />
                   </div>
                 </div>
 
@@ -166,14 +189,9 @@ export default function SignupPage() {
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Email address</label>
                   <div className="relative">
                     <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input
-                      type="email"
-                      required
-                      value={form.email}
-                      onChange={(e) => update("email", e.target.value)}
+                    <input type="email" required value={form.email} onChange={(e) => update("email", e.target.value)}
                       placeholder="you@business.com"
-                      className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500 transition-colors placeholder:text-slate-300"
-                    />
+                      className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500 transition-colors placeholder:text-slate-300" />
                   </div>
                 </div>
 
@@ -181,30 +199,19 @@ export default function SignupPage() {
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Password</label>
                   <div className="relative">
                     <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input
-                      type={showPassword ? "text" : "password"}
-                      required
-                      minLength={8}
-                      value={form.password}
-                      onChange={(e) => update("password", e.target.value)}
+                    <input type={showPassword ? "text" : "password"} required minLength={8}
+                      value={form.password} onChange={(e) => update("password", e.target.value)}
                       placeholder="Min. 8 characters"
-                      className="w-full pl-10 pr-11 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500 transition-colors placeholder:text-slate-300"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                    >
+                      className="w-full pl-10 pr-11 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500 transition-colors placeholder:text-slate-300" />
+                    <button type="button" onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
                       {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
                 </div>
 
-                <button
-                  type="submit"
-                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold text-white transition-all mt-2"
-                  style={{ background: "#0e7490" }}
-                >
+                <button type="submit" className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold text-white mt-2"
+                  style={{ background: "#0e7490" }}>
                   Continue <ArrowRight className="w-4 h-4" />
                 </button>
               </form>
@@ -214,49 +221,41 @@ export default function SignupPage() {
           {step === 2 && (
             <>
               <div className="mb-8">
-                <button
-                  onClick={() => setStep(1)}
-                  className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 mb-4 transition-colors"
-                >
+                <button onClick={() => setStep(1)} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 mb-4 transition-colors">
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                   </svg>
                   Back
                 </button>
-                <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: "#0e7490" }}>
-                  Step 2 of 2
-                </p>
+                <p className="text-xs font-semibold uppercase tracking-widest mb-2" style={{ color: "#0e7490" }}>Step 2 of 2</p>
                 <h1 className="text-2xl font-bold text-slate-900">About your business</h1>
                 <p className="text-slate-500 mt-1 text-sm">This helps us find the right funding for you</p>
               </div>
+
+              {error && (
+                <div className="mb-4 px-4 py-3 rounded-xl bg-red-50 border border-red-100 text-sm text-red-600">
+                  {error}
+                </div>
+              )}
 
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Business name</label>
                   <div className="relative">
                     <Building2 className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                    <input
-                      type="text"
-                      required
-                      value={form.businessName}
-                      onChange={(e) => update("businessName", e.target.value)}
+                    <input type="text" required value={form.businessName} onChange={(e) => update("businessName", e.target.value)}
                       placeholder="Your business name"
-                      className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500 transition-colors placeholder:text-slate-300"
-                    />
+                      className="w-full pl-10 pr-4 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500 transition-colors placeholder:text-slate-300" />
                   </div>
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Country</label>
                   <div className="relative">
-                    <select
-                      required
-                      value={form.country}
-                      onChange={(e) => update("country", e.target.value)}
-                      className="w-full pl-4 pr-10 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500 transition-colors appearance-none bg-white text-slate-700"
-                    >
+                    <select required value={form.country} onChange={(e) => update("country", e.target.value)}
+                      className="w-full pl-4 pr-10 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500 transition-colors appearance-none bg-white text-slate-700">
                       <option value="">Select your country</option>
-                      {["Zambia", "Zimbabwe", "Kenya", "South Africa", "Nigeria", "Ghana", "Tanzania", "Uganda", "Rwanda", "Other"].map((c) => (
+                      {["Zambia","Zimbabwe","Kenya","South Africa","Nigeria","Ghana","Tanzania","Uganda","Rwanda","Other"].map((c) => (
                         <option key={c} value={c}>{c}</option>
                       ))}
                     </select>
@@ -267,16 +266,10 @@ export default function SignupPage() {
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">Industry</label>
                   <div className="relative">
-                    <select
-                      required
-                      value={form.industry}
-                      onChange={(e) => update("industry", e.target.value)}
-                      className="w-full pl-4 pr-10 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500 transition-colors appearance-none bg-white text-slate-700"
-                    >
+                    <select required value={form.industry} onChange={(e) => update("industry", e.target.value)}
+                      className="w-full pl-4 pr-10 py-3 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500/30 focus:border-cyan-500 transition-colors appearance-none bg-white text-slate-700">
                       <option value="">Select your industry</option>
-                      {INDUSTRIES.map((i) => (
-                        <option key={i} value={i}>{i}</option>
-                      ))}
+                      {INDUSTRIES.map((i) => (<option key={i} value={i}>{i}</option>))}
                     </select>
                     <ChevronDown className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
                   </div>
@@ -286,44 +279,25 @@ export default function SignupPage() {
                   <label className="block text-sm font-medium text-slate-700 mb-2">Where is your business right now?</label>
                   <div className="space-y-2">
                     {STAGES.map(({ value, label }) => (
-                      <label
-                        key={value}
-                        className="flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors"
-                        style={{
-                          borderColor: form.stage === value ? "#0e7490" : "#e2e8f0",
-                          background: form.stage === value ? "#f0f9ff" : "white",
-                        }}
-                      >
-                        <input
-                          type="radio"
-                          name="stage"
-                          value={value}
-                          checked={form.stage === value}
-                          onChange={(e) => update("stage", e.target.value)}
-                          className="accent-cyan-600"
-                        />
+                      <label key={value} className="flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors"
+                        style={{ borderColor: form.stage === value ? "#0e7490" : "#e2e8f0", background: form.stage === value ? "#f0f9ff" : "white" }}>
+                        <input type="radio" name="stage" value={value} checked={form.stage === value}
+                          onChange={(e) => update("stage", e.target.value)} className="accent-cyan-600" />
                         <span className="text-sm text-slate-700">{label}</span>
                       </label>
                     ))}
                   </div>
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={loading || !form.stage}
+                <button type="submit" disabled={loading || !form.stage}
                   className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold text-white transition-all mt-2"
-                  style={{ background: loading || !form.stage ? "#94a3b8" : "#0e7490" }}
-                >
+                  style={{ background: loading || !form.stage ? "#94a3b8" : "#0e7490" }}>
                   {loading ? (
                     <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                     </svg>
-                  ) : (
-                    <>
-                      Create My Account <ArrowRight className="w-4 h-4" />
-                    </>
-                  )}
+                  ) : (<>Create My Account <ArrowRight className="w-4 h-4" /></>)}
                 </button>
 
                 <p className="text-center text-xs text-slate-400 pt-1">
@@ -337,9 +311,7 @@ export default function SignupPage() {
 
           <p className="text-center text-sm text-slate-500 mt-6">
             Already have an account?{" "}
-            <Link href="/login" className="font-semibold" style={{ color: "#0e7490" }}>
-              Sign in
-            </Link>
+            <Link href="/login" className="font-semibold" style={{ color: "#0e7490" }}>Sign in</Link>
           </p>
         </div>
       </div>
