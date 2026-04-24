@@ -9,9 +9,9 @@ import { createClient } from "@/lib/supabase/client";
 import {
   LayoutDashboard, FilePlus2, FolderOpen, BarChart3, Landmark,
   Settings, CreditCard, HelpCircle, Bell, ChevronRight,
-  TrendingUp, TrendingDown, ArrowUpRight, FileText, Upload, Zap,
+  TrendingUp, TrendingDown, ArrowUpRight, FileText, Zap,
   Menu, X, LogOut, Sparkles, Lock, ArrowRight, Shield, Users,
-  Target, CheckCircle2, Clock, Info, ChevronUp,
+  Target, CheckCircle2, Clock, Info, ChevronUp, ClipboardList,
 } from "lucide-react";
 
 const EASE = [0.22, 1, 0.36, 1] as [number, number, number, number];
@@ -41,19 +41,19 @@ const SCORE_BREAKDOWN = [
 
 /* ─── pipeline ─── */
 const PIPELINE = [
-  { label: "Profile",    sub: "Complete",         status: "done"    },
-  { label: "Documents",  sub: "Awaiting upload",  status: "pending" },
-  { label: "Financials", sub: "Not started",      status: "pending" },
-  { label: "Lender Match", sub: "Locked",         status: "locked"  },
-  { label: "Submitted",  sub: "Locked",           status: "locked"  },
+  { label: "Profile",      sub: "Complete",           status: "done"    },
+  { label: "Interview",    sub: "Awaiting answers",   status: "pending" },
+  { label: "Financials",   sub: "Not started",        status: "pending" },
+  { label: "Lender Match", sub: "Locked",             status: "locked"  },
+  { label: "Submitted",    sub: "Locked",             status: "locked"  },
 ];
 
 /* ─── quick actions ─── */
 const QUICK_ACTIONS = [
-  { icon: FilePlus2, label: "Apply Now",          desc: "AI-guided professional loan package",         color: "#0e7490", bg: "#f0f9ff", href: "/dashboard/apply",     badge: "Popular" },
-  { icon: BarChart3, label: "Generate Forecast",  desc: "Lender-ready 3-year financial projections",   color: "#7c3aed", bg: "#faf5ff", href: "/dashboard/models",    badge: null      },
-  { icon: Upload,    label: "Upload Securely",    desc: "Strengthen approval chances with documents",  color: "#0f766e", bg: "#f0fdf9", href: "/dashboard/documents", badge: null      },
-  { icon: Landmark,  label: "Compare Offers",     desc: "Rates, terms and your personal fit score",    color: "#b45309", bg: "#fffbeb", href: "/dashboard/loans",     badge: null      },
+  { icon: FilePlus2,      label: "Apply Now",            desc: "AI-guided professional loan package",       color: "#0e7490", bg: "#f0f9ff", href: "/dashboard/apply",         badge: "Popular" },
+  { icon: ClipboardList,  label: "Answer Questions",      desc: "Complete your financial interview in 3 min", color: "#7c3aed", bg: "#faf5ff", href: "/dashboard/interview",     badge: null      },
+  { icon: BarChart3,      label: "Generate Forecast",     desc: "Lender-ready 3-year financial projections",  color: "#0f766e", bg: "#f0fdf9", href: "/dashboard/models",        badge: null      },
+  { icon: Landmark,       label: "Compare Offers",        desc: "Rates, terms and your personal fit score",   color: "#b45309", bg: "#fffbeb", href: "/dashboard/loans",         badge: null      },
 ];
 
 /* ─── snapshot metrics ─── */
@@ -66,14 +66,14 @@ const SNAPSHOT = [
 
 /* ─── ranked insights ─── */
 const INSIGHTS = [
-  { rank: "Highest Impact", icon: Upload,     color: "#f59e0b", bg: "#fffbeb", text: "Upload 6 months of bank statements to boost confidence score",  action: "+12 pts" },
-  { rank: "Medium Impact",  icon: TrendingUp, color: "#0e7490", bg: "#f0f9ff", text: "Reducing monthly debt by $500 may unlock 30% higher eligibility", action: "+6 pts"  },
-  { rank: "Opportunity",    icon: Landmark,   color: "#7c3aed", bg: "#faf5ff", text: "Equipment finance may fit your profile better than working capital", action: "Explore" },
+  { rank: "Highest Impact", icon: ClipboardList, color: "#f59e0b", bg: "#fffbeb", text: "Complete your financial interview to confirm your funding range and unlock lender matching",  action: "+12 pts" },
+  { rank: "Medium Impact",  icon: TrendingUp,    color: "#0e7490", bg: "#f0f9ff", text: "Reducing monthly debt by $500 may unlock 30% higher eligibility",                              action: "+6 pts"  },
+  { rank: "Opportunity",    icon: Landmark,      color: "#7c3aed", bg: "#faf5ff", text: "Equipment finance may fit your profile better than working capital",                             action: "Explore" },
 ];
 
 /* ─── projects ─── */
 const RECENT = [
-  { name: "Working Capital Loan Pack", date: "Apr 22, 2026", progress: 72, status: "Awaiting Documents", sc: "#f59e0b", sb: "#fffbeb", missing: "Bank statement · ID copy" },
+  { name: "Working Capital Loan Pack", date: "Apr 22, 2026", progress: 72, status: "Awaiting Documents", sc: "#f59e0b", sb: "#fffbeb", missing: "Financial interview · Business ID" },
   { name: "Cash Flow Projection Q2",   date: "Apr 18, 2026", progress: 100, status: "Completed",         sc: "#059669", sb: "#f0fdf4", missing: "" },
 ];
 
@@ -390,7 +390,7 @@ export default function DashboardPage() {
                 <div className="mt-3 pt-3 border-t border-slate-100 flex items-center gap-2">
                   <Info className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
                   <p className="text-xs text-slate-500">
-                    <span className="font-semibold text-amber-500">Data confidence: Medium</span> — upload statements to improve accuracy
+                    <span className="font-semibold text-amber-500">Data confidence: Medium</span> — answer questions or add records to improve
                   </p>
                 </div>
               </motion.div>
@@ -406,13 +406,13 @@ export default function DashboardPage() {
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold uppercase tracking-widest mb-0.5" style={{ color:"#0e7490" }}>Next Best Action</p>
-                <p className="text-sm font-medium text-slate-700">Upload 6 months of bank statements to raise your readiness score and unlock lender matches.</p>
+                <p className="text-sm font-medium text-slate-700">Answer 15 quick questions to confirm your funding range and generate your full readiness report — no documents needed.</p>
               </div>
               <motion.div whileHover={{ scale:1.03 }} whileTap={{ scale:0.97 }} className="flex-shrink-0">
-                <Link href="/dashboard/documents"
+                <Link href="/dashboard/interview"
                   className="inline-flex items-center gap-1.5 text-xs font-bold px-4 py-2 rounded-xl text-white"
                   style={{ background:"#0e7490" }}>
-                  Upload Securely <ArrowRight className="w-3.5 h-3.5" />
+                  Start Free <ArrowRight className="w-3.5 h-3.5" />
                 </Link>
               </motion.div>
             </motion.div>
@@ -554,7 +554,7 @@ export default function DashboardPage() {
                     </motion.div>
                   ))}
                 </div>
-                <p className="text-xs text-slate-400 mt-3 text-center">Upload bank statements for accurate figures</p>
+                <p className="text-xs text-slate-400 mt-3 text-center">Complete your interview or add records later to verify these figures</p>
               </motion.section>
 
               {/* AI Funding Advisor — ranked */}
