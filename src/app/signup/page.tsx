@@ -5,6 +5,8 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
+
+const EASE = EASE as [number, number, number, number];
 import { Eye, EyeOff, Mail, Lock, User, Building2, ArrowRight, ShieldCheck, ChevronDown, Check } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
@@ -27,13 +29,13 @@ const COUNTRIES = [
 
 const fadeUp = {
   hidden: { opacity: 0, y: 24 },
-  show: (i = 0) => ({ opacity: 1, y: 0, transition: { delay: i * 0.07, duration: 0.45, ease: [0.22, 1, 0.36, 1] } }),
+  show: (i = 0) => ({ opacity: 1, y: 0, transition: { delay: i * 0.07, duration: 0.45, ease: EASE } }),
 };
 
 const slideLeft = {
   hidden: { opacity: 0, x: 40 },
-  show: { opacity: 1, x: 0, transition: { duration: 0.5, ease: [0.22, 1, 0.36, 1] } },
-  exit: { opacity: 0, x: -40, transition: { duration: 0.3, ease: [0.22, 1, 0.36, 1] } },
+  show: { opacity: 1, x: 0, transition: { duration: 0.5, ease: EASE } },
+  exit: { opacity: 0, x: -40, transition: { duration: 0.3, ease: EASE } },
 };
 
 export default function SignupPage() {
@@ -344,7 +346,7 @@ export default function SignupPage() {
                   style={{ background: "white" }}
                   initial={{ width: "0%" }}
                   animate={{ width: step >= n ? "100%" : "0%" }}
-                  transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+                  transition={{ duration: 0.5, ease: EASE }}
                 />
               </motion.div>
             ))}
