@@ -61,7 +61,7 @@ export default function SignupPage() {
         className="hidden lg:flex lg:w-1/2 flex-col justify-between p-12"
         style={{ background: "linear-gradient(145deg, #0c4a6e 0%, #0e7490 60%, #0891b2 100%)" }}
       >
-        <Image src="/logo.png" alt="Mentorvix" width={180} height={60} priority style={{ height: "auto" }} />
+        <Image src="/logo.png" alt="Mentorvix" width={180} height={60} priority style={{ height: "auto", filter: "brightness(0) invert(1)" }} />
 
         <div className="text-white space-y-8">
           <div>
