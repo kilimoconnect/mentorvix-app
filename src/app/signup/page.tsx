@@ -11,9 +11,53 @@ import { Eye, EyeOff, Mail, Lock, User, Building2, ArrowRight, ShieldCheck, Chev
 import { createClient } from "@/lib/supabase/client";
 
 const INDUSTRIES = [
-  "Retail & Trade", "Agriculture & Farming", "Construction",
-  "Transport & Logistics", "Food & Hospitality", "Healthcare",
-  "Manufacturing", "Technology", "Education", "Other",
+  // Agriculture & Food
+  "Agriculture & Farming", "Fisheries & Aquaculture", "Forestry & Logging",
+  "Food Processing & Manufacturing", "Food & Beverage Retail",
+  // Construction & Real Estate
+  "Construction & Building", "Real Estate & Property", "Architecture & Engineering",
+  "Interior Design & Renovation", "Plumbing & Electrical",
+  // Manufacturing & Industry
+  "Manufacturing — General", "Textile & Garments", "Furniture & Woodwork",
+  "Metal Fabrication & Welding", "Plastics & Packaging", "Chemical Manufacturing",
+  "Printing & Publishing",
+  // Trade & Retail
+  "Retail & General Trade", "Wholesale & Distribution", "Import & Export",
+  "Auto Parts & Accessories", "Hardware & Building Materials",
+  "Pharmacy & Medical Supplies",
+  // Transport & Logistics
+  "Transport & Logistics", "Trucking & Freight", "Courier & Delivery",
+  "Taxi & Ride Services", "Shipping & Clearing",
+  // Technology & Digital
+  "Software & App Development", "IT Services & Support", "E-commerce & Online Retail",
+  "Digital Marketing & Media", "Telecoms & Internet", "Cybersecurity",
+  "Artificial Intelligence", "Fintech & Payments",
+  // Finance & Professional Services
+  "Accounting & Bookkeeping", "Legal Services", "Financial Advisory",
+  "Insurance", "Microfinance & Lending", "Consulting & Strategy",
+  "Human Resources & Recruitment",
+  // Health & Social
+  "Healthcare & Clinics", "Pharmacy", "Mental Health & Wellness",
+  "Elderly & Disability Care", "Veterinary Services",
+  // Education & Training
+  "Education & Schools", "Training & Vocational Skills", "Early Childhood Care",
+  "Online Learning & Tutoring", "Sports Coaching",
+  // Hospitality & Tourism
+  "Hotels & Accommodation", "Restaurants & Catering", "Tourism & Travel",
+  "Events & Entertainment", "Bars & Nightlife",
+  // Creative & Media
+  "Film & Video Production", "Music & Recording", "Photography",
+  "Graphic Design & Branding", "Fashion & Clothing",
+  "Arts & Crafts", "Advertising & PR",
+  // Energy & Environment
+  "Solar & Renewable Energy", "Oil & Gas", "Mining & Quarrying",
+  "Waste Management & Recycling", "Water & Sanitation",
+  // Personal & Community Services
+  "Hair & Beauty Salon", "Laundry & Dry Cleaning", "Cleaning Services",
+  "Security Services", "Religious & Community Organisations",
+  "NGO & Non-profit", "Funeral Services",
+  // Other
+  "Other",
 ];
 
 const STAGES = [
