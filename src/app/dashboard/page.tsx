@@ -268,7 +268,7 @@ export default function DashboardPage() {
               {/* Funding range — 3 cols */}
               <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.5, ease: EASE }}
-                className="lg:col-span-3 rounded-2xl p-6 text-white relative overflow-hidden"
+                className="lg:col-span-3 rounded-2xl p-5 sm:p-6 text-white relative overflow-hidden"
                 style={{ background: "linear-gradient(135deg,#042f3d 0%,#0e7490 55%,#0891b2 100%)" }}>
                 <motion.div animate={{ scale: [1,1.15,1], opacity: [0.1,0.2,0.1] }}
                   transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
@@ -281,7 +281,7 @@ export default function DashboardPage() {
 
                   <div className="mt-5 mb-4">
                     <p className="text-cyan-200 text-xs font-medium mb-1">Estimated eligible funding range</p>
-                    <p className="text-4xl font-bold tracking-tight">
+                    <p className="text-3xl sm:text-4xl font-bold tracking-tight">
                       $<AnimatedNumber target={12} />K – $<AnimatedNumber target={25} />K
                     </p>
                   </div>
@@ -399,16 +399,18 @@ export default function DashboardPage() {
             {/* Next best action */}
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2, duration: 0.45, ease: EASE }}
-              className="rounded-2xl border border-slate-200 bg-white shadow-sm flex items-center gap-4 px-5 py-4"
+              className="rounded-2xl border border-slate-200 bg-white shadow-sm flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 px-5 py-4"
               style={{ borderLeftWidth: 4, borderLeftColor: "#0e7490" }}>
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background:"#f0f9ff" }}>
-                <Target style={{ color:"#0e7490", width:18, height:18 }} />
+              <div className="flex items-start sm:items-center gap-3 flex-1 min-w-0">
+                <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background:"#f0f9ff" }}>
+                  <Target style={{ color:"#0e7490", width:18, height:18 }} />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold uppercase tracking-widest mb-0.5" style={{ color:"#0e7490" }}>Next Best Action</p>
+                  <p className="text-sm font-medium text-slate-700">Answer 15 quick questions to confirm your funding range and generate your full readiness report — no documents needed.</p>
+                </div>
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-widest mb-0.5" style={{ color:"#0e7490" }}>Next Best Action</p>
-                <p className="text-sm font-medium text-slate-700">Answer 15 quick questions to confirm your funding range and generate your full readiness report — no documents needed.</p>
-              </div>
-              <motion.div whileHover={{ scale:1.03 }} whileTap={{ scale:0.97 }} className="flex-shrink-0">
+              <motion.div whileHover={{ scale:1.03 }} whileTap={{ scale:0.97 }} className="flex-shrink-0 self-start sm:self-auto">
                 <Link href="/dashboard/interview"
                   className="inline-flex items-center gap-1.5 text-xs font-bold px-4 py-2 rounded-xl text-white"
                   style={{ background:"#0e7490" }}>
@@ -439,7 +441,8 @@ export default function DashboardPage() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-5 gap-2">
+              <div className="overflow-x-auto -mx-2 px-2">
+              <div className="grid grid-cols-5 gap-2 min-w-[400px]">
                 {PIPELINE.map(({ label, sub, status }, i) => (
                   <div key={label} className="flex flex-col items-center text-center">
                     {/* Node + connector */}
@@ -488,18 +491,19 @@ export default function DashboardPage() {
                   </div>
                 ))}
               </div>
+              </div>
             </motion.section>
 
             {/* Quick Actions */}
             <section>
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Quick Actions</p>
-              <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                 {QUICK_ACTIONS.map(({ icon:Icon, label, desc, color, bg, href, badge }, i) => (
                   <motion.div key={href}
                     initial={{ opacity:0, y:16 }} animate={{ opacity:1, y:0 }}
                     transition={{ delay: 0.35 + i*0.07, duration:0.45, ease:EASE }}
                     whileHover={{ y:-3, boxShadow:"0 8px 28px rgba(0,0,0,0.07)" }}>
-                    <Link href={href} className="block bg-white rounded-2xl p-5 border border-slate-100 h-full group">
+                    <Link href={href} className="block bg-white rounded-2xl p-4 sm:p-5 border border-slate-100 h-full group">
                       <div className="flex items-start justify-between mb-3">
                         <motion.div whileHover={{ scale:1.1, rotate:4 }} transition={{ type:"spring" as const, stiffness:400 }}
                           className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background:bg }}>
@@ -542,7 +546,7 @@ export default function DashboardPage() {
                     <motion.div key={label} whileHover={{ scale:1.02 }}
                       className="rounded-xl p-3 border border-slate-100">
                       <p className="text-xs text-slate-400 mb-2 leading-tight">{label}</p>
-                      <p className="text-xl font-bold text-slate-900">{value}</p>
+                      <p className="text-lg sm:text-xl font-bold text-slate-900">{value}</p>
                       {trend !== 0 && Icon && (
                         <div className="flex items-center gap-1 mt-1">
                           <Icon className="w-3.5 h-3.5" style={{ color: trend > 0 ? "#059669" : "#f59e0b" }} />
@@ -601,14 +605,14 @@ export default function DashboardPage() {
                     initial={{ opacity:0, y:8 }} animate={{ opacity:1, y:0 }}
                     transition={{ delay: 0.55 + i*0.08 }}
                     whileHover={{ x:2 }}
-                    className="flex items-center gap-4 p-4 rounded-xl border border-slate-100 hover:border-slate-200 cursor-pointer group transition-all">
+                    className="flex items-center gap-3 p-3 sm:p-4 rounded-xl border border-slate-100 hover:border-slate-200 cursor-pointer group transition-all">
                     <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background:"#f0f9ff" }}>
                       <FileText className="w-4 h-4" style={{ color:"#0e7490" }} />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between mb-1.5">
-                        <p className="text-sm font-semibold text-slate-800 truncate">{name}</p>
-                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ml-2" style={{ color:sc, background:sb }}>{status}</span>
+                      <div className="flex flex-wrap items-start justify-between gap-1 mb-1.5">
+                        <p className="text-sm font-semibold text-slate-800 truncate max-w-[60%]">{name}</p>
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0" style={{ color:sc, background:sb }}>{status}</span>
                       </div>
                       <div className="flex items-center gap-2 mb-1">
                         <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
@@ -676,7 +680,7 @@ export default function DashboardPage() {
                   <motion.p key={`${simLow}-${simHigh}`}
                     initial={{ scale:0.95, opacity:0 }} animate={{ scale:1, opacity:1 }}
                     transition={{ duration:0.3 }}
-                    className="text-2xl font-bold" style={{ color:"#0e7490" }}>
+                    className="text-xl sm:text-2xl font-bold" style={{ color:"#0e7490" }}>
                     ${simLow.toLocaleString()} – ${simHigh.toLocaleString()}
                   </motion.p>
                   {(simRevenue > 0 || simCollateral) && (
@@ -705,7 +709,7 @@ export default function DashboardPage() {
                   <p className="font-bold text-lg text-white">Unlock Funding Pro</p>
                 </div>
                 <p className="text-indigo-200 text-sm mb-3">Everything you need to get funded faster</p>
-                <div className="grid grid-cols-2 gap-x-8 gap-y-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-1.5">
                   {[
                     "Editable Excel financial model",
                     "Priority lender matching",

@@ -170,7 +170,7 @@ function RangeSelector({ options, value, onChange }: {
   onChange: (v: number) => void;
 }) {
   return (
-    <div className="grid grid-cols-2 gap-2">
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
       {options.map((opt) => (
         <button
           key={opt.value}
@@ -269,7 +269,7 @@ export default function InterviewPage() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 flex items-center justify-center px-4 py-10">
+      <div className="flex-1 flex items-start sm:items-center justify-center px-4 py-6 sm:py-10">
         <div className="w-full max-w-xl">
           <AnimatePresence mode="wait" custom={dir}>
             {/* STEP 0 — Welcome */}
@@ -359,7 +359,7 @@ export default function InterviewPage() {
 
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-3">Do you buy stock/goods on credit from suppliers?</label>
-                  <div className="flex gap-3">
+                  <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
                     {["Yes, regularly", "Sometimes", "No"].map((opt, i) => (
                       <button
                         key={opt}
@@ -395,7 +395,7 @@ export default function InterviewPage() {
 
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-3">How many customer transactions per month?</label>
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     {TRANSACTION_OPTS.map((opt) => (
                       <button
                         key={opt.value}
@@ -463,7 +463,7 @@ export default function InterviewPage() {
 
                 <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-3">Which are your busiest months? <span className="font-normal text-slate-400">(optional)</span></label>
-                  <div className="grid grid-cols-4 gap-2">
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                     {MONTHS.map((m) => (
                       <button
                         key={m}
@@ -711,7 +711,7 @@ function ResultsView({ score, fundingMin, fundingMax, onDashboard }: {
       {/* Upgrade nudge */}
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.45 }}
         className="bg-gradient-to-r from-cyan-50 to-blue-50 rounded-2xl border border-cyan-100 p-4">
-        <div className="flex items-start gap-3">
+        <div className="flex items-start gap-3 flex-wrap">
           <div className="w-8 h-8 rounded-lg bg-cyan-100 flex items-center justify-center flex-shrink-0 mt-0.5">
             <TrendingUp className="w-4 h-4 text-cyan-700" />
           </div>
