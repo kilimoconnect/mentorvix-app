@@ -1035,7 +1035,8 @@ export default function ApplyPage() {
   const [micActive,  setMicActive]  = useState(false);
   const [speakerOn,  setSpeakerOn]  = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef  = useRef<any>(null);
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const speak = useCallback((text: string) => {
     if (!speakerOn || typeof window === "undefined" || !window.speechSynthesis) return;
@@ -1045,6 +1046,13 @@ export default function ApplyPage() {
     window.speechSynthesis.speak(utt);
   }, [speakerOn]);
 
+  const stopMic = useCallback(() => {
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+    setMicActive(false);
+  }, []);
+
   const toggleMic = useCallback(() => {
     if (typeof window === "undefined") return;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1052,26 +1060,40 @@ export default function ApplyPage() {
     const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
     if (!SR) return;
 
-    if (micActive) {
-      recognitionRef.current?.stop();
-      setMicActive(false);
-      return;
-    }
+    // If already active — manual stop
+    if (micActive) { stopMic(); return; }
+
     const rec = new SR();
     rec.lang = "en-US";
-    rec.interimResults = false;
-    rec.continuous = false;
+    rec.interimResults = true;   // show live transcript while speaking
+    rec.continuous = true;       // keep listening until silence or manual stop
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     rec.onresult = (e: any) => {
-      const transcript = (e.results[0]?.[0]?.transcript as string) ?? "";
-      setInput((prev) => (prev ? prev + " " + transcript : transcript));
+      // Reset silence timer on every new result
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+
+      // Collect all final segments from this event batch
+      let finalText = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) finalText += (e.results[i][0]?.transcript as string) ?? "";
+      }
+      if (finalText) {
+        setInput((prev) => (prev ? prev.trimEnd() + " " + finalText.trim() : finalText.trim()));
+      }
+
+      // Auto-stop after 1.8 s of silence following the last final result
+      silenceTimerRef.current = setTimeout(() => stopMic(), 1800);
     };
-    rec.onend = () => setMicActive(false);
-    rec.onerror = () => setMicActive(false);
+
+    rec.onerror = () => stopMic();
+    // onend fires when browser forcefully stops (e.g. timeout) — clean up state
+    rec.onend = () => { if (recognitionRef.current) stopMic(); };
+
     rec.start();
     recognitionRef.current = rec;
     setMicActive(true);
-  }, [micActive]);
+  }, [micActive, stopMic]);
 
   const go = (n: number) => { setDir(n > step ? 1 : -1); setStep(n); };
 
