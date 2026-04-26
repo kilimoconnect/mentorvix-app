@@ -1164,14 +1164,20 @@ export default function ApplyPage() {
                   })}
                 </div>
 
-                <motion.button
-                  whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                  disabled={!situation}
-                  onClick={() => { setSituationDone(true); }}
-                  className="w-full flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
-                  style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
-                  Begin Business Mapping <ArrowRight className="w-4 h-4" />
-                </motion.button>
+                <div className="flex gap-3">
+                  <Link href="/dashboard"
+                    className="flex items-center gap-2 px-5 py-4 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+                    <ArrowLeft className="w-4 h-4" /> Back
+                  </Link>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                    disabled={!situation}
+                    onClick={() => { setSituationDone(true); }}
+                    className="flex-1 flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
+                    Begin Business Mapping <ArrowRight className="w-4 h-4" />
+                  </motion.button>
+                </div>
               </motion.div>
             )}
 
@@ -1179,6 +1185,11 @@ export default function ApplyPage() {
             {situationDone && step === 0 && (
               <motion.div key="intake" custom={dir} variants={slide} initial="enter" animate="center" exit="exit"
                 className="flex flex-col" style={{ height: "calc(100vh - 180px)", maxHeight: 620 }}>
+                <button
+                  onClick={() => { setSituationDone(false); setMessages([]); setStreams([]); }}
+                  className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 transition-colors mb-3 self-start">
+                  <ArrowLeft className="w-3 h-3" /> Change situation
+                </button>
                 <div className="flex items-center gap-3 mb-4">
                   <div className="w-10 h-10 rounded-2xl flex items-center justify-center"
                     style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
@@ -1340,7 +1351,7 @@ export default function ApplyPage() {
                     className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-dashed border-slate-200 text-sm font-medium text-slate-500 hover:border-cyan-400 hover:text-cyan-600 transition-colors">
                     <Plus className="w-4 h-4" /> Add stream manually
                   </button>
-                  <button onClick={() => go(0)}
+                  <button onClick={() => { setMessages([]); setStreams([]); go(0); }}
                     className="flex items-center gap-1.5 px-4 py-3 rounded-xl border border-slate-200 text-sm text-slate-500 hover:bg-slate-50 transition-colors">
                     <RefreshCw className="w-3.5 h-3.5" /> Re-chat
                   </button>
@@ -1441,8 +1452,14 @@ export default function ApplyPage() {
                 <div className="flex gap-3 pt-2">
                   <button
                     onClick={() => {
-                      if (streamIdx > 0) { setStreamIdx(streamIdx - 1); setDriverMode("chat"); }
-                      else go(1);
+                      if (streamIdx > 0) {
+                        setStreamIdx(streamIdx - 1);
+                        setDriverMode("chat");
+                      } else {
+                        // Going back to review — clear driver messages for this stream so it restarts if re-entered
+                        updateStream({ ...currentStream, driverMessages: [], items: [], driverDone: false });
+                        go(1);
+                      }
                     }}
                     className="flex items-center gap-2 px-5 py-3.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
                     <ArrowLeft className="w-4 h-4" /> Back
