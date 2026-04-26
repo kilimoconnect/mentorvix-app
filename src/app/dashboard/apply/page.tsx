@@ -1031,28 +1031,42 @@ export default function ApplyPage() {
   const [streamIdx,  setStreamIdx]  = useState(0);
   const [driverMode, setDriverMode] = useState<DriverMode>("chat");
 
-  // Voice — mic (speech-to-text) + per-message speaker (text-to-speech)
+  // Voice — mic (speech-to-text) + per-message speaker (OpenAI TTS)
   const [micActive,    setMicActive]    = useState(false);
   const [speakingIdx,  setSpeakingIdx]  = useState<number | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef  = useRef<any>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const audioRef        = useRef<HTMLAudioElement | null>(null);
 
-  const speakMessage = useCallback((text: string, idx: number) => {
-    if (typeof window === "undefined" || !window.speechSynthesis) return;
+  const speakMessage = useCallback(async (text: string, idx: number) => {
     // If already speaking this message — stop it
     if (speakingIdx === idx) {
-      window.speechSynthesis.cancel();
+      audioRef.current?.pause();
+      audioRef.current = null;
       setSpeakingIdx(null);
       return;
     }
-    window.speechSynthesis.cancel();
-    const utt = new SpeechSynthesisUtterance(text);
-    utt.rate = 1.05; utt.pitch = 1; utt.lang = "en-US";
-    utt.onend  = () => setSpeakingIdx(null);
-    utt.onerror = () => setSpeakingIdx(null);
+    // Stop any currently playing audio
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
     setSpeakingIdx(idx);
-    window.speechSynthesis.speak(utt);
+    try {
+      const res = await fetch("/api/speak", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) throw new Error("TTS failed");
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      audio.onended = () => { URL.revokeObjectURL(url); setSpeakingIdx(null); audioRef.current = null; };
+      audio.onerror = () => { URL.revokeObjectURL(url); setSpeakingIdx(null); audioRef.current = null; };
+      await audio.play();
+    } catch {
+      setSpeakingIdx(null);
+    }
   }, [speakingIdx]);
 
   const stopMic = useCallback(() => {
