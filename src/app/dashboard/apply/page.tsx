@@ -458,10 +458,9 @@ function ItemTable({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s: 
 
 /* ═══════════════════════════════════════ DriverChat ══ */
 function DriverChat({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s: RevenueStream) => void }) {
-  const [input,    setInput]    = useState("");
-  const [typing,   setTyping]   = useState(false);
-  const [error,    setError]    = useState("");
-  const [provider, setProvider] = useState<Provider | null>(null);
+  const [input,  setInput]  = useState("");
+  const [typing, setTyping] = useState(false);
+  const [error,  setError]  = useState("");
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [stream.driverMessages, typing]);
@@ -480,7 +479,6 @@ function DriverChat({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s:
       });
       const data = await res.json() as { text?: string; provider?: Provider; error?: string };
       if (data.error) throw new Error(data.error);
-      setProvider(data.provider ?? null);
       const text = data.text ?? "";
 
       const items = parseItems(text);
@@ -545,9 +543,6 @@ function DriverChat({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s:
             <span>⚠ {error}</span>
             <button onClick={() => callDriver(stream.driverMessages)} className="ml-auto font-semibold underline">Retry</button>
           </div>
-        )}
-        {provider && !typing && (
-          <p className="text-xs text-slate-300 text-center">via {provider}</p>
         )}
         <div ref={endRef} />
       </div>
@@ -970,7 +965,6 @@ export default function ApplyPage() {
   const [messages,  setMessages]  = useState<ChatMessage[]>([]);
   const [input,     setInput]     = useState("");
   const [aiTyping,  setAiTyping]  = useState(false);
-  const [usedProv,  setUsedProv]  = useState<string | null>(null);
   const [chatError, setChatError] = useState("");
   const endRef   = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -994,7 +988,6 @@ export default function ApplyPage() {
       });
       const data = await res.json() as { text?: string; provider?: string; error?: string };
       if (data.error) throw new Error(data.error);
-      setUsedProv(data.provider ?? null);
       const text = data.text ?? "";
       const detected = parseStreams(text);
       if (detected) {
@@ -1079,7 +1072,7 @@ export default function ApplyPage() {
                     <p className="text-sm font-bold text-slate-900">Mentorvix AI · Revenue Intelligence</p>
                     <div className="flex items-center gap-1.5">
                       <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                      <p className="text-xs text-slate-400">{usedProv ? `Powered by ${usedProv}` : "Connecting…"}</p>
+                      <p className="text-xs text-slate-400">Online</p>
                     </div>
                   </div>
                 </div>
