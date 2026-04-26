@@ -1,127 +1,66 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import {
   ArrowLeft, ArrowRight, Plus, Trash2, Edit3, Check,
   Sparkles, BarChart3, TrendingUp, ShoppingBag, Briefcase,
-  Repeat, Landmark, Zap, CheckCircle2, AlertCircle,
-  X, ChevronDown, ChevronUp, DollarSign, Info, RefreshCw,
+  Repeat, Landmark, Zap, CheckCircle2,
+  X, ChevronDown, ChevronUp, Info, RefreshCw, Send,
 } from "lucide-react";
 
 const EASE = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
-/* ─────────────────────────────────────────────────────────── types ── */
+/* ─────────────────────────────────────── types ── */
 type StreamType = "product" | "service" | "subscription" | "rental" | "marketplace" | "custom";
 type Confidence  = "high" | "medium" | "low";
+type Provider    = "anthropic" | "openai" | "gemini";
 
+interface ChatMessage { role: "user" | "assistant"; content: string; }
 interface RevenueStream {
-  id: string;
-  name: string;
-  type: StreamType;
-  confidence: Confidence;
-  // drivers
-  monthlyUnits:       number;
-  pricePerUnit:       number;
-  monthlyClients:     number;
-  avgContractValue:   number;
-  subscribers:        number;
-  monthlyFee:         number;
-  newPerMonth:        number;
-  churnPct:           number;
-  rentalUnits:        number;
-  rentalRate:         number;
-  occupancyPct:       number;
-  customMonthly:      number;
-  // growth
-  monthlyGrowthPct:   number;
+  id: string; name: string; type: StreamType; confidence: Confidence;
+  monthlyUnits: number; pricePerUnit: number;
+  monthlyClients: number; avgContractValue: number;
+  subscribers: number; monthlyFee: number; newPerMonth: number; churnPct: number;
+  rentalUnits: number; rentalRate: number; occupancyPct: number;
+  customMonthly: number; monthlyGrowthPct: number;
 }
 
-interface IntakeForm {
-  description: string;
-  customers:   string; // "individuals" | "businesses" | "both"
-  frequency:   string; // "once" | "repeat" | "subscription"
-  channels:    string; // "store" | "online" | "both" | "b2b"
-  sources:     string; // "1" | "2-3" | "4+"
-}
-
-/* ─────────────────────────────────────── stream type metadata ── */
-const STREAM_META: Record<StreamType, { label: string; icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>; color: string; bg: string; driverLabel: string }> = {
-  product:      { label: "Product Sales",        icon: ShoppingBag, color: "#0e7490", bg: "#f0f9ff", driverLabel: "Units × Price"              },
-  service:      { label: "Service / Project",    icon: Briefcase,   color: "#7c3aed", bg: "#faf5ff", driverLabel: "Clients × Contract Value"    },
-  subscription: { label: "Subscription / MRR",   icon: Repeat,      color: "#059669", bg: "#f0fdf4", driverLabel: "Subscribers × Monthly Fee"  },
-  rental:       { label: "Rental / Lease",        icon: Landmark,    color: "#b45309", bg: "#fffbeb", driverLabel: "Units × Occupancy × Rate"   },
-  marketplace:  { label: "Marketplace / Commission",icon: TrendingUp, color: "#e11d48", bg: "#fff1f2", driverLabel: "GMV × Take Rate"           },
-  custom:       { label: "Custom Stream",         icon: Zap,         color: "#6366f1", bg: "#eef2ff", driverLabel: "Monthly revenue (manual)"   },
+/* ─────────────────────────────────── stream metadata ── */
+const STREAM_META: Record<StreamType, {
+  label: string;
+  icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>;
+  color: string; bg: string; driverLabel: string;
+}> = {
+  product:      { label: "Product Sales",             icon: ShoppingBag, color: "#0e7490", bg: "#f0f9ff", driverLabel: "Units × Price"             },
+  service:      { label: "Service / Project",         icon: Briefcase,   color: "#7c3aed", bg: "#faf5ff", driverLabel: "Clients × Contract Value"   },
+  subscription: { label: "Subscription / MRR",        icon: Repeat,      color: "#059669", bg: "#f0fdf4", driverLabel: "Subscribers × Monthly Fee" },
+  rental:       { label: "Rental / Lease",             icon: Landmark,    color: "#b45309", bg: "#fffbeb", driverLabel: "Units × Occupancy × Rate"  },
+  marketplace:  { label: "Marketplace / Commission",  icon: TrendingUp,  color: "#e11d48", bg: "#fff1f2", driverLabel: "GMV × Take Rate"            },
+  custom:       { label: "Custom Stream",              icon: Zap,         color: "#6366f1", bg: "#eef2ff", driverLabel: "Monthly revenue (manual)"  },
 };
 
-/* ─────────────────────────────────── AI stream detection logic ── */
-const PATTERNS: { keywords: string[]; name: string; type: StreamType; confidence: Confidence }[] = [
-  { keywords: ["cloth","fashion","wear","apparel","shirt","shoe","bag","dress","retail","shop","boutique","market","sell product","sell goods","merchandise"],  name: "Retail Store Sales",               type: "product",      confidence: "high"   },
-  { keywords: ["online","ecommerce","website","shopify","instagram shop","social media order","delivery order","whatsapp order"],                               name: "Online / E-commerce Sales",        type: "product",      confidence: "medium" },
-  { keywords: ["uniform","corporate","b2b","wholesale","bulk order","contract supply","tender","institution","school supply"],                                  name: "Corporate & Wholesale Contracts",  type: "service",      confidence: "medium" },
-  { keywords: ["membership","subscription","monthly fee","retainer","recurring","vip plan","annual plan","weekly plan"],                                        name: "Subscription / Membership",        type: "subscription", confidence: "medium" },
-  { keywords: ["consult","advisory","coach","strategy","mentorship","training","workshop","seminar"],                                                            name: "Consulting Services",              type: "service",      confidence: "high"   },
-  { keywords: ["branding","design","logo","creative","marketing campaign","ad agency","content creation"],                                                      name: "Branding & Design Projects",       type: "service",      confidence: "high"   },
-  { keywords: ["website","web dev","app","software","saas","platform","tech","digital product","build system"],                                                 name: "Software / Tech Projects",         type: "service",      confidence: "high"   },
-  { keywords: ["restaurant","food","cafe","catering","meal","lunch","dinner","kitchen","snack","bakery","pastry"],                                               name: "Food & Beverage Sales",            type: "product",      confidence: "high"   },
-  { keywords: ["salon","beauty","hair","nail","spa","grooming","barbershop","wellness","massage"],                                                               name: "Beauty & Salon Services",          type: "service",      confidence: "high"   },
-  { keywords: ["rent","rental","lease","property","airbnb","accommodation","hotel","guest house","office space","warehouse space"],                              name: "Rental Income",                    type: "rental",       confidence: "high"   },
-  { keywords: ["transport","logistics","delivery","courier","taxi","ride","freight","shipping","trucking"],                                                      name: "Transport & Logistics",            type: "service",      confidence: "high"   },
-  { keywords: ["farm","agriculture","crop","livestock","produce","harvest","poultry","dairy","maize","vegetables"],                                              name: "Agricultural Sales",               type: "product",      confidence: "high"   },
-  { keywords: ["commission","platform","marketplace","agent","broker","referral fee","take rate"],                                                               name: "Commission / Marketplace",         type: "marketplace",  confidence: "medium" },
-  { keywords: ["import","export","trading","forex","commodity","distribution","resell"],                                                                         name: "Trading & Distribution",           type: "product",      confidence: "medium" },
-];
-
-function detectStreams(form: IntakeForm): RevenueStream[] {
-  const text = `${form.description} ${form.channels} ${form.frequency} ${form.customers}`.toLowerCase();
-  const detected: RevenueStream[] = [];
-  const usedNames = new Set<string>();
-
-  for (const p of PATTERNS) {
-    const matches = p.keywords.filter((k) => text.includes(k)).length;
-    if (matches >= 1 && !usedNames.has(p.name)) {
-      usedNames.add(p.name);
-      const conf: Confidence = matches >= 2 ? "high" : p.confidence === "high" ? "medium" : "low";
-      detected.push(makeStream(p.name, p.type, conf));
-    }
-  }
-
-  // channel-based additions
-  if (form.channels === "b2b" && !usedNames.has("Corporate & Wholesale Contracts")) {
-    detected.push(makeStream("Corporate & Wholesale Contracts", "service", "medium"));
-  }
-  if (form.frequency === "subscription" && !usedNames.has("Subscription / Membership")) {
-    detected.push(makeStream("Subscription / Membership", "subscription", "medium"));
-  }
-
-  if (detected.length === 0) detected.push(makeStream("Primary Revenue Stream", "custom", "low"));
-  return detected.slice(0, 6);
-}
-
+/* ─────────────────────────────────────── helpers ── */
 let _id = 0;
 function makeStream(name: string, type: StreamType, confidence: Confidence): RevenueStream {
   return {
-    id: `s${++_id}`,
-    name, type, confidence,
-    monthlyUnits: 0, pricePerUnit: 0,
-    monthlyClients: 0, avgContractValue: 0,
+    id: `s${++_id}`, name, type, confidence,
+    monthlyUnits: 0, pricePerUnit: 0, monthlyClients: 0, avgContractValue: 0,
     subscribers: 0, monthlyFee: 0, newPerMonth: 0, churnPct: 5,
     rentalUnits: 0, rentalRate: 0, occupancyPct: 80,
-    customMonthly: 0,
-    monthlyGrowthPct: 2,
+    customMonthly: 0, monthlyGrowthPct: 2,
   };
 }
 
 function streamMRR(s: RevenueStream): number {
   switch (s.type) {
-    case "product":      return s.monthlyUnits * s.pricePerUnit;
+    case "product":
+    case "marketplace": return s.monthlyUnits * s.pricePerUnit;
     case "service":      return s.monthlyClients * s.avgContractValue;
     case "subscription": return s.subscribers * s.monthlyFee;
     case "rental":       return s.rentalUnits * s.rentalRate * (s.occupancyPct / 100);
-    case "marketplace":  return s.monthlyUnits * s.pricePerUnit;
     case "custom":       return s.customMonthly;
     default:             return 0;
   }
@@ -134,27 +73,35 @@ function projectRevenue(streams: RevenueStream[], months = 12) {
       const factor = Math.pow(1 + s.monthlyGrowthPct / 100, i);
       return { name: s.name, rev: Math.round(base * factor) };
     });
-    const total = byStream.reduce((a, b) => a + b.rev, 0);
-    return { month: i + 1, total, byStream };
+    return { month: i + 1, total: byStream.reduce((a, b) => a + b.rev, 0), byStream };
   });
 }
 
-const MONTH_LABELS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-
+const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function fmt(n: number) {
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000)     return `$${(n / 1_000).toFixed(1)}K`;
+  if (n >= 1_000_000) return `$${(n/1_000_000).toFixed(1)}M`;
+  if (n >= 1_000)     return `$${(n/1_000).toFixed(1)}K`;
   return `$${n}`;
 }
 
-/* ─────────────────────────────────────────── confidence badge ── */
 const CONF_STYLE: Record<Confidence, string> = {
   high:   "bg-emerald-50 text-emerald-700 border-emerald-100",
   medium: "bg-amber-50   text-amber-700   border-amber-100",
   low:    "bg-red-50     text-red-600     border-red-100",
 };
 
-/* ────────────────────────────────────────────── edit stream name ── */
+/* ─────────────────────────── parse AI stream detection output ── */
+function parseDetectedStreams(text: string): RevenueStream[] | null {
+  const idx = text.indexOf("[STREAMS_DETECTED]");
+  if (idx === -1) return null;
+  try {
+    const json = text.slice(idx + "[STREAMS_DETECTED]".length).trim();
+    const arr = JSON.parse(json) as { name: string; type: StreamType; confidence: Confidence }[];
+    return arr.map((s) => makeStream(s.name, s.type ?? "custom", s.confidence ?? "medium"));
+  } catch { return null; }
+}
+
+/* ─────────────────────────── EditableName ── */
 function EditableName({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
@@ -162,7 +109,7 @@ function EditableName({ value, onChange }: { value: string; onChange: (v: string
   return editing ? (
     <div className="flex items-center gap-1">
       <input autoFocus value={draft} onChange={(e) => setDraft(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") setEditing(false); }}
+        onKeyDown={(e) => { if (e.key==="Enter") commit(); if (e.key==="Escape") setEditing(false); }}
         className="text-sm font-semibold border-b border-cyan-500 outline-none bg-transparent text-slate-800 w-48" />
       <button onClick={commit}><Check className="w-3.5 h-3.5 text-emerald-500" /></button>
       <button onClick={() => setEditing(false)}><X className="w-3.5 h-3.5 text-slate-400" /></button>
@@ -175,8 +122,8 @@ function EditableName({ value, onChange }: { value: string; onChange: (v: string
   );
 }
 
-/* ─────────────────────────────────── driver input component ── */
-function DriverInput({ label, value, onChange, prefix = "", suffix = "", step = 1, min = 0 }:{
+/* ─────────────────────────── DriverInput ── */
+function DriverInput({ label, value, onChange, prefix="", suffix="", step=1, min=0 }:{
   label: string; value: number; onChange: (v: number) => void;
   prefix?: string; suffix?: string; step?: number; min?: number;
 }) {
@@ -185,26 +132,22 @@ function DriverInput({ label, value, onChange, prefix = "", suffix = "", step = 
       <label className="block text-xs font-medium text-slate-500 mb-1">{label}</label>
       <div className="relative">
         {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">{prefix}</span>}
-        <input
-          type="number" min={min} step={step} value={value || ""}
-          placeholder="0"
+        <input type="number" min={min} step={step} value={value || ""} placeholder="0"
           onChange={(e) => onChange(Number(e.target.value))}
-          className={`w-full py-2.5 border border-slate-200 rounded-xl text-sm text-slate-800 bg-slate-50 focus:bg-white focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all ${prefix ? "pl-8" : "pl-3"} ${suffix ? "pr-10" : "pr-3"}`}
-        />
+          className={`w-full py-2.5 border border-slate-200 rounded-xl text-sm text-slate-800 bg-slate-50 focus:bg-white focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all ${prefix?"pl-8":"pl-3"} ${suffix?"pr-10":"pr-3"}`} />
         {suffix && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">{suffix}</span>}
       </div>
     </div>
   );
 }
 
-/* ──────────────────────────────────────── stream driver form ── */
+/* ─────────────────────────── StreamDriverForm ── */
 function StreamDriverForm({ stream, onChange }: { stream: RevenueStream; onChange: (s: RevenueStream) => void }) {
   const up = (key: keyof RevenueStream, v: number) => onChange({ ...stream, [key]: v });
   const mrr = streamMRR(stream);
-
   return (
     <div className="space-y-4">
-      {stream.type === "product" || stream.type === "marketplace" ? (
+      {(stream.type === "product" || stream.type === "marketplace") ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <DriverInput label="Units sold per month" value={stream.monthlyUnits} onChange={(v) => up("monthlyUnits", v)} />
           <DriverInput label="Average selling price" value={stream.pricePerUnit} onChange={(v) => up("pricePerUnit", v)} prefix="$" />
@@ -230,105 +173,163 @@ function StreamDriverForm({ stream, onChange }: { stream: RevenueStream; onChang
       ) : (
         <DriverInput label="Current monthly revenue from this stream" value={stream.customMonthly} onChange={(v) => up("customMonthly", v)} prefix="$" />
       )}
-
-      {/* Growth */}
       <div>
         <div className="flex justify-between mb-1">
           <label className="text-xs font-medium text-slate-500">Expected monthly growth</label>
-          <span className="text-xs font-bold" style={{ color: "#0e7490" }}>+{stream.monthlyGrowthPct}%</span>
+          <span className="text-xs font-bold" style={{ color:"#0e7490" }}>+{stream.monthlyGrowthPct}%</span>
         </div>
         <input type="range" min={0} max={20} step={0.5} value={stream.monthlyGrowthPct}
           onChange={(e) => up("monthlyGrowthPct", Number(e.target.value))}
-          className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
-          style={{ accentColor: "#0e7490" }} />
+          className="w-full h-1.5 rounded-full appearance-none cursor-pointer" style={{ accentColor:"#0e7490" }} />
         <div className="flex justify-between text-xs text-slate-300 mt-0.5"><span>0% (flat)</span><span>20% / month</span></div>
       </div>
-
-      {/* Live MRR */}
       {mrr > 0 && (
-        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+        <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }}
           className="flex items-center justify-between rounded-xl px-4 py-2.5 bg-slate-50 border border-slate-100">
           <span className="text-xs text-slate-500">Estimated current monthly revenue</span>
-          <span className="text-sm font-bold" style={{ color: "#0e7490" }}>{fmt(mrr)}</span>
+          <span className="text-sm font-bold" style={{ color:"#0e7490" }}>{fmt(mrr)}</span>
         </motion.div>
       )}
     </div>
   );
 }
 
-/* ─────────────────────────── inline bar chart component ── */
+/* ─────────────────────────── RevenueChart ── */
 function RevenueChart({ data }: { data: { month: number; total: number }[] }) {
   const max = Math.max(...data.map((d) => d.total), 1);
   return (
     <div className="flex items-end gap-1 h-28 w-full">
       {data.map((d, i) => (
         <div key={i} className="flex-1 flex flex-col items-center gap-1">
-          <motion.div
-            className="w-full rounded-t-md"
-            style={{ background: "linear-gradient(180deg, #0891b2, #0e7490)" }}
-            initial={{ height: 0 }}
-            animate={{ height: `${(d.total / max) * 100}%` }}
-            transition={{ duration: 0.6, delay: i * 0.04, ease: EASE }}
-          />
-          <span className="text-xs text-slate-400" style={{ fontSize: 9 }}>{MONTH_LABELS[d.month - 1]}</span>
+          <motion.div className="w-full rounded-t-md"
+            style={{ background: "linear-gradient(180deg,#0891b2,#0e7490)" }}
+            initial={{ height: 0 }} animate={{ height:`${(d.total/max)*100}%` }}
+            transition={{ duration:0.6, delay:i*0.04, ease:EASE }} />
+          <span className="text-slate-400" style={{ fontSize:9 }}>{MONTHS[d.month-1]}</span>
         </div>
       ))}
     </div>
   );
 }
 
-/* ═══════════════════════════════════════════ main page ══ */
+/* ═══════════════════════════════════════════════════ main page ══ */
 export default function ApplyPage() {
   const router = useRouter();
-  const [step, setStep] = useState(0); // 0=intake 1=detecting 2=review 3=drivers 4=forecast
-  const [dir, setDir] = useState(1);
+  const [step, setStep]   = useState(0); // 0=chat, 1=review, 2=drivers, 3=forecast
+  const [dir,  setDir]    = useState(1);
 
-  const [intake, setIntake] = useState<IntakeForm>({
-    description: "", customers: "", frequency: "", channels: "", sources: "",
-  });
-  const [streams, setStreams] = useState<RevenueStream[]>([]);
-  const [activeStream, setActiveStream] = useState<string | null>(null);
-  const [expandedStream, setExpandedStream] = useState<string | null>(null);
+  /* ── chat state ── */
+  const [messages,     setMessages]     = useState<ChatMessage[]>([]);
+  const [input,        setInput]        = useState("");
+  const [aiTyping,     setAiTyping]     = useState(false);
+  const [provider,     setProvider]     = useState<Provider>("anthropic");
+  const [usedProvider, setUsedProvider] = useState<Provider | null>(null);
+  const [chatError,    setChatError]    = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef       = useRef<HTMLTextAreaElement>(null);
+
+  /* ── stream / forecast state ── */
+  const [streams,         setStreams]         = useState<RevenueStream[]>([]);
+  const [expandedStream,  setExpandedStream]  = useState<string | null>(null);
 
   const go = (n: number) => { setDir(n > step ? 1 : -1); setStep(n); };
 
-  const runDetection = async () => {
-    go(1); // show loading
-    await new Promise((r) => setTimeout(r, 1800));
-    const detected = detectStreams(intake);
-    setStreams(detected);
-    setExpandedStream(detected[0]?.id ?? null);
-    go(2);
+  /* ── scroll chat to bottom ── */
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, aiTyping]);
+
+  /* ── open conversation: AI fires first question ── */
+  useEffect(() => {
+    if (messages.length === 0) {
+      callAI([]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ── call AI API route ── */
+  const callAI = useCallback(async (history: ChatMessage[]) => {
+    setAiTyping(true);
+    setChatError("");
+    try {
+      const res  = await fetch("/api/intake", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: history, provider }),
+      });
+      const data = await res.json() as { text?: string; provider?: Provider; error?: string };
+      if (data.error) throw new Error(data.error);
+
+      const text = data.text ?? "";
+      setUsedProvider(data.provider ?? null);
+
+      // Check for stream detection signal
+      const detected = parseDetectedStreams(text);
+      if (detected) {
+        // Show clean version of response (hide the JSON)
+        const cleanText = text.slice(0, text.indexOf("[STREAMS_DETECTED]")).trim() ||
+          "I've understood your business model. Let me show you what I detected.";
+        setMessages((prev) => [...prev, { role: "assistant", content: cleanText }]);
+        setStreams(detected);
+        setExpandedStream(detected[0]?.id ?? null);
+        // Small delay then transition
+        setTimeout(() => go(1), 900);
+      } else {
+        setMessages((prev) => [...prev, { role: "assistant", content: text }]);
+      }
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : "Connection error");
+    } finally {
+      setAiTyping(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider]);
+
+  const handleSend = () => {
+    const text = input.trim();
+    if (!text || aiTyping) return;
+    const updated: ChatMessage[] = [...messages, { role: "user", content: text }];
+    setMessages(updated);
+    setInput("");
+    callAI(updated);
   };
 
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
+  };
+
+  /* ── stream operations ── */
   const updateStream = useCallback((updated: RevenueStream) => {
     setStreams((prev) => prev.map((s) => s.id === updated.id ? updated : s));
   }, []);
-
   const removeStream = (id: string) => setStreams((prev) => prev.filter((s) => s.id !== id));
-
   const addCustomStream = () => {
     const s = makeStream("New Revenue Stream", "custom", "low");
     setStreams((prev) => [...prev, s]);
     setExpandedStream(s.id);
   };
 
-  const totalMRR  = streams.reduce((a, s) => a + streamMRR(s), 0);
-  const projection = projectRevenue(streams);
+  const totalMRR    = streams.reduce((a, s) => a + streamMRR(s), 0);
+  const projection  = projectRevenue(streams);
   const annualTotal = projection.reduce((a, d) => a + d.total, 0);
 
-  const slide = {
-    enter: (d: number) => ({ opacity: 0, x: d > 0 ? 48 : -48 }),
-    center: { opacity: 1, x: 0, transition: { duration: 0.38, ease: EASE } },
-    exit:  (d: number) => ({ opacity: 0, x: d > 0 ? -48 : 48, transition: { duration: 0.25, ease: EASE } }),
+  const PROVIDER_COLORS: Record<Provider, string> = {
+    anthropic: "#e07b39",
+    openai:    "#10a37f",
+    gemini:    "#4285f4",
   };
 
-  const canDetect = intake.description.length >= 10 || intake.channels || intake.frequency || intake.customers;
+  const slide = {
+    enter:  (d: number) => ({ opacity: 0, x: d > 0 ? 48 : -48 }),
+    center: { opacity: 1, x: 0, transition: { duration: 0.38, ease: EASE } },
+    exit:   (d: number) => ({ opacity: 0, x: d > 0 ? -48 : 48, transition: { duration: 0.25, ease: EASE } }),
+  };
 
+  /* ══════════════════════════════════════════════════ render ══ */
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
 
-      {/* Header */}
+      {/* ── Header ── */}
       <div className="bg-white border-b border-slate-100 px-4 sm:px-6 py-4 flex items-center gap-4 flex-shrink-0">
         <Link href="/dashboard" className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 transition-colors">
           <ArrowLeft className="w-4 h-4" /> Dashboard
@@ -337,120 +338,143 @@ export default function ApplyPage() {
           <div className="flex items-center gap-2">
             {["Understand", "Detect Streams", "Build Drivers", "Forecast"].map((label, i) => (
               <div key={i} className="flex items-center gap-2">
-                <div className={`flex items-center gap-1.5 text-xs font-medium ${step >= i * 1.2 ? "text-cyan-700" : "text-slate-400"}`}>
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-xs ${step >= i ? "text-white" : "bg-slate-100 text-slate-400"}`}
-                    style={{ background: step >= i ? "#0e7490" : undefined }}>
+                <div className={`flex items-center gap-1.5 text-xs font-medium ${step >= i ? "text-cyan-700" : "text-slate-400"}`}>
+                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold"
+                    style={{ background: step > i ? "#0e7490" : step === i ? "#0e7490" : "#e2e8f0", color: step >= i ? "#fff" : "#94a3b8" }}>
                     {step > i ? <Check className="w-3 h-3" /> : i + 1}
                   </div>
                   <span className="hidden sm:block">{label}</span>
                 </div>
-                {i < 3 && <div className={`w-6 sm:w-10 h-px ${step > i ? "bg-cyan-600" : "bg-slate-200"}`} />}
+                {i < 3 && <div className={`w-4 sm:w-8 h-px ${step > i ? "bg-cyan-600" : "bg-slate-200"}`} />}
               </div>
             ))}
           </div>
         </div>
+        {/* Provider selector */}
+        <div className="flex items-center gap-1.5">
+          {(["anthropic","openai","gemini"] as Provider[]).map((p) => (
+            <button key={p} onClick={() => setProvider(p)}
+              title={p.charAt(0).toUpperCase() + p.slice(1)}
+              className={`w-7 h-7 rounded-full text-xs font-bold border-2 transition-all ${provider === p ? "border-current scale-110" : "border-transparent opacity-40 hover:opacity-70"}`}
+              style={{ background: PROVIDER_COLORS[p], color: "#fff" }}>
+              {p === "anthropic" ? "A" : p === "openai" ? "O" : "G"}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 flex items-start sm:items-center justify-center px-4 py-6 sm:py-10">
+      {/* ── Content ── */}
+      <div className="flex-1 flex items-start sm:items-center justify-center px-4 py-6 sm:py-10 overflow-hidden">
         <div className="w-full max-w-2xl">
           <AnimatePresence mode="wait" custom={dir}>
 
-            {/* ── STEP 0: AI Intake ── */}
+            {/* ═══════════ STEP 0: AI Chat ═══════════ */}
             {step === 0 && (
-              <motion.div key="intake" custom={dir} variants={slide} initial="enter" animate="center" exit="exit" className="space-y-6">
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <Sparkles className="w-5 h-5" style={{ color: "#0e7490" }} />
-                    <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#0e7490" }}>AI Business Understanding</span>
+              <motion.div key="chat" custom={dir} variants={slide} initial="enter" animate="center" exit="exit"
+                className="flex flex-col" style={{ height: "calc(100vh - 180px)", maxHeight: 620 }}>
+
+                {/* Chat header */}
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0"
+                    style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
+                    <Sparkles className="w-5 h-5 text-white" />
                   </div>
-                  <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Tell us about your business</h1>
-                  <p className="text-slate-500 text-sm mt-1">No forms. No spreadsheets. Just describe how you make money.</p>
-                </div>
-
-                {/* Description */}
-                <div>
-                  <label className="block text-sm font-semibold text-slate-700 mb-2">Describe your business in plain language</label>
-                  <textarea
-                    rows={4}
-                    value={intake.description}
-                    onChange={(e) => setIntake({ ...intake, description: e.target.value })}
-                    placeholder={`e.g. "I sell clothes in my store, take orders online, supply uniforms to companies, and offer a monthly styling membership."`}
-                    className="w-full px-4 py-3 border border-slate-200 rounded-2xl text-sm text-slate-800 bg-slate-50 focus:bg-white focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all placeholder:text-slate-300 resize-none leading-relaxed"
-                  />
-                </div>
-
-                {/* Quick questions */}
-                <div className="space-y-4">
-                  {[
-                    {
-                      q: "Who are your customers?", key: "customers" as keyof IntakeForm,
-                      opts: [
-                        { v: "individuals", label: "Individuals / Walk-ins" },
-                        { v: "businesses", label: "Businesses / Corporate" },
-                        { v: "both",        label: "Both" },
-                        { v: "online_only", label: "Online only" },
-                      ]
-                    },
-                    {
-                      q: "How do customers buy from you?", key: "frequency" as keyof IntakeForm,
-                      opts: [
-                        { v: "once",         label: "One-off purchases" },
-                        { v: "repeat",       label: "Repeat customers" },
-                        { v: "subscription", label: "Subscription / retainer" },
-                        { v: "mixed",        label: "Mix of all" },
-                      ]
-                    },
-                    {
-                      q: "Where do you sell?", key: "channels" as keyof IntakeForm,
-                      opts: [
-                        { v: "store",   label: "Physical store / office" },
-                        { v: "online",  label: "Online / social media" },
-                        { v: "both",    label: "Store + online" },
-                        { v: "b2b",     label: "Contracts / B2B" },
-                      ]
-                    },
-                  ].map(({ q, key, opts }) => (
-                    <div key={key}>
-                      <label className="block text-sm font-semibold text-slate-700 mb-2">{q}</label>
-                      <div className="flex flex-wrap gap-2">
-                        {opts.map(({ v, label }) => (
-                          <motion.button key={v} type="button" whileTap={{ scale: 0.97 }}
-                            onClick={() => setIntake({ ...intake, [key]: intake[key] === v ? "" : v })}
-                            className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-medium border transition-all ${
-                              intake[key] === v
-                                ? "border-cyan-500 bg-cyan-50 text-cyan-700"
-                                : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
-                            }`}>
-                            {label}
-                          </motion.button>
-                        ))}
-                      </div>
+                  <div>
+                    <p className="text-sm font-bold text-slate-900">Mentorvix AI · Revenue Intelligence</p>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <p className="text-xs text-slate-400">
+                        Powered by {usedProvider ?? provider}
+                        {usedProvider && usedProvider !== provider && ` (auto-selected)`}
+                      </p>
                     </div>
-                  ))}
+                  </div>
                 </div>
 
-                <motion.button
-                  onClick={runDetection}
-                  disabled={!canDetect}
-                  whileHover={canDetect ? { scale: 1.01 } : {}}
-                  whileTap={canDetect ? { scale: 0.98 } : {}}
-                  className="w-full flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-40 transition-all"
-                  style={{ background: "linear-gradient(135deg, #0e7490, #0891b2)" }}>
-                  <Sparkles className="w-4 h-4" /> Detect My Revenue Streams
-                </motion.button>
+                {/* Messages */}
+                <div className="flex-1 overflow-y-auto space-y-4 pr-1 pb-2">
+                  {messages.map((m, i) => (
+                    <motion.div key={i}
+                      initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.3, ease: EASE }}
+                      className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                      {m.role === "assistant" && (
+                        <div className="w-7 h-7 rounded-xl flex items-center justify-center flex-shrink-0 mr-2 mt-0.5"
+                          style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
+                          <Sparkles className="w-3.5 h-3.5 text-white" />
+                        </div>
+                      )}
+                      <div className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${
+                        m.role === "user"
+                          ? "text-white rounded-tr-sm"
+                          : "bg-white border border-slate-100 text-slate-800 rounded-tl-sm shadow-sm"
+                      }`}
+                        style={m.role === "user" ? { background: "linear-gradient(135deg,#0e7490,#0891b2)" } : {}}>
+                        {m.content}
+                      </div>
+                    </motion.div>
+                  ))}
+
+                  {/* Typing indicator */}
+                  {aiTyping && (
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-2">
+                      <div className="w-7 h-7 rounded-xl flex items-center justify-center flex-shrink-0"
+                        style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
+                        <Sparkles className="w-3.5 h-3.5 text-white" />
+                      </div>
+                      <div className="bg-white border border-slate-100 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+                        <div className="flex items-center gap-1">
+                          {[0, 1, 2].map((i) => (
+                            <motion.div key={i} className="w-1.5 h-1.5 rounded-full bg-slate-300"
+                              animate={{ y: [0, -4, 0] }}
+                              transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15 }} />
+                          ))}
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+
+                  {/* Error */}
+                  {chatError && (
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                      className="flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+                      <span>⚠ {chatError}</span>
+                      <button onClick={() => callAI(messages)} className="ml-auto font-semibold underline">Retry</button>
+                    </motion.div>
+                  )}
+
+                  <div ref={messagesEndRef} />
+                </div>
+
+                {/* Input */}
+                <div className="mt-3 flex items-end gap-2">
+                  <div className="flex-1 relative">
+                    <textarea
+                      ref={inputRef}
+                      rows={2}
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      disabled={aiTyping}
+                      placeholder="Type your answer… (Enter to send)"
+                      className="w-full resize-none px-4 py-3 pr-12 border border-slate-200 rounded-2xl text-sm text-slate-800 bg-white focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all placeholder:text-slate-300 disabled:opacity-60"
+                    />
+                  </div>
+                  <motion.button
+                    whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                    onClick={handleSend}
+                    disabled={!input.trim() || aiTyping}
+                    className="w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 text-white shadow-md disabled:opacity-40 transition-all"
+                    style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
+                    <Send className="w-4 h-4" />
+                  </motion.button>
+                </div>
+                <p className="text-xs text-slate-300 text-center mt-2">Shift+Enter for new line · Enter to send</p>
               </motion.div>
             )}
 
-            {/* ── STEP 1: Detecting ── */}
+            {/* ═══════════ STEP 1: Stream Review ═══════════ */}
             {step === 1 && (
-              <motion.div key="detecting" custom={dir} variants={slide} initial="enter" animate="center" exit="exit">
-                <DetectingAnimation />
-              </motion.div>
-            )}
-
-            {/* ── STEP 2: Stream Review ── */}
-            {step === 2 && (
               <motion.div key="review" custom={dir} variants={slide} initial="enter" animate="center" exit="exit" className="space-y-5">
                 <div>
                   <div className="flex items-center gap-2 mb-1">
@@ -469,7 +493,7 @@ export default function ApplyPage() {
                       <motion.div key={s.id}
                         initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
                         transition={{ delay: i * 0.07, ease: EASE }}
-                        className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+                        className="bg-white rounded-2xl border border-slate-100">
                         <div className="flex items-center gap-3 p-4">
                           <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: Meta.bg }}>
                             <Icon className="w-4 h-4" style={{ color: Meta.color }} />
@@ -493,7 +517,6 @@ export default function ApplyPage() {
                   })}
                 </div>
 
-                {/* Add / re-detect */}
                 <div className="flex gap-2">
                   <button onClick={addCustomStream}
                     className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-dashed border-slate-200 text-sm font-medium text-slate-500 hover:border-cyan-400 hover:text-cyan-600 transition-colors">
@@ -501,42 +524,38 @@ export default function ApplyPage() {
                   </button>
                   <button onClick={() => go(0)}
                     className="flex items-center gap-1.5 px-4 py-3 rounded-xl border border-slate-200 text-sm text-slate-500 hover:bg-slate-50 transition-colors">
-                    <RefreshCw className="w-3.5 h-3.5" /> Re-detect
+                    <RefreshCw className="w-3.5 h-3.5" /> Re-chat
                   </button>
                 </div>
 
                 {streams.length === 0 && (
-                  <div className="text-center py-6 text-slate-400 text-sm">
-                    No streams. Add at least one to continue.
-                  </div>
+                  <p className="text-center py-6 text-slate-400 text-sm">No streams. Add at least one to continue.</p>
                 )}
 
-                <button
-                  onClick={() => { setExpandedStream(streams[0]?.id ?? null); go(3); }}
+                <button onClick={() => { setExpandedStream(streams[0]?.id ?? null); go(2); }}
                   disabled={streams.length === 0}
                   className="w-full flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-40"
-                  style={{ background: "linear-gradient(135deg, #0e7490, #0891b2)" }}>
+                  style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
                   Set Up Numbers <ArrowRight className="w-4 h-4" />
                 </button>
               </motion.div>
             )}
 
-            {/* ── STEP 3: Driver Collection ── */}
-            {step === 3 && (
+            {/* ═══════════ STEP 2: Driver Collection ═══════════ */}
+            {step === 2 && (
               <motion.div key="drivers" custom={dir} variants={slide} initial="enter" animate="center" exit="exit" className="space-y-4">
                 <div>
                   <h2 className="text-2xl font-bold text-slate-900">Set the numbers for each stream</h2>
-                  <p className="text-slate-500 text-sm mt-1">Use estimates — you can refine later. We calculate from the drivers, not guesses.</p>
+                  <p className="text-slate-500 text-sm mt-1">Use estimates — calculated from drivers, not guesses.</p>
                 </div>
 
-                {/* Live total */}
                 {totalMRR > 0 && (
-                  <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                  <motion.div initial={{ opacity:0 }} animate={{ opacity:1 }}
                     className="flex items-center justify-between rounded-2xl px-5 py-3.5 border border-cyan-100"
-                    style={{ background: "linear-gradient(135deg, #f0f9ff, #e0f2fe)" }}>
+                    style={{ background:"linear-gradient(135deg,#f0f9ff,#e0f2fe)" }}>
                     <div>
                       <p className="text-xs text-slate-500 font-medium">Total estimated monthly revenue</p>
-                      <p className="text-xl font-bold" style={{ color: "#0e7490" }}>{fmt(totalMRR)}</p>
+                      <p className="text-xl font-bold" style={{ color:"#0e7490" }}>{fmt(totalMRR)}</p>
                     </div>
                     <div className="text-right">
                       <p className="text-xs text-slate-400">Projected Year 1</p>
@@ -545,40 +564,34 @@ export default function ApplyPage() {
                   </motion.div>
                 )}
 
-                {/* Accordion streams */}
                 <div className="space-y-3">
                   {streams.map((s) => {
                     const Meta = STREAM_META[s.type];
                     const Icon = Meta.icon;
-                    const mrr = streamMRR(s);
+                    const mrr  = streamMRR(s);
                     const open = expandedStream === s.id;
                     return (
                       <div key={s.id} className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
-                        <button
-                          className="w-full flex items-center gap-3 p-4 text-left hover:bg-slate-50 transition-colors"
+                        <button className="w-full flex items-center gap-3 p-4 text-left hover:bg-slate-50 transition-colors"
                           onClick={() => setExpandedStream(open ? null : s.id)}>
-                          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: Meta.bg }}>
-                            <Icon className="w-4 h-4" style={{ color: Meta.color }} />
+                          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background:Meta.bg }}>
+                            <Icon className="w-4 h-4" style={{ color:Meta.color }} />
                           </div>
                           <div className="flex-1 min-w-0">
                             <p className="text-sm font-semibold text-slate-800">{s.name}</p>
                             <p className="text-xs text-slate-400">{Meta.driverLabel}</p>
                           </div>
                           <div className="text-right mr-2 flex-shrink-0">
-                            {mrr > 0 ? (
-                              <span className="text-sm font-bold" style={{ color: "#0e7490" }}>{fmt(mrr)}/mo</span>
-                            ) : (
-                              <span className="text-xs text-slate-300">Enter numbers →</span>
-                            )}
+                            {mrr > 0
+                              ? <span className="text-sm font-bold" style={{ color:"#0e7490" }}>{fmt(mrr)}/mo</span>
+                              : <span className="text-xs text-slate-300">Enter numbers →</span>}
                           </div>
                           {open ? <ChevronUp className="w-4 h-4 text-slate-400 flex-shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0" />}
                         </button>
                         <AnimatePresence>
                           {open && (
-                            <motion.div
-                              initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.3, ease: EASE }}
-                              className="overflow-hidden">
+                            <motion.div initial={{ height:0, opacity:0 }} animate={{ height:"auto", opacity:1 }}
+                              exit={{ height:0, opacity:0 }} transition={{ duration:0.3, ease:EASE }} className="overflow-hidden">
                               <div className="px-4 pb-5 pt-1 border-t border-slate-50">
                                 <StreamDriverForm stream={s} onChange={updateStream} />
                               </div>
@@ -591,41 +604,38 @@ export default function ApplyPage() {
                 </div>
 
                 <div className="flex gap-3">
-                  <button onClick={() => go(2)}
+                  <button onClick={() => go(1)}
                     className="flex items-center gap-2 px-5 py-3.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
                     <ArrowLeft className="w-4 h-4" /> Back
                   </button>
-                  <button
-                    onClick={() => go(4)}
-                    disabled={totalMRR === 0}
+                  <button onClick={() => go(3)} disabled={totalMRR === 0}
                     className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-40"
-                    style={{ background: "linear-gradient(135deg, #0e7490, #0891b2)" }}>
+                    style={{ background:"linear-gradient(135deg,#0e7490,#0891b2)" }}>
                     <BarChart3 className="w-4 h-4" /> Generate Revenue Forecast
                   </button>
                 </div>
               </motion.div>
             )}
 
-            {/* ── STEP 4: Forecast ── */}
-            {step === 4 && (
+            {/* ═══════════ STEP 3: Forecast ═══════════ */}
+            {step === 3 && (
               <motion.div key="forecast" custom={dir} variants={slide} initial="enter" animate="center" exit="exit" className="space-y-5">
                 <div>
                   <div className="flex items-center gap-2 mb-1">
-                    <BarChart3 className="w-5 h-5" style={{ color: "#0e7490" }} />
-                    <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#0e7490" }}>Revenue Forecast</span>
+                    <BarChart3 className="w-5 h-5" style={{ color:"#0e7490" }} />
+                    <span className="text-xs font-semibold uppercase tracking-wider" style={{ color:"#0e7490" }}>Revenue Forecast</span>
                   </div>
                   <h2 className="text-2xl font-bold text-slate-900">12-Month Revenue Projection</h2>
                   <p className="text-slate-500 text-sm mt-1">Driver-based · Finance-grade · {streams.length} stream{streams.length !== 1 ? "s" : ""}</p>
                 </div>
 
-                {/* Annual summary */}
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {[
-                    { label: "Current monthly",  val: fmt(totalMRR),                     sub: "Estimated baseline" },
-                    { label: "Projected Year 1", val: fmt(annualTotal),                  sub: "With growth applied" },
-                    { label: "Month 12 revenue", val: fmt(projection[11]?.total ?? 0),   sub: "End of period" },
+                    { label:"Current monthly",   val:fmt(totalMRR),                  sub:"Estimated baseline" },
+                    { label:"Projected Year 1",   val:fmt(annualTotal),               sub:"With growth applied" },
+                    { label:"Month 12 revenue",   val:fmt(projection[11]?.total??0),  sub:"End of period" },
                   ].map(({ label, val, sub }) => (
-                    <motion.div key={label} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                    <motion.div key={label} initial={{ opacity:0, y:8 }} animate={{ opacity:1, y:0 }}
                       className="bg-white rounded-2xl border border-slate-100 p-4">
                       <p className="text-xs text-slate-400 mb-1">{label}</p>
                       <p className="text-lg font-bold text-slate-900">{val}</p>
@@ -634,19 +644,17 @@ export default function ApplyPage() {
                   ))}
                 </div>
 
-                {/* Bar chart */}
                 <div className="bg-white rounded-2xl border border-slate-100 p-5">
                   <p className="text-xs font-semibold text-slate-500 mb-4 uppercase tracking-wider">Monthly Revenue Trend</p>
                   <RevenueChart data={projection} />
                 </div>
 
-                {/* Stream breakdown */}
                 <div className="bg-white rounded-2xl border border-slate-100 p-5">
                   <p className="text-xs font-semibold text-slate-500 mb-4 uppercase tracking-wider">Revenue Streams Breakdown</p>
                   <div className="space-y-3">
                     {streams.map((s) => {
-                      const mrr = streamMRR(s);
-                      const pct = totalMRR > 0 ? (mrr / totalMRR) * 100 : 0;
+                      const mrr  = streamMRR(s);
+                      const pct  = totalMRR > 0 ? (mrr / totalMRR) * 100 : 0;
                       const Meta = STREAM_META[s.type];
                       return (
                         <div key={s.id}>
@@ -658,11 +666,9 @@ export default function ApplyPage() {
                             </div>
                           </div>
                           <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                            <motion.div className="h-full rounded-full"
-                              style={{ background: Meta.color }}
-                              initial={{ width: 0 }}
-                              animate={{ width: `${pct}%` }}
-                              transition={{ duration: 0.8, ease: EASE }} />
+                            <motion.div className="h-full rounded-full" style={{ background:Meta.color }}
+                              initial={{ width:0 }} animate={{ width:`${pct}%` }}
+                              transition={{ duration:0.8, ease:EASE }} />
                           </div>
                         </div>
                       );
@@ -670,16 +676,14 @@ export default function ApplyPage() {
                   </div>
                 </div>
 
-                {/* Quality note */}
                 <div className="flex items-start gap-3 rounded-xl px-4 py-3 bg-amber-50 border border-amber-100">
                   <Info className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
                   <div>
                     <p className="text-xs font-semibold text-amber-700">Projection confidence: Medium</p>
-                    <p className="text-xs text-amber-600 mt-0.5">Based on your inputs. Add bank records or sales exports later to move to High confidence and unlock lender-ready verification.</p>
+                    <p className="text-xs text-amber-600 mt-0.5">Add bank records or sales exports later to reach High confidence and unlock lender-ready verification.</p>
                   </div>
                 </div>
 
-                {/* Monthly table — collapsible */}
                 <details className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
                   <summary className="flex items-center justify-between px-5 py-4 cursor-pointer text-sm font-semibold text-slate-700 hover:bg-slate-50 transition-colors">
                     <span>Full month-by-month table</span>
@@ -690,52 +694,44 @@ export default function ApplyPage() {
                       <thead>
                         <tr className="border-t border-slate-100 bg-slate-50">
                           <th className="text-left px-4 py-2.5 text-slate-500 font-semibold">Month</th>
-                          {streams.map((s) => (
-                            <th key={s.id} className="text-right px-3 py-2.5 text-slate-500 font-semibold">{s.name}</th>
-                          ))}
-                          <th className="text-right px-4 py-2.5 font-semibold" style={{ color: "#0e7490" }}>Total</th>
+                          {streams.map((s) => <th key={s.id} className="text-right px-3 py-2.5 text-slate-500 font-semibold">{s.name}</th>)}
+                          <th className="text-right px-4 py-2.5 font-semibold" style={{ color:"#0e7490" }}>Total</th>
                         </tr>
                       </thead>
                       <tbody>
                         {projection.map((d, i) => (
-                          <tr key={i} className="border-t border-slate-50 hover:bg-slate-50 transition-colors">
-                            <td className="px-4 py-2.5 text-slate-600 font-medium">{MONTH_LABELS[i]}</td>
-                            {d.byStream.map((bs) => (
-                              <td key={bs.name} className="text-right px-3 py-2.5 text-slate-600">{fmt(bs.rev)}</td>
-                            ))}
-                            <td className="text-right px-4 py-2.5 font-bold" style={{ color: "#0e7490" }}>{fmt(d.total)}</td>
+                          <tr key={i} className="border-t border-slate-50 hover:bg-slate-50">
+                            <td className="px-4 py-2.5 text-slate-600 font-medium">{MONTHS[i]}</td>
+                            {d.byStream.map((bs) => <td key={bs.name} className="text-right px-3 py-2.5 text-slate-600">{fmt(bs.rev)}</td>)}
+                            <td className="text-right px-4 py-2.5 font-bold" style={{ color:"#0e7490" }}>{fmt(d.total)}</td>
                           </tr>
                         ))}
                         <tr className="border-t-2 border-slate-200 bg-slate-50 font-bold">
                           <td className="px-4 py-3 text-slate-700">Year Total</td>
                           {streams.map((s) => {
-                            const streamAnnual = projection.reduce((a, d) => {
-                              const bs = d.byStream.find((b) => b.name === s.name);
-                              return a + (bs?.rev ?? 0);
-                            }, 0);
-                            return <td key={s.id} className="text-right px-3 py-3 text-slate-700">{fmt(streamAnnual)}</td>;
+                            const tot = projection.reduce((a, d) => a + (d.byStream.find((b) => b.name===s.name)?.rev??0), 0);
+                            return <td key={s.id} className="text-right px-3 py-3 text-slate-700">{fmt(tot)}</td>;
                           })}
-                          <td className="text-right px-4 py-3" style={{ color: "#0e7490" }}>{fmt(annualTotal)}</td>
+                          <td className="text-right px-4 py-3" style={{ color:"#0e7490" }}>{fmt(annualTotal)}</td>
                         </tr>
                       </tbody>
                     </table>
                   </div>
                 </details>
 
-                {/* CTAs */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <button onClick={() => go(3)}
+                  <button onClick={() => go(2)}
                     className="flex items-center justify-center gap-2 py-3.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
                     <ArrowLeft className="w-4 h-4" /> Adjust Numbers
                   </button>
                   <button
-                    className="flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20"
-                    style={{ background: "linear-gradient(135deg, #0e7490, #0891b2)" }}
                     onClick={() => {
                       const data = { streams: streams.map((s) => ({ ...s, mrr: streamMRR(s) })), totalMRR, annualTotal, projection };
                       localStorage.setItem("mvx_revenue_model", JSON.stringify(data));
                       router.push("/dashboard");
-                    }}>
+                    }}
+                    className="flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20"
+                    style={{ background:"linear-gradient(135deg,#0e7490,#0891b2)" }}>
                     Save & Continue Application <ArrowRight className="w-4 h-4" />
                   </button>
                 </div>
@@ -744,46 +740,6 @@ export default function ApplyPage() {
 
           </AnimatePresence>
         </div>
-      </div>
-    </div>
-  );
-}
-
-/* ─────────────────────── detection animation ── */
-function DetectingAnimation() {
-  const steps = [
-    "Reading your business description...",
-    "Identifying revenue patterns...",
-    "Classifying income types...",
-    "Detecting stream confidence levels...",
-    "Building your revenue model...",
-  ];
-  const [current, setCurrent] = useState(0);
-
-  useEffect(() => {
-    if (current >= steps.length - 1) return;
-    const t = setTimeout(() => setCurrent((c) => c + 1), 360);
-    return () => clearTimeout(t);
-  }, [current, steps.length]);
-
-  return (
-    <div className="flex flex-col items-center justify-center py-16 text-center space-y-8">
-      <div className="relative">
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-          className="w-16 h-16 rounded-2xl border-4 border-cyan-100 border-t-cyan-600"
-        />
-        <Sparkles className="absolute inset-0 m-auto w-6 h-6" style={{ color: "#0e7490" }} />
-      </div>
-      <div>
-        <p className="text-lg font-bold text-slate-900 mb-1">AI is analysing your business</p>
-        <AnimatePresence mode="wait">
-          <motion.p key={current} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}
-            className="text-sm text-slate-500">
-            {steps[current]}
-          </motion.p>
-        </AnimatePresence>
       </div>
     </div>
   );
