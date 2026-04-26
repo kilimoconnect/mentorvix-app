@@ -11,7 +11,7 @@ import {
   Settings, CreditCard, HelpCircle, Bell, ChevronRight,
   TrendingUp, TrendingDown, ArrowUpRight, FileText, Zap,
   Menu, X, LogOut, BrainCircuit, Lock, ArrowRight, Shield, Users,
-  Target, CheckCircle2, Clock, Info, ChevronUp, ClipboardList,
+  Target, CheckCircle2, Clock, Info,
   ShoppingBag, Repeat, ScrollText, Briefcase, Trash2, AlertTriangle,
 } from "lucide-react";
 
@@ -242,25 +242,20 @@ export default function DashboardPage() {
   ];
 
   // Steps complete
-  const milestonesComplete = 1 + (hasAssessment ? 1 : 0) + (hasRevenue ? 1 : 0);
-  const milestonePct = Math.round((milestonesComplete / 5) * 100);
+  const milestonesComplete = 1 + (hasRevenue ? 1 : 0);
+  const milestonePct = Math.round((milestonesComplete / 4) * 100);
 
   // Emotional trigger message
-  const triggerMsg = !hasAssessment && !hasRevenue
-    ? "2 steps away from being lender-ready."
-    : !hasAssessment
-    ? "1 step away — complete your financial interview."
-    : !hasRevenue
-    ? "1 step away — build your revenue model."
+  const triggerMsg = !hasRevenue
+    ? "1 step away from being lender-ready — build your revenue model."
     : "lender-ready! Review your matching loan offers.";
 
   // Pipeline
   const pipeline = [
-    { label: "Profile",       sub: "Complete",                          status: "done"    },
-    { label: "Interview",     sub: hasAssessment ? "Complete" : "Awaiting answers",   status: hasAssessment ? "done" : "pending" },
+    { label: "Profile",       sub: "Complete",                                                                            status: "done"    },
     { label: "Revenue Model", sub: hasRevenue ? `${streamCount} stream${streamCount !== 1 ? "s" : ""}` : "Not started",  status: hasRevenue ? "done" : "pending" },
-    { label: "Lender Match",  sub: "Locked",                            status: "locked"  },
-    { label: "Submitted",     sub: "Locked",                            status: "locked"  },
+    { label: "Lender Match",  sub: "Locked",                                                                              status: "locked"  },
+    { label: "Submitted",     sub: "Locked",                                                                              status: "locked"  },
   ];
 
   // AI Advisor insights — dynamic based on available data
@@ -271,13 +266,7 @@ export default function DashboardPage() {
       text: "Build your revenue model — tell the AI how your business makes money to get stream-by-stream projections and unlock lender matching.",
       action: "Start", href: "/dashboard/apply",
     });
-    if (!hasAssessment) list.push({
-      rank: list.length === 0 ? "Highest Impact" : "High Impact",
-      icon: ClipboardList, color: "#f59e0b", bg: "#fffbeb",
-      text: "Complete your 15-question financial interview to confirm your funding range — takes under 3 minutes, no documents needed.",
-      action: "+15 pts", href: "/dashboard/interview",
-    });
-    if (hasAssessment && hasRevenue) list.push({
+    if (hasRevenue) list.push({
       rank: "Opportunity", icon: CheckCircle2, color: "#059669", bg: "#f0fdf4",
       text: "Your profile is complete. Review your matched lenders to find the best rates and terms for your business.",
       action: "Explore", href: "/dashboard/loans",
@@ -288,13 +277,6 @@ export default function DashboardPage() {
       text: "Equipment finance often fits SMEs better than working capital — explore whether it applies to your business.",
       action: "Explore", href: "/dashboard/loans",
     });
-    if (hasAssessment && assessment && assessment.expenses / assessment.revenueAvg > 0.65) {
-      list.splice(1, 0, {
-        rank: "Medium Impact", icon: TrendingDown, color: "#e11d48", bg: "#fff1f2",
-        text: `Your expense ratio is ${Math.round((assessment.expenses / assessment.revenueAvg) * 100)}% — reducing monthly costs may increase your eligible range significantly.`,
-        action: "+6 pts", href: "/dashboard/interview",
-      });
-    }
     return list.slice(0, 3);
   }, [hasRevenue, hasAssessment, assessment])();
 
@@ -316,26 +298,13 @@ export default function DashboardPage() {
       sub: itemCount > 0 ? `${itemCount} items · ${fmtCurrency(mrr!)}/mo MRR` : "No items yet",
       canDelete: true,
     });
-    if (hasAssessment) list.push({
-      name: "Financial Interview",
-      date: assessment?.completedAt
-        ? new Date(assessment.completedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-        : "Complete",
-      progress: 100,
-      status: `Score: ${assessment?.score}`,
-      sc: assessment!.score >= 70 ? "#059669" : assessment!.score >= 55 ? "#f59e0b" : "#e11d48",
-      sb: assessment!.score >= 70 ? "#f0fdf4" : assessment!.score >= 55 ? "#fffbeb" : "#fff1f2",
-      missing: "",
-      href: "/dashboard/interview",
-      sub: `${fmtCurrency(assessment!.fundingMin)} – ${fmtCurrency(assessment!.fundingMax)} estimated`,
-    });
     if (list.length === 0) list.push({
       name: "Working Capital Loan Pack",
       date: "Not started",
       progress: 0,
       status: "Draft",
       sc: "#94a3b8", sb: "#f1f5f9",
-      missing: "Financial interview · Revenue model",
+      missing: "Revenue model",
       href: "/dashboard/apply",
       sub: "Complete your profile to get started",
     });
@@ -496,7 +465,7 @@ export default function DashboardPage() {
 
                   <div className="mt-5 mb-4">
                     <p className="text-cyan-200 text-xs font-medium mb-1">Estimated eligible funding range</p>
-                    {hasAssessment && fundingMin !== null && fundingMax !== null ? (
+                    {fundingMin !== null && fundingMax !== null ? (
                       <p className="text-3xl sm:text-4xl font-bold tracking-tight">
                         <AnimatedNumber target={fundingMin / 1000} prefix="$" suffix="K" />
                         {" – "}
@@ -506,7 +475,7 @@ export default function DashboardPage() {
                       <div className="flex items-center gap-3 mt-2">
                         <div className="flex items-center gap-2 bg-white/10 rounded-xl px-4 py-2.5">
                           <Lock className="w-4 h-4 text-cyan-300" />
-                          <span className="text-sm font-semibold text-white">Complete interview to unlock</span>
+                          <span className="text-sm font-semibold text-white">Build revenue model to unlock</span>
                         </div>
                       </div>
                     )}
@@ -514,10 +483,7 @@ export default function DashboardPage() {
 
                   {/* Trust context */}
                   <div className="grid grid-cols-2 gap-2 mb-5">
-                    {(hasAssessment
-                      ? ["Revenue confirmed", "Expense ratio", "Score: " + score, "Industry benchmarks"]
-                      : ["Revenue trend", "Current obligations", "Documentation level", "Industry benchmarks"]
-                    ).map((b) => (
+                    {["Revenue trend", "Current obligations", "Documentation level", "Industry benchmarks"].map((b) => (
                       <div key={b} className="flex items-center gap-1.5">
                         <div className="w-1.5 h-1.5 rounded-full bg-cyan-300 flex-shrink-0" />
                         <span className="text-xs text-cyan-200">{b}</span>
@@ -534,14 +500,6 @@ export default function DashboardPage() {
                         {hasRevenue ? "Review Revenue Model" : "Build Revenue Model"}
                       </Link>
                     </motion.div>
-                    {!hasAssessment && (
-                      <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
-                        <Link href="/dashboard/interview"
-                          className="inline-flex items-center gap-1.5 text-sm font-semibold px-4 py-2.5 rounded-xl border border-white/20 bg-white/10 text-white">
-                          <ChevronUp className="w-3.5 h-3.5" /> Financial Interview
-                        </Link>
-                      </motion.div>
-                    )}
                   </div>
                 </div>
               </motion.div>
@@ -637,14 +595,6 @@ export default function DashboardPage() {
                   ))}
                 </div>
 
-                {/* CTA if no assessment */}
-                {!hasAssessment && (
-                  <Link href="/dashboard/interview"
-                    className="mt-3 flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs font-bold text-white"
-                    style={{ background: "#0e7490" }}>
-                    Complete Interview to unlock <ArrowRight className="w-3 h-3" />
-                  </Link>
-                )}
 
                 {/* Confidence note */}
                 {hasAssessment && (
@@ -672,18 +622,16 @@ export default function DashboardPage() {
                   <p className="text-sm font-medium text-slate-700">
                     {!hasRevenue
                       ? "Tell the AI how your business makes money — it will build your full revenue model, item by item, stream by stream."
-                      : !hasAssessment
-                      ? "Answer 15 quick questions to confirm your funding range and generate your full readiness report — no documents needed."
-                      : "Your revenue model and interview are complete — explore lenders matched to your exact profile."}
+                      : "Your revenue model is complete — explore lenders matched to your exact profile."}
                   </p>
                 </div>
               </div>
               <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} className="flex-shrink-0 self-start sm:self-auto">
                 <Link
-                  href={!hasRevenue ? "/dashboard/apply" : !hasAssessment ? "/dashboard/interview" : "/dashboard/loans"}
+                  href={!hasRevenue ? "/dashboard/apply" : "/dashboard/loans"}
                   className="inline-flex items-center gap-1.5 text-xs font-bold px-4 py-2 rounded-xl text-white"
                   style={{ background: "#0e7490" }}>
-                  {!hasRevenue ? "Start Revenue Model" : !hasAssessment ? "Start Interview" : "View Matches"}
+                  {!hasRevenue ? "Start Revenue Model" : "View Matches"}
                   <ArrowRight className="w-3.5 h-3.5" />
                 </Link>
               </motion.div>
@@ -760,10 +708,9 @@ export default function DashboardPage() {
               <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Quick Actions</p>
               <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
                 {[
-                  { icon: FilePlus2,     label: "Build Revenue Model",   desc: "AI-guided item-by-item revenue analysis",        color: "#0e7490", bg: "#f0f9ff", href: "/dashboard/apply",     badge: hasRevenue ? null : "Start here" },
-                  { icon: ClipboardList, label: "Financial Interview",   desc: "Confirm your score in 15 quick questions",       color: "#7c3aed", bg: "#faf5ff", href: "/dashboard/interview", badge: hasAssessment ? "Done ✓" : null },
-                  { icon: BarChart3,     label: "Financial Models",      desc: "Lender-ready financial projections",             color: "#0f766e", bg: "#f0fdf9", href: "/dashboard/models",    badge: null },
-                  { icon: Landmark,      label: "Compare Loan Offers",   desc: "Rates, terms and your personal fit score",       color: "#b45309", bg: "#fffbeb", href: "/dashboard/loans",     badge: null },
+                  { icon: FilePlus2, label: "Build Revenue Model", desc: "AI-guided item-by-item revenue analysis",    color: "#0e7490", bg: "#f0f9ff", href: "/dashboard/apply",   badge: hasRevenue ? null : "Start here" },
+                  { icon: BarChart3, label: "Financial Models",   desc: "Lender-ready financial projections",         color: "#0f766e", bg: "#f0fdf9", href: "/dashboard/models",  badge: null },
+                  { icon: Landmark,  label: "Compare Loan Offers",desc: "Rates, terms and your personal fit score",   color: "#b45309", bg: "#fffbeb", href: "/dashboard/loans",   badge: null },
                 ].map(({ icon: Icon, label, desc, color, bg, href, badge }, i) => (
                   <motion.div key={href}
                     initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
@@ -841,7 +788,7 @@ export default function DashboardPage() {
                       <p className="text-lg sm:text-xl font-bold text-slate-900">{fmtCurrency(displayExpenses)}</p>
                     </motion.div>
                   ) : (
-                    <EmptyMetric label="Monthly Expenses" cta="Complete interview →" href="/dashboard/interview" />
+                    <EmptyMetric label="Monthly Expenses" cta="Build revenue model →" href="/dashboard/apply" />
                   )}
 
                   {/* Free Cash Flow */}
@@ -861,7 +808,7 @@ export default function DashboardPage() {
                       </div>
                     </motion.div>
                   ) : (
-                    <EmptyMetric label="Free Cash Flow" cta="Complete interview →" href="/dashboard/interview" />
+                    <EmptyMetric label="Free Cash Flow" cta="Build revenue model →" href="/dashboard/apply" />
                   )}
 
                   {/* Year 1 Projection / Repayment Capacity */}
@@ -873,13 +820,6 @@ export default function DashboardPage() {
                         <TrendingUp className="w-3.5 h-3.5" style={{ color: "#0e7490" }} />
                         <span className="text-xs font-semibold" style={{ color: "#0e7490" }}>3yr forecast ready</span>
                       </div>
-                    </motion.div>
-                  ) : hasAssessment && assessment ? (
-                    <motion.div whileHover={{ scale: 1.02 }} className="rounded-xl p-3 border border-slate-100">
-                      <p className="text-xs text-slate-400 mb-2 leading-tight">Safe Monthly Repayment</p>
-                      <p className="text-lg sm:text-xl font-bold text-slate-900">
-                        {fmtCurrency(Math.round(assessment.revenueAvg * 0.12))}
-                      </p>
                     </motion.div>
                   ) : (
                     <EmptyMetric label="Year 1 Projection" cta="Build revenue model →" href="/dashboard/apply" />
@@ -910,9 +850,9 @@ export default function DashboardPage() {
                   </div>
                 )}
 
-                {!hasRevenue && !hasAssessment && (
+                {!hasRevenue && (
                   <p className="text-xs text-slate-400 mt-3 text-center">
-                    Build your revenue model or complete the interview to see real numbers here
+                    Build your revenue model to see real numbers here
                   </p>
                 )}
               </motion.section>
@@ -1048,9 +988,9 @@ export default function DashboardPage() {
                       </span>
                     </label>
                   </div>
-                  {!hasAssessment && (
+                  {!hasRevenue && (
                     <p className="text-xs text-slate-400">
-                      <Link href="/dashboard/interview" className="underline text-cyan-600">Complete your interview</Link> to use your real numbers as the baseline.
+                      <Link href="/dashboard/apply" className="underline text-cyan-600">Build your revenue model</Link> to use your real numbers as the baseline.
                     </p>
                   )}
                 </div>
