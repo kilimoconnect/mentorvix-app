@@ -13,6 +13,7 @@ import {
   ChevronDown, ChevronUp, Info, Upload, Pencil,
   Calendar, ChevronRight, ScrollText, Users, FileText,
   Rocket, Store, Wrench, RefreshCcw, Banknote,
+  Mic, MicOff, Volume2, VolumeX,
 } from "lucide-react";
 
 const EASE = [0.22, 1, 0.36, 1] as [number, number, number, number];
@@ -1030,6 +1031,48 @@ export default function ApplyPage() {
   const [streamIdx,  setStreamIdx]  = useState(0);
   const [driverMode, setDriverMode] = useState<DriverMode>("chat");
 
+  // Voice — mic (speech-to-text) + speaker (text-to-speech)
+  const [micActive,  setMicActive]  = useState(false);
+  const [speakerOn,  setSpeakerOn]  = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
+
+  const speak = useCallback((text: string) => {
+    if (!speakerOn || typeof window === "undefined" || !window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    const utt = new SpeechSynthesisUtterance(text);
+    utt.rate = 1.05; utt.pitch = 1; utt.lang = "en-US";
+    window.speechSynthesis.speak(utt);
+  }, [speakerOn]);
+
+  const toggleMic = useCallback(() => {
+    if (typeof window === "undefined") return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!SR) return;
+
+    if (micActive) {
+      recognitionRef.current?.stop();
+      setMicActive(false);
+      return;
+    }
+    const rec = new SR();
+    rec.lang = "en-US";
+    rec.interimResults = false;
+    rec.continuous = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rec.onresult = (e: any) => {
+      const transcript = (e.results[0]?.[0]?.transcript as string) ?? "";
+      setInput((prev) => (prev ? prev + " " + transcript : transcript));
+    };
+    rec.onend = () => setMicActive(false);
+    rec.onerror = () => setMicActive(false);
+    rec.start();
+    recognitionRef.current = rec;
+    setMicActive(true);
+  }, [micActive]);
+
   const go = (n: number) => { setDir(n > step ? 1 : -1); setStep(n); };
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, aiTyping]);
@@ -1054,15 +1097,17 @@ export default function ApplyPage() {
         const clean = text.slice(0, text.indexOf("[STREAMS_DETECTED]")).trim() ||
           `Great — I've identified ${detected.length} income source${detected.length !== 1 ? "s" : ""}. Let me show you what I found.`;
         setMessages((prev) => [...prev, { role: "assistant", content: clean }]);
+        speak(clean);
         setStreams(detected);
         setTimeout(() => go(1), 900);
       } else {
         setMessages((prev) => [...prev, { role: "assistant", content: text }]);
+        speak(text);
       }
     } catch (e) { setChatError(e instanceof Error ? e.message : "Connection error"); }
     finally { setAiTyping(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [situation]);
+  }, [situation, speak]);
 
   const sendIntake = () => {
     const text = input.trim();
@@ -1252,14 +1297,45 @@ export default function ApplyPage() {
                   <div ref={endRef} />
                 </div>
                 <div className="mt-3 flex items-end gap-2">
+                  {/* Mic button */}
+                  <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                    onClick={toggleMic}
+                    title={micActive ? "Stop recording" : "Speak your answer"}
+                    className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 transition-all ${
+                      micActive
+                        ? "bg-red-500 text-white shadow-lg shadow-red-500/30 animate-pulse"
+                        : "border border-slate-200 text-slate-400 hover:border-cyan-400 hover:text-cyan-600 bg-white"
+                    }`}>
+                    {micActive ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                  </motion.button>
+
                   <textarea ref={inputRef} rows={2} value={input} onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendIntake(); } }}
                     disabled={aiTyping}
-                    placeholder="Type your answer… (Enter to send)"
-                    className="flex-1 resize-none px-4 py-3 border border-slate-200 rounded-2xl text-sm text-slate-800 bg-white focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all placeholder:text-slate-300 disabled:opacity-60" />
+                    placeholder={micActive ? "Listening…" : "Type or speak your answer… (Enter to send)"}
+                    className={`flex-1 resize-none px-4 py-3 border rounded-2xl text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 transition-all placeholder:text-slate-300 disabled:opacity-60 ${
+                      micActive
+                        ? "border-red-300 focus:border-red-400 focus:ring-red-400/20"
+                        : "border-slate-200 focus:border-cyan-500 focus:ring-cyan-500/20"
+                    }`} />
+
+                  {/* Speaker toggle */}
+                  <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                    onClick={() => { setSpeakerOn((v) => !v); if (speakerOn) window.speechSynthesis?.cancel(); }}
+                    title={speakerOn ? "Mute AI voice" : "Enable AI voice"}
+                    className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 transition-all ${
+                      speakerOn
+                        ? "text-white shadow-md"
+                        : "border border-slate-200 text-slate-400 hover:border-cyan-400 hover:text-cyan-600 bg-white"
+                    }`}
+                    style={speakerOn ? { background: "linear-gradient(135deg,#0e7490,#0891b2)" } : {}}>
+                    {speakerOn ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+                  </motion.button>
+
+                  {/* Send button */}
                   <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={sendIntake}
                     disabled={!input.trim() || aiTyping}
-                    className="w-11 h-11 rounded-2xl flex items-center justify-center text-white shadow-md disabled:opacity-40"
+                    className="w-11 h-11 rounded-2xl flex items-center justify-center text-white shadow-md disabled:opacity-40 flex-shrink-0"
                     style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
                     <Send className="w-4 h-4" />
                   </motion.button>
