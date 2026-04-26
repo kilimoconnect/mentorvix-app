@@ -129,6 +129,83 @@ Phase 4 (after user confirms): "Perfect. We've mapped 2 revenue divisions. In th
 [STREAMS_DETECTED]
 [...]`;
 
+/* ─────────────────────────── situation context ── */
+const SITUATION_CONTEXT: Record<string, string> = {
+  new_business: `
+═══════════════════════════════════════════════
+CLIENT SITUATION — STARTING A NEW BUSINESS
+═══════════════════════════════════════════════
+This client is launching a new business. They have NO existing sales or historical data.
+Adapt your entire approach:
+- Ask about their planned business: what they intend to sell, to whom, and where
+- Ask about their target market and expected customer numbers
+- Ask about their planned pricing model
+- Ask about their intended launch timeline
+- Frame ALL revenue as projected/planned, not current
+- Be encouraging — focus on potential and the path forward
+- Do NOT ask for historical revenue, current turnover, or existing store performance`,
+
+  existing: `
+═══════════════════════════════════════════════
+CLIENT SITUATION — EXISTING OPERATING BUSINESS
+═══════════════════════════════════════════════
+This is an established business with real current operations and sales.
+Use the full 4-phase business mapping approach — map all current revenue streams, channels, locations, and business models.`,
+
+  expansion: `
+═══════════════════════════════════════════════
+CLIENT SITUATION — EXPANSION / GROWTH PROJECT
+═══════════════════════════════════════════════
+This business is already operating and planning to expand.
+Adapt your approach:
+- Briefly map the existing/current business (what they do, rough scale, current channels)
+- Then shift focus to the expansion: new location, product line, service, or capacity
+- Keep existing revenue clearly separate from planned incremental revenue from the expansion
+- Ask about funding requirement driving the expansion
+- In Phase 3, name streams clearly — existing base business vs. new expansion (e.g. "Paint Retail — Existing 3 Stores" vs. "Paint Retail — New Nairobi Branch")`,
+
+  working_capital: `
+═══════════════════════════════════════════════
+CLIENT SITUATION — WORKING CAPITAL NEED
+═══════════════════════════════════════════════
+This client needs short-term or operational funding — likely for inventory, a busy season, or a cash flow gap.
+Adapt your approach:
+- Quickly map the underlying business (what they sell, rough monthly revenue, seasonality)
+- Then focus on the cash flow need: what triggers it, when, how long, and how much
+- Ask about payment terms with suppliers and customers
+- Ask about seasonal patterns, inventory cycles, or payment gaps
+- The revenue map supports the working capital business case`,
+
+  asset_purchase: `
+═══════════════════════════════════════════════
+CLIENT SITUATION — ASSET PURCHASE
+═══════════════════════════════════════════════
+This client wants to buy an asset — equipment, vehicles, machinery, or property.
+Adapt your approach:
+- First ask what asset they want to purchase and what it enables or improves
+- Understand how the asset generates or supports revenue (new service, more capacity, cost savings)
+- Map existing revenue streams, then separately map the revenue the asset enables
+- If the asset enables entirely new revenue, label it clearly as incremental`,
+
+  turnaround: `
+═══════════════════════════════════════════════
+CLIENT SITUATION — TURNAROUND / RECOVERY
+═══════════════════════════════════════════════
+This business has experienced a revenue decline and needs restructuring or a cash injection.
+Adapt your approach:
+- Be sensitive and professional — do not probe aggressively
+- Ask what the business does and what its current (reduced) revenue state is
+- Ask what changed in the business or market that caused the decline
+- Map current revenue streams at their current realistic levels — not peak
+- Ask about any recovery actions already being taken
+- Frame projections as a stabilisation and recovery trajectory, not aggressive growth`,
+};
+
+function buildSystem(situation?: string): string {
+  const context = situation ? (SITUATION_CONTEXT[situation] ?? "") : "";
+  return context + "\n\n" + SYSTEM;
+}
+
 /* ─────────────────────────── provider routing ── */
 type Provider = "openai" | "gemini";
 type Message  = { role: "user" | "assistant"; content: string };
@@ -141,7 +218,7 @@ function chooseProvider(requested?: string): Provider {
   return "openai";
 }
 
-async function callOpenAI(messages: Message[]): Promise<string> {
+async function callOpenAI(messages: Message[], system: string): Promise<string> {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   const turns = messages.length === 0
     ? [{ role: "user" as const, content: "Start" }]
@@ -149,12 +226,12 @@ async function callOpenAI(messages: Message[]): Promise<string> {
   const res = await client.chat.completions.create({
     model: "gpt-4o",
     max_tokens: 400,
-    messages: [{ role: "system", content: SYSTEM }, ...turns],
+    messages: [{ role: "system", content: system }, ...turns],
   });
   return res.choices[0]?.message?.content ?? "";
 }
 
-async function callGemini(messages: Message[]): Promise<string> {
+async function callGemini(messages: Message[], system: string): Promise<string> {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? "");
   const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
   const allMessages = messages.length === 0
@@ -167,7 +244,7 @@ async function callGemini(messages: Message[]): Promise<string> {
   const lastMsg = allMessages[allMessages.length - 1].content;
   const chat = model.startChat({
     history,
-    systemInstruction: { role: "system", parts: [{ text: SYSTEM }] },
+    systemInstruction: { role: "system", parts: [{ text: system }] },
   });
   const res = await chat.sendMessage(lastMsg);
   return res.response.text();
@@ -176,13 +253,17 @@ async function callGemini(messages: Message[]): Promise<string> {
 /* ─────────────────────────────────────── route ── */
 export async function POST(req: NextRequest) {
   try {
-    const { messages, provider: requestedProvider } = await req.json() as {
+    const { messages, provider: requestedProvider, situation } = await req.json() as {
       messages: Message[];
       provider?: string;
+      situation?: string;
     };
 
+    const system   = buildSystem(situation);
     const provider = chooseProvider(requestedProvider);
-    const text = provider === "gemini" ? await callGemini(messages) : await callOpenAI(messages);
+    const text     = provider === "gemini"
+      ? await callGemini(messages, system)
+      : await callOpenAI(messages, system);
 
     return NextResponse.json({ text, provider });
   } catch (err: unknown) {

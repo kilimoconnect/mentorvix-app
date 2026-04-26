@@ -12,9 +12,58 @@ import {
   Repeat, Landmark, Zap, CheckCircle2, RefreshCw, Send,
   ChevronDown, ChevronUp, Info, Upload, Pencil,
   Calendar, ChevronRight, ScrollText, Users, FileText,
+  Rocket, Store, Wrench, RefreshCcw, Banknote,
 } from "lucide-react";
 
 const EASE = [0.22, 1, 0.36, 1] as [number, number, number, number];
+
+/* ═══════════════════════════════════════ situations ══ */
+const SITUATIONS = [
+  {
+    id: "existing",
+    icon: Store,
+    title: "Existing Business",
+    desc: "My business is already operating",
+    color: "#059669", bg: "#f0fdf4",
+  },
+  {
+    id: "new_business",
+    icon: Rocket,
+    title: "Starting a New Business",
+    desc: "Launching a new company, product, or brand",
+    color: "#0e7490", bg: "#f0f9ff",
+  },
+  {
+    id: "expansion",
+    icon: TrendingUp,
+    title: "Expansion / Growth",
+    desc: "Adding locations, products, or capacity to an existing business",
+    color: "#7c3aed", bg: "#faf5ff",
+  },
+  {
+    id: "working_capital",
+    icon: Banknote,
+    title: "Working Capital",
+    desc: "Short-term funding for operations, inventory, or a busy season",
+    color: "#b45309", bg: "#fffbeb",
+  },
+  {
+    id: "asset_purchase",
+    icon: Wrench,
+    title: "Asset Purchase",
+    desc: "Buying equipment, vehicles, or machinery",
+    color: "#0f766e", bg: "#f0fdfa",
+  },
+  {
+    id: "turnaround",
+    icon: RefreshCcw,
+    title: "Turnaround / Recovery",
+    desc: "Revenue has declined — need restructuring or a cash injection",
+    color: "#e11d48", bg: "#fff1f2",
+  },
+] as const;
+
+type SituationId = typeof SITUATIONS[number]["id"];
 
 /* ═══════════════════════════════════════ types ══ */
 type StreamType = "product" | "service" | "subscription" | "rental" | "marketplace" | "contract" | "custom";
@@ -961,6 +1010,13 @@ export default function ApplyPage() {
   const [step, setStep] = useState(0);
   const [dir,  setDir]  = useState(1);
 
+  // Situation detection (pre-gate)
+  const [situation,     setSituation]     = useState<SituationId | null>(null);
+  const [situationDone, setSituationDone] = useState(false);
+
+  // Progress bar position: 0=situation, 1=mapping, 2=confirm, 3=data, 4=forecast
+  const displayStep = !situationDone ? 0 : step + 1;
+
   // Intake chat
   const [messages,  setMessages]  = useState<ChatMessage[]>([]);
   const [input,     setInput]     = useState("");
@@ -984,7 +1040,7 @@ export default function ApplyPage() {
     try {
       const res  = await fetch("/api/intake", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history }),
+        body: JSON.stringify({ messages: history, situation }),
       });
       const data = await res.json() as { text?: string; provider?: string; error?: string };
       if (data.error) throw new Error(data.error);
@@ -1039,16 +1095,16 @@ export default function ApplyPage() {
         </Link>
         <div className="flex-1 flex items-center justify-center">
           <div className="flex items-center gap-2">
-            {["Business Mapping", "Confirm Structure", "Revenue Data", "Forecast"].map((label, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <div className={`flex items-center gap-1.5 text-xs font-medium ${step >= i ? "text-cyan-700" : "text-slate-400"}`}>
+            {["Situation", "Business Mapping", "Confirm Structure", "Revenue Data", "Forecast"].map((label, i) => (
+              <div key={i} className="flex items-center gap-1.5">
+                <div className={`flex items-center gap-1.5 text-xs font-medium ${displayStep >= i ? "text-cyan-700" : "text-slate-400"}`}>
                   <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold"
-                    style={{ background: step >= i ? "#0e7490" : "#e2e8f0", color: step >= i ? "#fff" : "#94a3b8" }}>
-                    {step > i ? <Check className="w-3 h-3" /> : i + 1}
+                    style={{ background: displayStep >= i ? "#0e7490" : "#e2e8f0", color: displayStep >= i ? "#fff" : "#94a3b8" }}>
+                    {displayStep > i ? <Check className="w-3 h-3" /> : i + 1}
                   </div>
                   <span className="hidden sm:block">{label}</span>
                 </div>
-                {i < 3 && <div className={`w-4 sm:w-8 h-px ${step > i ? "bg-cyan-600" : "bg-slate-200"}`} />}
+                {i < 4 && <div className={`w-4 sm:w-6 h-px ${displayStep > i ? "bg-cyan-600" : "bg-slate-200"}`} />}
               </div>
             ))}
           </div>
@@ -1059,8 +1115,68 @@ export default function ApplyPage() {
         <div className="w-full max-w-2xl">
           <AnimatePresence mode="wait" custom={dir}>
 
+            {/* ══ SITUATION SELECTION ══ */}
+            {!situationDone && (
+              <motion.div key="situation" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -16 }} transition={{ duration: 0.38, ease: EASE }}
+                className="space-y-6">
+
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: "#0e7490" }}>
+                    Step 1 of 5
+                  </p>
+                  <h2 className="text-2xl font-bold text-slate-900">What is your current situation?</h2>
+                  <p className="text-sm text-slate-500 mt-1">
+                    This helps us tailor the right financial model and questions for your business.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {SITUATIONS.map(({ id, icon: Icon, title, desc, color, bg }) => {
+                    const selected = situation === id;
+                    return (
+                      <motion.button key={id} onClick={() => setSituation(id)}
+                        whileHover={{ y: -2 }} whileTap={{ scale: 0.98 }}
+                        className={`text-left p-4 rounded-2xl border-2 transition-all ${
+                          selected
+                            ? "border-cyan-500 shadow-md"
+                            : "border-slate-100 hover:border-slate-200 bg-white"
+                        }`}
+                        style={selected ? { background: bg, borderColor: color } : {}}>
+                        <div className="flex items-start gap-3">
+                          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+                            style={{ background: selected ? "white" : bg }}>
+                            <Icon className="w-4 h-4" style={{ color }} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-bold text-slate-800 mb-0.5">{title}</p>
+                            <p className="text-xs text-slate-500 leading-relaxed">{desc}</p>
+                          </div>
+                          {selected && (
+                            <div className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
+                              style={{ background: color }}>
+                              <Check className="w-3 h-3 text-white" />
+                            </div>
+                          )}
+                        </div>
+                      </motion.button>
+                    );
+                  })}
+                </div>
+
+                <motion.button
+                  whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                  disabled={!situation}
+                  onClick={() => { setSituationDone(true); }}
+                  className="w-full flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                  style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
+                  Begin Business Mapping <ArrowRight className="w-4 h-4" />
+                </motion.button>
+              </motion.div>
+            )}
+
             {/* ══ STEP 0: AI Intake Chat ══ */}
-            {step === 0 && (
+            {situationDone && step === 0 && (
               <motion.div key="intake" custom={dir} variants={slide} initial="enter" animate="center" exit="exit"
                 className="flex flex-col" style={{ height: "calc(100vh - 180px)", maxHeight: 620 }}>
                 <div className="flex items-center gap-3 mb-4">
