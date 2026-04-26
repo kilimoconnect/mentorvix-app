@@ -1031,43 +1031,58 @@ export default function ApplyPage() {
   const [streamIdx,  setStreamIdx]  = useState(0);
   const [driverMode, setDriverMode] = useState<DriverMode>("chat");
 
-  // Voice — mic (speech-to-text) + per-message speaker (OpenAI TTS)
+  // Voice — mic (speech-to-text) + per-message speaker (Web Speech API, best available voice)
   const [micActive,    setMicActive]    = useState(false);
   const [speakingIdx,  setSpeakingIdx]  = useState<number | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef  = useRef<any>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const audioRef        = useRef<HTMLAudioElement | null>(null);
 
-  const speakMessage = useCallback(async (text: string, idx: number) => {
+  // Pick the most natural available voice — neural/enhanced/premium first
+  const getBestVoice = useCallback((): SpeechSynthesisVoice | null => {
+    const voices = window.speechSynthesis.getVoices();
+    if (!voices.length) return null;
+    const enVoices = voices.filter((v) => v.lang.startsWith("en"));
+    // Ranked preference: neural/enhanced/premium/natural/online > anything en-US > any en
+    const priority = [
+      (v: SpeechSynthesisVoice) => /neural|enhanced|premium|natural/i.test(v.name) && v.lang === "en-US",
+      (v: SpeechSynthesisVoice) => /neural|enhanced|premium|natural/i.test(v.name) && v.lang.startsWith("en"),
+      (v: SpeechSynthesisVoice) => /online/i.test(v.name) && v.lang === "en-US",
+      (v: SpeechSynthesisVoice) => /online/i.test(v.name) && v.lang.startsWith("en"),
+      // Specific high-quality named voices
+      (v: SpeechSynthesisVoice) => /samantha|karen|victoria|moira/i.test(v.name),  // macOS/iOS
+      (v: SpeechSynthesisVoice) => /aria|jenny|guy|emma|brian/i.test(v.name),      // Edge/Windows
+      (v: SpeechSynthesisVoice) => /google us english/i.test(v.name),              // Chrome
+      (v: SpeechSynthesisVoice) => v.lang === "en-US",
+      (v: SpeechSynthesisVoice) => v.lang.startsWith("en"),
+    ];
+    for (const test of priority) {
+      const match = enVoices.find(test);
+      if (match) return match;
+    }
+    return voices[0];
+  }, []);
+
+  const speakMessage = useCallback((text: string, idx: number) => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
     // If already speaking this message — stop it
     if (speakingIdx === idx) {
-      audioRef.current?.pause();
-      audioRef.current = null;
+      window.speechSynthesis.cancel();
       setSpeakingIdx(null);
       return;
     }
-    // Stop any currently playing audio
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    window.speechSynthesis.cancel();
+    const utt = new SpeechSynthesisUtterance(text);
+    const voice = getBestVoice();
+    if (voice) utt.voice = voice;
+    utt.lang  = "en-US";
+    utt.rate  = 1.0;
+    utt.pitch = 1.0;
+    utt.onend  = () => setSpeakingIdx(null);
+    utt.onerror = () => setSpeakingIdx(null);
     setSpeakingIdx(idx);
-    try {
-      const res = await fetch("/api/speak", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      if (!res.ok) throw new Error("TTS failed");
-      const blob = await res.blob();
-      const url  = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      audioRef.current = audio;
-      audio.onended = () => { URL.revokeObjectURL(url); setSpeakingIdx(null); audioRef.current = null; };
-      audio.onerror = () => { URL.revokeObjectURL(url); setSpeakingIdx(null); audioRef.current = null; };
-      await audio.play();
-    } catch {
-      setSpeakingIdx(null);
-    }
-  }, [speakingIdx]);
+    window.speechSynthesis.speak(utt);
+  }, [speakingIdx, getBestVoice]);
 
   const stopMic = useCallback(() => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
