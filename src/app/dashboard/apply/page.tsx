@@ -1037,43 +1037,62 @@ export default function ApplyPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef  = useRef<any>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cachedVoiceRef  = useRef<SpeechSynthesisVoice | null>(null);
 
-  // Pick the most natural available voice — neural/enhanced/premium first
-  const getBestVoice = useCallback((): SpeechSynthesisVoice | null => {
-    const voices = window.speechSynthesis.getVoices();
-    if (!voices.length) return null;
-    const enVoices = voices.filter((v) => v.lang.startsWith("en"));
-    // Ranked preference: neural/enhanced/premium/natural/online > anything en-US > any en
-    const priority = [
-      (v: SpeechSynthesisVoice) => /neural|enhanced|premium|natural/i.test(v.name) && v.lang === "en-US",
-      (v: SpeechSynthesisVoice) => /neural|enhanced|premium|natural/i.test(v.name) && v.lang.startsWith("en"),
-      (v: SpeechSynthesisVoice) => /online/i.test(v.name) && v.lang === "en-US",
-      (v: SpeechSynthesisVoice) => /online/i.test(v.name) && v.lang.startsWith("en"),
-      // Specific high-quality named voices
-      (v: SpeechSynthesisVoice) => /samantha|karen|victoria|moira/i.test(v.name),  // macOS/iOS
-      (v: SpeechSynthesisVoice) => /aria|jenny|guy|emma|brian/i.test(v.name),      // Edge/Windows
-      (v: SpeechSynthesisVoice) => /google us english/i.test(v.name),              // Chrome
-      (v: SpeechSynthesisVoice) => v.lang === "en-US",
-      (v: SpeechSynthesisVoice) => v.lang.startsWith("en"),
-    ];
-    for (const test of priority) {
-      const match = enVoices.find(test);
-      if (match) return match;
-    }
-    return voices[0];
+  // Resolve the best voice — picks from loaded list, waits via onvoiceschanged if not ready yet
+  const resolveBestVoice = useCallback((): Promise<SpeechSynthesisVoice | null> => {
+    return new Promise((resolve) => {
+      const pick = (voices: SpeechSynthesisVoice[]) => {
+        if (!voices.length) return null;
+        const en = voices.filter((v) => v.lang.startsWith("en"));
+        const priority = [
+          (v: SpeechSynthesisVoice) => /neural|enhanced|premium|natural/i.test(v.name) && v.lang === "en-US",
+          (v: SpeechSynthesisVoice) => /neural|enhanced|premium|natural/i.test(v.name) && v.lang.startsWith("en"),
+          (v: SpeechSynthesisVoice) => /online/i.test(v.name) && v.lang === "en-US",
+          (v: SpeechSynthesisVoice) => /online/i.test(v.name) && v.lang.startsWith("en"),
+          (v: SpeechSynthesisVoice) => /samantha|karen|victoria|moira/i.test(v.name),
+          (v: SpeechSynthesisVoice) => /aria|jenny|guy|emma|brian/i.test(v.name),
+          (v: SpeechSynthesisVoice) => /google us english/i.test(v.name),
+          (v: SpeechSynthesisVoice) => v.lang === "en-US",
+          (v: SpeechSynthesisVoice) => v.lang.startsWith("en"),
+        ];
+        for (const test of priority) { const m = en.find(test); if (m) return m; }
+        return voices[0];
+      };
+
+      if (cachedVoiceRef.current) { resolve(cachedVoiceRef.current); return; }
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length) {
+        const v = pick(voices);
+        cachedVoiceRef.current = v;
+        resolve(v);
+      } else {
+        // Voices not loaded yet — wait for the event (fires once on first load)
+        window.speechSynthesis.onvoiceschanged = () => {
+          const v = pick(window.speechSynthesis.getVoices());
+          cachedVoiceRef.current = v;
+          window.speechSynthesis.onvoiceschanged = null;
+          resolve(v);
+        };
+      }
+    });
   }, []);
 
-  const speakMessage = useCallback((text: string, idx: number) => {
+  // Pre-warm: load and cache the voice as soon as the component mounts
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.speechSynthesis) resolveBestVoice();
+  }, [resolveBestVoice]);
+
+  const speakMessage = useCallback(async (text: string, idx: number) => {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
-    // If already speaking this message — stop it
     if (speakingIdx === idx) {
       window.speechSynthesis.cancel();
       setSpeakingIdx(null);
       return;
     }
     window.speechSynthesis.cancel();
+    const voice = await resolveBestVoice();
     const utt = new SpeechSynthesisUtterance(text);
-    const voice = getBestVoice();
     if (voice) utt.voice = voice;
     utt.lang  = "en-US";
     utt.rate  = 1.0;
@@ -1082,7 +1101,7 @@ export default function ApplyPage() {
     utt.onerror = () => setSpeakingIdx(null);
     setSpeakingIdx(idx);
     window.speechSynthesis.speak(utt);
-  }, [speakingIdx, getBestVoice]);
+  }, [speakingIdx, resolveBestVoice]);
 
   const stopMic = useCallback(() => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
