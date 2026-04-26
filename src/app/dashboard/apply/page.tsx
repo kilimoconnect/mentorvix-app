@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import {
   ArrowLeft, ArrowRight, Plus, Trash2, Edit3, Check,
-  Sparkles, BarChart3, TrendingUp, ShoppingBag, Briefcase,
+  BrainCircuit, BarChart3, TrendingUp, ShoppingBag, Briefcase,
   Repeat, Landmark, Zap, CheckCircle2,
   X, ChevronDown, ChevronUp, Info, RefreshCw, Send,
 } from "lucide-react";
@@ -361,7 +361,7 @@ export default function ApplyPage() {
                 <div className="flex items-center gap-3 mb-4">
                   <div className="w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0"
                     style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
-                    <Sparkles className="w-5 h-5 text-white" />
+                    <BrainCircuit className="w-5 h-5 text-white" />
                   </div>
                   <div>
                     <p className="text-sm font-bold text-slate-900">Mentorvix AI · Revenue Intelligence</p>
@@ -384,7 +384,7 @@ export default function ApplyPage() {
                       {m.role === "assistant" && (
                         <div className="w-7 h-7 rounded-xl flex items-center justify-center flex-shrink-0 mr-2 mt-0.5"
                           style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
-                          <Sparkles className="w-3.5 h-3.5 text-white" />
+                          <BrainCircuit className="w-3.5 h-3.5 text-white" />
                         </div>
                       )}
                       <div className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${
@@ -403,7 +403,7 @@ export default function ApplyPage() {
                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-2">
                       <div className="w-7 h-7 rounded-xl flex items-center justify-center flex-shrink-0"
                         style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
-                        <Sparkles className="w-3.5 h-3.5 text-white" />
+                        <BrainCircuit className="w-3.5 h-3.5 text-white" />
                       </div>
                       <div className="bg-white border border-slate-100 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
                         <div className="flex items-center gap-1">

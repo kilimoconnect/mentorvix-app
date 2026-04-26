@@ -10,7 +10,7 @@ import {
   LayoutDashboard, FilePlus2, FolderOpen, BarChart3, Landmark,
   Settings, CreditCard, HelpCircle, Bell, ChevronRight,
   TrendingUp, TrendingDown, ArrowUpRight, FileText, Zap,
-  Menu, X, LogOut, Sparkles, Lock, ArrowRight, Shield, Users,
+  Menu, X, LogOut, BrainCircuit, Lock, ArrowRight, Shield, Users,
   Target, CheckCircle2, Clock, Info, ChevronUp, ClipboardList,
 } from "lucide-react";
 
@@ -566,7 +566,7 @@ export default function DashboardPage() {
                 transition={{ delay:0.45, duration:0.5, ease:EASE }}
                 className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
                 <div className="flex items-center gap-2 mb-4">
-                  <Sparkles className="w-4 h-4" style={{ color:"#0e7490" }} />
+                  <BrainCircuit className="w-4 h-4" style={{ color:"#0e7490" }} />
                   <h3 className="text-sm font-semibold text-slate-800">AI Funding Advisor</h3>
                 </div>
                 <div className="space-y-3">
