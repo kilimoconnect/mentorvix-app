@@ -49,13 +49,14 @@ function chooseProvider(requested?: string): Provider {
 
 async function callOpenAI(messages: Message[]): Promise<string> {
   const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  // On opening turn, append a silent trigger so GPT asks the first question
+  const turns = messages.length === 0
+    ? [{ role: "user" as const, content: "Start" }]
+    : messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
   const res = await client.chat.completions.create({
     model: "gpt-4o",
     max_tokens: 400,
-    messages: [
-      { role: "system", content: SYSTEM },
-      ...messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
-    ],
+    messages: [{ role: "system", content: SYSTEM }, ...turns],
   });
   return res.choices[0]?.message?.content ?? "";
 }
@@ -63,11 +64,15 @@ async function callOpenAI(messages: Message[]): Promise<string> {
 async function callGemini(messages: Message[]): Promise<string> {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? "");
   const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-  const history = messages.slice(0, -1).map((m) => ({
+  // On opening turn (empty messages), send a trigger so Gemini asks the first question
+  const allMessages = messages.length === 0
+    ? [{ role: "user" as const, content: "Start" }]
+    : messages;
+  const history = allMessages.slice(0, -1).map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }],
   }));
-  const lastMsg = messages[messages.length - 1]?.content ?? "";
+  const lastMsg = allMessages[allMessages.length - 1].content;
   const chat = model.startChat({
     history,
     systemInstruction: { role: "system", parts: [{ text: SYSTEM }] },
@@ -84,9 +89,7 @@ export async function POST(req: NextRequest) {
       provider?: string;
     };
 
-    if (!messages?.length) {
-      return NextResponse.json({ error: "No messages provided" }, { status: 400 });
-    }
+    // empty messages = opening turn — AI fires the first question
 
     const provider = chooseProvider(requestedProvider);
     const text = provider === "gemini" ? await callGemini(messages) : await callOpenAI(messages);
