@@ -1033,7 +1033,11 @@ export default function ApplyPage() {
   const go = (n: number) => { setDir(n > step ? 1 : -1); setStep(n); };
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, aiTyping]);
-  useEffect(() => { if (messages.length === 0) callIntake([]); }, []); // eslint-disable-line
+  // Fire opening message only after situation is confirmed and no messages yet
+  useEffect(() => {
+    if (situationDone && messages.length === 0) callIntake([]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [situationDone]);
 
   const callIntake = useCallback(async (history: ChatMessage[]) => {
     setAiTyping(true); setChatError("");
@@ -1058,7 +1062,7 @@ export default function ApplyPage() {
     } catch (e) { setChatError(e instanceof Error ? e.message : "Connection error"); }
     finally { setAiTyping(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [situation]);
 
   const sendIntake = () => {
     const text = input.trim();
