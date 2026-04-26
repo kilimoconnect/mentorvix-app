@@ -16,7 +16,7 @@ const EASE = [0.22, 1, 0.36, 1] as [number, number, number, number];
 /* ─────────────────────────────────────── types ── */
 type StreamType = "product" | "service" | "subscription" | "rental" | "marketplace" | "custom";
 type Confidence  = "high" | "medium" | "low";
-type Provider    = "anthropic" | "openai" | "gemini";
+type Provider    = "openai" | "gemini";
 
 interface ChatMessage { role: "user" | "assistant"; content: string; }
 interface RevenueStream {
@@ -222,7 +222,7 @@ export default function ApplyPage() {
   const [messages,     setMessages]     = useState<ChatMessage[]>([]);
   const [input,        setInput]        = useState("");
   const [aiTyping,     setAiTyping]     = useState(false);
-  const [provider,     setProvider]     = useState<Provider>("anthropic");
+  const [provider,     setProvider]     = useState<Provider>("openai");
   const [usedProvider, setUsedProvider] = useState<Provider | null>(null);
   const [chatError,    setChatError]    = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -314,9 +314,8 @@ export default function ApplyPage() {
   const annualTotal = projection.reduce((a, d) => a + d.total, 0);
 
   const PROVIDER_COLORS: Record<Provider, string> = {
-    anthropic: "#e07b39",
-    openai:    "#10a37f",
-    gemini:    "#4285f4",
+    openai:  "#10a37f",
+    gemini:  "#4285f4",
   };
 
   const slide = {
@@ -352,12 +351,12 @@ export default function ApplyPage() {
         </div>
         {/* Provider selector */}
         <div className="flex items-center gap-1.5">
-          {(["anthropic","openai","gemini"] as Provider[]).map((p) => (
+          {(["openai","gemini"] as Provider[]).map((p) => (
             <button key={p} onClick={() => setProvider(p)}
               title={p.charAt(0).toUpperCase() + p.slice(1)}
               className={`w-7 h-7 rounded-full text-xs font-bold border-2 transition-all ${provider === p ? "border-current scale-110" : "border-transparent opacity-40 hover:opacity-70"}`}
               style={{ background: PROVIDER_COLORS[p], color: "#fff" }}>
-              {p === "anthropic" ? "A" : p === "openai" ? "O" : "G"}
+              {p === "openai" ? "O" : "G"}
             </button>
           ))}
         </div>

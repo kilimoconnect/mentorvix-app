@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import OpenAI from "openai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
@@ -9,14 +8,14 @@ const SYSTEM = `You are an expert revenue analyst AI for Mentorvix, helping SME 
 Your goal: understand the business through natural one-on-one conversation, then detect their revenue streams.
 
 STRICT RULES:
-1. Ask ONE question at a time — never multiple questions in one message
+1. Ask ONLY ONE question at a time — never multiple questions in one message
 2. Base every follow-up question on what the user just told you — never use pre-scripted questions
 3. Start with a warm, open question about what they do or sell
 4. Explore: what they sell, who buys it, payment method (cash/mobile money/bank/card), how often, rough scale, main channels, any recurring income
 5. After 4–8 exchanges (when you understand the business well enough), output the detection block
 6. Be warm, encouraging, and use plain everyday language — no finance jargon
 7. Keep your question to ONE sentence maximum
-8. Never explain what you're doing — just ask naturally
+8. Never explain what you're doing — just ask the question naturally
 9. Do not number your questions
 
 WHEN READY TO DETECT — output exactly this and nothing else before the tag:
@@ -36,29 +35,16 @@ GOOD STREAM NAME EXAMPLES:
 "Website Development Projects", "Consulting Retainer", "Agricultural Produce Sales", "Airbnb Rental Income"`;
 
 /* ─────────────────────────── provider routing ── */
-type Provider = "anthropic" | "openai" | "gemini";
+type Provider = "openai" | "gemini";
 type Message  = { role: "user" | "assistant"; content: string };
 
 function chooseProvider(requested?: string): Provider {
-  if (requested === "anthropic" && process.env.ANTHROPIC_API_KEY) return "anthropic";
-  if (requested === "openai"    && process.env.OPENAI_API_KEY)    return "openai";
-  if (requested === "gemini"    && process.env.GEMINI_API_KEY)    return "gemini";
+  if (requested === "openai" && process.env.OPENAI_API_KEY) return "openai";
+  if (requested === "gemini" && process.env.GEMINI_API_KEY) return "gemini";
   // auto-select first available
-  if (process.env.ANTHROPIC_API_KEY) return "anthropic";
-  if (process.env.OPENAI_API_KEY)    return "openai";
-  if (process.env.GEMINI_API_KEY)    return "gemini";
-  return "anthropic"; // will fail gracefully below
-}
-
-async function callAnthropic(messages: Message[]): Promise<string> {
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const res = await client.messages.create({
-    model: "claude-sonnet-4-5",
-    max_tokens: 400,
-    system: SYSTEM,
-    messages: messages.map((m) => ({ role: m.role, content: m.content })),
-  });
-  return res.content[0].type === "text" ? res.content[0].text : "";
+  if (process.env.OPENAI_API_KEY) return "openai";
+  if (process.env.GEMINI_API_KEY) return "gemini";
+  return "openai";
 }
 
 async function callOpenAI(messages: Message[]): Promise<string> {
@@ -77,7 +63,6 @@ async function callOpenAI(messages: Message[]): Promise<string> {
 async function callGemini(messages: Message[]): Promise<string> {
   const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY ?? "");
   const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-  // Gemini uses a different turn format — convert history then add last user message
   const history = messages.slice(0, -1).map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }],
@@ -104,14 +89,7 @@ export async function POST(req: NextRequest) {
     }
 
     const provider = chooseProvider(requestedProvider);
-    let text: string;
-
-    switch (provider) {
-      case "openai":   text = await callOpenAI(messages);   break;
-      case "gemini":   text = await callGemini(messages);   break;
-      case "anthropic":
-      default:         text = await callAnthropic(messages); break;
-    }
+    const text = provider === "gemini" ? await callGemini(messages) : await callOpenAI(messages);
 
     return NextResponse.json({ text, provider });
   } catch (err: unknown) {
