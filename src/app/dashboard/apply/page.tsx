@@ -1039,7 +1039,7 @@ export default function ApplyPage() {
         </Link>
         <div className="flex-1 flex items-center justify-center">
           <div className="flex items-center gap-2">
-            {["Understand", "Detect", "Build Drivers", "Forecast"].map((label, i) => (
+            {["Business Mapping", "Confirm Structure", "Revenue Data", "Forecast"].map((label, i) => (
               <div key={i} className="flex items-center gap-2">
                 <div className={`flex items-center gap-1.5 text-xs font-medium ${step >= i ? "text-cyan-700" : "text-slate-400"}`}>
                   <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold"
@@ -1069,7 +1069,7 @@ export default function ApplyPage() {
                     <BrainCircuit className="w-5 h-5 text-white" />
                   </div>
                   <div>
-                    <p className="text-sm font-bold text-slate-900">Mentorvix AI · Revenue Intelligence</p>
+                    <p className="text-sm font-bold text-slate-900">Mentorvix AI · Business Mapping Session</p>
                     <div className="flex items-center gap-1.5">
                       <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                       <p className="text-xs text-slate-400">Online</p>
