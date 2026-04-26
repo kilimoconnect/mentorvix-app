@@ -13,7 +13,7 @@ import {
   ChevronDown, ChevronUp, Info, Upload, Pencil,
   Calendar, ChevronRight, ScrollText, Users, FileText,
   Rocket, Store, Wrench, RefreshCcw, Banknote,
-  Mic, MicOff, Volume2, VolumeX,
+  Mic, MicOff, Volume2,
 } from "lucide-react";
 
 const EASE = [0.22, 1, 0.36, 1] as [number, number, number, number];
@@ -1031,20 +1031,29 @@ export default function ApplyPage() {
   const [streamIdx,  setStreamIdx]  = useState(0);
   const [driverMode, setDriverMode] = useState<DriverMode>("chat");
 
-  // Voice — mic (speech-to-text) + speaker (text-to-speech)
-  const [micActive,  setMicActive]  = useState(false);
-  const [speakerOn,  setSpeakerOn]  = useState(false);
+  // Voice — mic (speech-to-text) + per-message speaker (text-to-speech)
+  const [micActive,    setMicActive]    = useState(false);
+  const [speakingIdx,  setSpeakingIdx]  = useState<number | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef  = useRef<any>(null);
   const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const speak = useCallback((text: string) => {
-    if (!speakerOn || typeof window === "undefined" || !window.speechSynthesis) return;
+  const speakMessage = useCallback((text: string, idx: number) => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    // If already speaking this message — stop it
+    if (speakingIdx === idx) {
+      window.speechSynthesis.cancel();
+      setSpeakingIdx(null);
+      return;
+    }
     window.speechSynthesis.cancel();
     const utt = new SpeechSynthesisUtterance(text);
     utt.rate = 1.05; utt.pitch = 1; utt.lang = "en-US";
+    utt.onend  = () => setSpeakingIdx(null);
+    utt.onerror = () => setSpeakingIdx(null);
+    setSpeakingIdx(idx);
     window.speechSynthesis.speak(utt);
-  }, [speakerOn]);
+  }, [speakingIdx]);
 
   const stopMic = useCallback(() => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
@@ -1119,17 +1128,15 @@ export default function ApplyPage() {
         const clean = text.slice(0, text.indexOf("[STREAMS_DETECTED]")).trim() ||
           `Great — I've identified ${detected.length} income source${detected.length !== 1 ? "s" : ""}. Let me show you what I found.`;
         setMessages((prev) => [...prev, { role: "assistant", content: clean }]);
-        speak(clean);
         setStreams(detected);
         setTimeout(() => go(1), 900);
       } else {
         setMessages((prev) => [...prev, { role: "assistant", content: text }]);
-        speak(text);
       }
     } catch (e) { setChatError(e instanceof Error ? e.message : "Connection error"); }
     finally { setAiTyping(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [situation, speak]);
+  }, [situation]);
 
   const sendIntake = () => {
     const text = input.trim();
@@ -1292,6 +1299,19 @@ export default function ApplyPage() {
                       }`} style={m.role === "user" ? { background: "linear-gradient(135deg,#0e7490,#0891b2)" } : {}}>
                         {m.content}
                       </div>
+                      {/* Speaker button — only on AI messages */}
+                      {m.role === "assistant" && (
+                        <button
+                          onClick={() => speakMessage(m.content, i)}
+                          title={speakingIdx === i ? "Stop" : "Read aloud"}
+                          className={`ml-1.5 mt-1 w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 transition-all self-start ${
+                            speakingIdx === i
+                              ? "text-cyan-600 bg-cyan-50"
+                              : "text-slate-300 hover:text-cyan-500 hover:bg-slate-50"
+                          }`}>
+                          <Volume2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </motion.div>
                   ))}
                   {aiTyping && (
@@ -1340,19 +1360,6 @@ export default function ApplyPage() {
                         ? "border-red-300 focus:border-red-400 focus:ring-red-400/20"
                         : "border-slate-200 focus:border-cyan-500 focus:ring-cyan-500/20"
                     }`} />
-
-                  {/* Speaker toggle */}
-                  <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
-                    onClick={() => { setSpeakerOn((v) => !v); if (speakerOn) window.speechSynthesis?.cancel(); }}
-                    title={speakerOn ? "Mute AI voice" : "Enable AI voice"}
-                    className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 transition-all ${
-                      speakerOn
-                        ? "text-white shadow-md"
-                        : "border border-slate-200 text-slate-400 hover:border-cyan-400 hover:text-cyan-600 bg-white"
-                    }`}
-                    style={speakerOn ? { background: "linear-gradient(135deg,#0e7490,#0891b2)" } : {}}>
-                    {speakerOn ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-                  </motion.button>
 
                   {/* Send button */}
                   <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={sendIntake}
