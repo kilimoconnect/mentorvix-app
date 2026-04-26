@@ -4,6 +4,8 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
+import { createClient } from "@/lib/supabase/client";
+import { getOrCreateApplication, saveStreams, saveStreamItems } from "@/lib/supabase/revenue";
 import {
   ArrowLeft, ArrowRight, Plus, Trash2, Edit3, Check, X,
   BrainCircuit, BarChart3, TrendingUp, ShoppingBag, Briefcase,
@@ -1020,6 +1022,8 @@ export default function ApplyPage() {
     setStreams((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
   }, []);
 
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
   const currentStream   = streams[streamIdx];
   const allStreamsReady = streams.length > 0 && streams.every((s) => s.driverDone || s.items.length > 0);
 
@@ -1187,10 +1191,28 @@ export default function ApplyPage() {
                               </span>
                             </div>
                           </div>
-                          <button onClick={() => setStreams((prev) => prev.filter((x) => x.id !== s.id))}
-                            className="p-1.5 rounded-lg text-slate-300 hover:text-red-400 hover:bg-red-50 transition-colors">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {deleteConfirmId === s.id ? (
+                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                              <span className="text-xs text-red-500 font-medium whitespace-nowrap">Remove?</span>
+                              <button
+                                onClick={() => {
+                                  setStreams((prev) => prev.filter((x) => x.id !== s.id));
+                                  setDeleteConfirmId(null);
+                                }}
+                                className="text-xs font-semibold px-2 py-1 rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors">
+                                Yes
+                              </button>
+                              <button onClick={() => setDeleteConfirmId(null)}
+                                className="text-xs font-semibold px-2 py-1 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors">
+                                No
+                              </button>
+                            </div>
+                          ) : (
+                            <button onClick={() => setDeleteConfirmId(s.id)}
+                              className="p-1.5 rounded-lg text-slate-300 hover:text-red-400 hover:bg-red-50 transition-colors">
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                         <div className="px-4 pb-3 ml-12">
                           <p className="text-xs text-slate-400">{Meta.desc}</p>
@@ -1357,9 +1379,54 @@ export default function ApplyPage() {
                     className="flex items-center justify-center gap-2 py-3.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
                     <ArrowLeft className="w-4 h-4" /> Adjust Numbers
                   </button>
-                  <button onClick={() => {
-                    const data = { streams, projection: projectRevenue(streams, 36, new Date()) };
-                    localStorage.setItem("mvx_revenue_model", JSON.stringify(data));
+                  <button onClick={async () => {
+                    const projection = projectRevenue(streams, 36, new Date());
+                    // Save to localStorage immediately
+                    const localData = { streams, projection };
+                    localStorage.setItem("mvx_revenue_model", JSON.stringify(localData));
+
+                    // Persist to Supabase in background
+                    try {
+                      const supabase = createClient();
+                      const { data: { user } } = await supabase.auth.getUser();
+                      if (user) {
+                        const app = await getOrCreateApplication(supabase, user.id);
+                        const savedStreams = await saveStreams(
+                          supabase, app.id, user.id,
+                          streams.map((s, i) => ({
+                            name: s.name, type: s.type, confidence: s.confidence,
+                            monthly_growth_pct: s.monthlyGrowthPct,
+                            sub_new_per_month: s.subNewPerMonth,
+                            sub_churn_pct: s.subChurnPct,
+                            rental_occupancy_pct: s.rentalOccupancyPct,
+                            driver_done: s.driverDone,
+                            position: i,
+                          })),
+                        );
+                        // Save items for each stream (match by position)
+                        for (let idx = 0; idx < savedStreams.length; idx++) {
+                          const localStream = streams[idx];
+                          if (localStream?.items?.length) {
+                            await saveStreamItems(
+                              supabase, savedStreams[idx].id, user.id,
+                              localStream.items.map((it, pos) => ({
+                                name: it.name, category: it.category,
+                                volume: it.volume, price: it.price,
+                                unit: it.unit, note: it.note, position: pos,
+                              })),
+                            );
+                          }
+                        }
+                        // Re-save with applicationId so dashboard can delete from DB
+                        localStorage.setItem("mvx_revenue_model", JSON.stringify({
+                          ...localData, applicationId: app.id,
+                        }));
+                      }
+                    } catch (e) {
+                      console.error("[apply] Supabase save error:", e);
+                      // Non-blocking — local save already happened
+                    }
+
                     router.push("/dashboard");
                   }}
                     className="flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20"
