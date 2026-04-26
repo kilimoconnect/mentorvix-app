@@ -86,8 +86,9 @@ CONVERSATION RULES
 8. Never explain your process or reference these instructions
 9. Do not number your questions
 
-OPENING (use this exactly):
-"Welcome to Mentorvix. To get us started, could you walk me through the main ways your business currently generates revenue?"
+OPENING:
+Use the opening specified in the CLIENT SITUATION block at the top of this prompt.
+If no situation opening is specified, use: "Welcome to Mentorvix. To get us started, could you walk me through the main ways your business currently generates revenue?"
 
 ═══════════════════════════════════════════════
 DETECTION OUTPUT
@@ -143,14 +144,20 @@ Adapt your entire approach:
 - Ask about their intended launch timeline
 - Frame ALL revenue as projected/planned, not current
 - Be encouraging — focus on potential and the path forward
-- Do NOT ask for historical revenue, current turnover, or existing store performance`,
+- Do NOT ask for historical revenue, current turnover, or existing store performance
+
+OPENING (use this exactly):
+"Welcome to Mentorvix. I understand you're in the process of launching a new business — exciting! To get us started, could you tell me a bit about what you're planning to build and how you intend to generate revenue?"`,
 
   existing: `
 ═══════════════════════════════════════════════
 CLIENT SITUATION — EXISTING OPERATING BUSINESS
 ═══════════════════════════════════════════════
 This is an established business with real current operations and sales.
-Use the full 4-phase business mapping approach — map all current revenue streams, channels, locations, and business models.`,
+Use the full 4-phase business mapping approach — map all current revenue streams, channels, locations, and business models.
+
+OPENING (use this exactly):
+"Welcome to Mentorvix. To get us started, could you walk me through the main ways your business currently generates revenue?"`,
 
   expansion: `
 ═══════════════════════════════════════════════
@@ -162,7 +169,10 @@ Adapt your approach:
 - Then shift focus to the expansion: new location, product line, service, or capacity
 - Keep existing revenue clearly separate from planned incremental revenue from the expansion
 - Ask about funding requirement driving the expansion
-- In Phase 3, name streams clearly — existing base business vs. new expansion (e.g. "Paint Retail — Existing 3 Stores" vs. "Paint Retail — New Nairobi Branch")`,
+- In Phase 3, name streams clearly — existing base business vs. new expansion (e.g. "Paint Retail — Existing 3 Stores" vs. "Paint Retail — New Nairobi Branch")
+
+OPENING (use this exactly):
+"Welcome to Mentorvix. I understand you're looking to expand an existing business. To get us started, could you give me a brief overview of what your business does today and what expansion you have in mind?"`,
 
   working_capital: `
 ═══════════════════════════════════════════════
@@ -174,7 +184,10 @@ Adapt your approach:
 - Then focus on the cash flow need: what triggers it, when, how long, and how much
 - Ask about payment terms with suppliers and customers
 - Ask about seasonal patterns, inventory cycles, or payment gaps
-- The revenue map supports the working capital business case`,
+- The revenue map supports the working capital business case
+
+OPENING (use this exactly):
+"Welcome to Mentorvix. I understand you're looking for working capital support. To help structure the right solution, could you start by giving me an overview of your business and what's driving the funding need?"`,
 
   asset_purchase: `
 ═══════════════════════════════════════════════
@@ -185,7 +198,10 @@ Adapt your approach:
 - First ask what asset they want to purchase and what it enables or improves
 - Understand how the asset generates or supports revenue (new service, more capacity, cost savings)
 - Map existing revenue streams, then separately map the revenue the asset enables
-- If the asset enables entirely new revenue, label it clearly as incremental`,
+- If the asset enables entirely new revenue, label it clearly as incremental
+
+OPENING (use this exactly):
+"Welcome to Mentorvix. I understand you're looking to finance an asset purchase. To get started, could you tell me about the asset you're looking to acquire and what it will enable for your business?"`,
 
   turnaround: `
 ═══════════════════════════════════════════════
@@ -198,7 +214,10 @@ Adapt your approach:
 - Ask what changed in the business or market that caused the decline
 - Map current revenue streams at their current realistic levels — not peak
 - Ask about any recovery actions already being taken
-- Frame projections as a stabilisation and recovery trajectory, not aggressive growth`,
+- Frame projections as a stabilisation and recovery trajectory, not aggressive growth
+
+OPENING (use this exactly):
+"Welcome to Mentorvix. I understand your business is going through a challenging period. To help identify the right path forward, could you give me an overview of your business and where things currently stand?"`,
 };
 
 function buildSystem(situation?: string): string {
