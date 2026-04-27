@@ -1821,33 +1821,6 @@ function ForecastView({
         </div>
       </div>
 
-      {/* ── Financial Model CTA ── */}
-      <div className="rounded-2xl p-5 text-white" style={{ background: "linear-gradient(135deg,#0a1628,#0f2a4a)" }}>
-        <div className="flex items-start gap-3 mb-4">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: "rgba(14,116,144,0.3)" }}>
-            <BarChart3 className="w-4 h-4 text-cyan-400" />
-          </div>
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-cyan-400 mb-0.5">Next Step</p>
-            <p className="text-sm font-bold text-white">Generate Full Financial Model</p>
-            <p className="text-xs text-slate-400 mt-0.5">Your revenue model feeds directly into P&amp;L, Cash Flow, Balance Sheet, and Loan Readiness scoring.</p>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {[
-            { label: "Income Statement", icon: ScrollText },
-            { label: "Cash Flow",        icon: TrendingUp },
-            { label: "Balance Sheet",    icon: Landmark },
-            { label: "Loan Readiness",   icon: CheckCircle2 },
-          ].map(({ label, icon: Icon }) => (
-            <div key={label} className="py-2.5 px-3 rounded-lg text-xs font-semibold text-slate-300 border border-white/10 text-center flex items-center justify-center gap-1.5" title="Coming soon">
-              <Icon className="w-3 h-3 text-slate-400 shrink-0" />
-              {label}
-            </div>
-          ))}
-        </div>
-        <p className="text-[10px] text-slate-500 mt-3 text-center">Financial modelling — coming next · Save your progress to continue</p>
-      </div>
     </div>
   );
 }
