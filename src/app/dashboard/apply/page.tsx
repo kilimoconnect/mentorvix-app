@@ -1783,12 +1783,10 @@ export default function ApplyPage() {
             ))}
           </div>
         </div>
-        {/* Editable project name — shown once streams are detected */}
-        {streams.length > 0 && (
-          <div className="flex-shrink-0 hidden sm:block">
-            <EditableName value={appName} onChange={setAppName} />
-          </div>
-        )}
+        {/* Editable project name — always visible once user has started */}
+        <div className="flex-shrink-0 hidden sm:block">
+          <EditableName value={appName} onChange={setAppName} />
+        </div>
       </div>
 
       <div className="flex-1 flex items-start sm:items-center justify-center px-4 py-6 sm:py-10 overflow-hidden">
@@ -1805,10 +1803,33 @@ export default function ApplyPage() {
                   <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: "#0e7490" }}>
                     Step 1 of 5
                   </p>
-                  <h2 className="text-2xl font-bold text-slate-900">What is your current situation?</h2>
+                  <h2 className="text-2xl font-bold text-slate-900">Let&apos;s set up your project</h2>
                   <p className="text-sm text-slate-500 mt-1">
-                    This helps us tailor the right financial model and questions for your business.
+                    Give it a name, then tell us your situation so we can tailor the right financial model.
                   </p>
+                </div>
+
+                {/* Project name */}
+                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 space-y-1.5">
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                    Project Name
+                  </label>
+                  <input
+                    type="text"
+                    value={appName === "New Application" ? "" : appName}
+                    onChange={(e) => setAppName(e.target.value.trim() ? e.target.value : "New Application")}
+                    placeholder="e.g. Acme Foods · Revenue Model 2026"
+                    className="w-full text-sm font-medium text-slate-800 border border-slate-200 rounded-xl px-4 py-3 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all placeholder:text-slate-300 placeholder:font-normal"
+                  />
+                  <p className="text-xs text-slate-400">
+                    Optional · you can change this any time from the header above
+                  </p>
+                </div>
+
+                {/* Situation heading */}
+                <div>
+                  <p className="text-sm font-semibold text-slate-700">What is your current situation?</p>
+                  <p className="text-xs text-slate-400 mt-0.5">Select the one that best describes why you need funding.</p>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
