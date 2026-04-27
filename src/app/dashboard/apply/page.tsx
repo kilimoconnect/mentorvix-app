@@ -581,9 +581,11 @@ function ItemTable({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s: 
 }
 
 /* ═══════════════════════════════════════ DriverChat ══ */
-function DriverChat({ stream, onUpdate, situation, isFirstStream, onForecastYears, onForecastStart, intakeContext }: {
+function DriverChat({ stream, onUpdate, onItemsSaved, situation, isFirstStream, onForecastYears, onForecastStart, intakeContext }: {
   stream: RevenueStream;
   onUpdate: (s: RevenueStream) => void;
+  /** Called immediately when [ITEMS_DETECTED] fires — saves items + conversation to DB. */
+  onItemsSaved?: (streamId: string, items: StreamItem[], driverMessages: ChatMessage[]) => Promise<void>;
   situation: string | null;
   isFirstStream?: boolean;
   onForecastYears?: (years: number) => void;
@@ -632,7 +634,14 @@ function DriverChat({ stream, onUpdate, situation, isFirstStream, onForecastYear
         const cleanText = text.slice(0, text.indexOf("[ITEMS_DETECTED]")).trim() ||
           `I've collected all the data for ${stream.name}. Review and edit the items below.`;
         const newMsgs = [...history, { role: "assistant" as const, content: cleanText }];
-        onUpdate({ ...stream, driverMessages: newMsgs, items: [...stream.items, ...items], driverDone: true });
+        const newItems = [...stream.items, ...items];
+        onUpdate({ ...stream, driverMessages: newMsgs, items: newItems, driverDone: true });
+        // Save items + conversation immediately — no debounce, no timer
+        if (onItemsSaved) {
+          onItemsSaved(stream.id, newItems, newMsgs).catch(
+            (e) => console.error("[DriverChat] items save error:", e)
+          );
+        }
       } else {
         onUpdate({ ...stream, driverMessages: [...history, { role: "assistant" as const, content: text }] });
       }
@@ -1449,7 +1458,9 @@ function ApplyPageInner() {
   const targetAppId = searchParams.get("id"); // optional — open a specific application
   const [step, setStep] = useState(0);
   const [dir,  setDir]  = useState(1);
-  const [isSavingForecast, setIsSavingForecast] = useState(false);
+  // Shared save-in-progress flag — used at every step transition
+  const [isSaving,  setIsSaving]  = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Situation detection (pre-gate)
   const [situation,     setSituation]     = useState<SituationId | null>(null);
@@ -1485,9 +1496,7 @@ function ApplyPageInner() {
   const [appId,       setAppId]       = useState<string | null>(null);
   const [userId,      setUserId]      = useState<string | null>(null);
   const [isRestoring, setIsRestoring] = useState(true);
-  // isSavingRef removed — saveStreams is a full-replace upsert (idempotent), so concurrent saves are safe
-  const intakeSaveTimer  = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const streamSaveTimer  = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // No debounce timers — all saves are explicit and awaited at step boundaries
 
   // Voice — mic (speech-to-text) + per-message speaker (Web Speech API, best available voice)
   const [micActive,    setMicActive]    = useState(false);
@@ -1673,121 +1682,14 @@ function ApplyPageInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── Auto-save: situation ────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!appId || !situation || isRestoring) return;
-    const sb = createClient();
-    updateApplicationFlags(sb, appId, { situation }).catch(console.error);
-  }, [situation, appId, isRestoring]);
-
-  // ── Auto-save: wizard step ──────────────────────────────────────────────────
-  // IMPORTANT: guard with isRestoring so the initial mount (step=0, appId just
-  // set) does NOT overwrite the saved wizard_step before restoreFromDb runs.
-  useEffect(() => {
-    if (!appId || isRestoring) return;
-    const sb = createClient();
-    updateApplicationFlags(sb, appId, { wizard_step: step }).catch(console.error);
-  }, [step, appId, isRestoring]);
-
-  // ── Auto-save: project name ─────────────────────────────────────────────────
-  useEffect(() => {
-    if (!appId || appName === "New Application" || isRestoring) return;
-    const sb = createClient();
-    updateApplicationFlags(sb, appId, { name: appName }).catch(console.error);
-  }, [appName, appId, isRestoring]);
-
-  // ── Auto-save: intake messages (debounced 800 ms) ───────────────────────────
-  useEffect(() => {
-    if (!appId || !userId || messages.length === 0 || isRestoring) return;
-    clearTimeout(intakeSaveTimer.current);
-    const isComplete = streams.length > 0;
-    intakeSaveTimer.current = setTimeout(async () => {
-      try {
-        const sb = createClient();
-        await saveIntakeConversation(sb, appId, userId, messages, null, isComplete);
-        if (isComplete) {
-          await updateApplicationFlags(sb, appId, { intake_done: true });
-        }
-      } catch (e) { console.error("[apply] intake save error", e); }
-    }, 800);
-    return () => clearTimeout(intakeSaveTimer.current);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messages.length, streams.length, appId, userId]);
-
-  // ── Auto-save: streams + items + driver messages (debounced 800 ms) ───────────
-  // saveStreams is a full-replace upsert — concurrent calls are safe, no lock needed.
-  useEffect(() => {
-    if (!appId || !userId || streams.length === 0 || isRestoring) return;
-    clearTimeout(streamSaveTimer.current);
-    streamSaveTimer.current = setTimeout(async () => {
-      try {
-        const sb = createClient();
-        // Save streams — strip local IDs so DB generates UUIDs for new ones
-        const savedStreams = await saveStreams(sb, appId, userId,
-          streams.map((s, i) => ({
-            id:                   isDbId(s.id) ? s.id : undefined,
-            name:                 s.name,
-            type:                 s.type,
-            confidence:           s.confidence,
-            monthly_growth_pct:   s.monthlyGrowthPct,
-            sub_new_per_month:    s.subNewPerMonth,
-            sub_churn_pct:        s.subChurnPct,
-            rental_occupancy_pct: s.rentalOccupancyPct,
-            driver_done:          s.driverDone,
-            position:             i,
-          }))
-        );
-
-        // If any streams got new DB IDs, update local state
-        const idMap: Record<string, string> = {};
-        streams.forEach((s, i) => {
-          const db = savedStreams[i];
-          if (db && s.id !== db.id) idMap[s.id] = db.id;
-        });
-        if (Object.keys(idMap).length > 0) {
-          setStreams((prev) => prev.map((s) => ({ ...s, id: idMap[s.id] ?? s.id })));
-        }
-
-        // Save items + driver conversations per stream (use DB IDs)
-        for (let i = 0; i < savedStreams.length; i++) {
-          const local = streams[i];
-          const db    = savedStreams[i];
-          if (!local || !db) continue;
-
-          if (local.items.length > 0) {
-            await saveStreamItems(sb, db.id, userId, local.items.map((it, pos) => ({
-              name: it.name, category: it.category,
-              volume: it.volume, price: it.price,
-              unit: it.unit, note: it.note, position: pos,
-            })));
-          }
-          if (local.driverMessages.length > 0) {
-            await saveDriverConversation(sb, appId, userId, db.id, local.driverMessages, null, local.driverDone);
-          }
-        }
-
-        const allDone = streams.every((s) => s.driverDone || s.items.length > 0);
-        if (allDone) {
-          await updateApplicationFlags(sb, appId, { drivers_done: true });
-        }
-      } catch (e) {
-        console.error("[apply] streams save error", e);
-      }
-    }, 800);
-    return () => clearTimeout(streamSaveTimer.current);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [streams, appId, userId]);
-
-  // ── Auto-save: forecast config (horizon + start date) ──────────────────────
-  useEffect(() => {
-    if (!appId || !userId || isRestoring) return;
-    const sb = createClient();
-    saveForecastConfig(sb, appId, userId, {
-      startMonth: forecastStartMonth,
-      startYear:  forecastStartYear,
-      horizonYears: forecastHorizon,
-    }).catch(console.error);
-  }, [forecastHorizon, forecastStartYear, forecastStartMonth, appId, userId, isRestoring]);
+  // ── No debounced auto-saves. All saves are explicit and awaited: ────────────
+  //   • Name/Situation Continue → save name/situation + wizard_step
+  //   • Every intake AI response → saveIntakeConversation immediately
+  //   • [STREAMS_DETECTED] → awaited saveStreams + ID mapping before go(1)
+  //   • Confirm Structure Continue → saveStreams + wizard_step=2
+  //   • [ITEMS_DETECTED] per stream → immediate saveStreamItems + saveDriverConversation
+  //   • Generate Forecast → saveStreams + wizard_step=3
+  //   • Save & Continue → saveForecastConfig + saveProjectionSnapshot + flags
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, aiTyping]);
   // Fire opening message only after situation is confirmed and no messages yet
@@ -1816,54 +1718,61 @@ function ApplyPageInner() {
       if (data.error) throw new Error(data.error);
       const text = data.text ?? "";
       const detected = parseStreams(text);
+
       if (detected) {
+        // ── Streams detected — this is a critical save point ──────────────────
         const clean = text.slice(0, text.indexOf("[STREAMS_DETECTED]")).trim() ||
           `Great — I've identified ${detected.length} income source${detected.length !== 1 ? "s" : ""}. Let me show you what I found.`;
-        setMessages((prev) => [...prev, { role: "assistant", content: clean }]);
+        const finalMessages = [...history, { role: "assistant" as const, content: clean }];
+        setMessages(finalMessages);
         setStreams(detected);
 
-        // ── Immediately persist streams + name to DB (fire-and-forget) ──────────
-        // The debounced auto-save might not fire before the user leaves the page.
-        // This guarantees streams are in DB right when they're detected.
         if (appId && userId) {
-          (async () => {
-            try {
-              const sb = createClient();
-              const savedStreams = await saveStreams(sb, appId, userId,
-                detected.map((s, i) => ({
-                  name: s.name, type: s.type, confidence: s.confidence,
-                  monthly_growth_pct: s.monthlyGrowthPct,
-                  sub_new_per_month: s.subNewPerMonth,
-                  sub_churn_pct: s.subChurnPct,
-                  rental_occupancy_pct: s.rentalOccupancyPct,
-                  driver_done: s.driverDone,
-                  position: i,
-                }))
-              );
-              // Map local IDs → DB UUIDs
-              const idMap: Record<string, string> = {};
-              detected.forEach((s, i) => {
-                const db = savedStreams[i];
-                if (db && s.id !== db.id) idMap[s.id] = db.id;
-              });
-              if (Object.keys(idMap).length > 0) {
-                setStreams((prev) => prev.map((s) => ({ ...s, id: idMap[s.id] ?? s.id })));
-              }
-              // Auto-name: "StreamA & StreamB +N more"
-              const parts = detected.map((s) => s.name).slice(0, 2);
-              const extra = detected.length > 2 ? ` +${detected.length - 2} more` : "";
-              const autoName = parts.join(" & ") + extra;
-              setAppName(autoName);
-              await updateApplicationFlags(sb, appId, { intake_done: true, name: autoName });
-            } catch (e) {
-              console.error("[apply] immediate stream save:", e);
-            }
-          })();
+          // AWAIT the stream save so DB UUIDs exist before DriverChat mounts on step 2.
+          // If this save fails, stay on step 0 so the user can retry.
+          const sb = createClient();
+          const savedStreams = await saveStreams(sb, appId, userId,
+            detected.map((s, i) => ({
+              name: s.name, type: s.type, confidence: s.confidence,
+              monthly_growth_pct: s.monthlyGrowthPct,
+              sub_new_per_month: s.subNewPerMonth,
+              sub_churn_pct: s.subChurnPct,
+              rental_occupancy_pct: s.rentalOccupancyPct,
+              driver_done: s.driverDone,
+              position: i,
+            }))
+          );
+          // Map local IDs → DB UUIDs before any step transition
+          const idMap: Record<string, string> = {};
+          detected.forEach((s, i) => {
+            const db = savedStreams[i];
+            if (db && s.id !== db.id) idMap[s.id] = db.id;
+          });
+          if (Object.keys(idMap).length > 0) {
+            setStreams((prev) => prev.map((s) => ({ ...s, id: idMap[s.id] ?? s.id })));
+          }
+          // Auto-name + mark intake done
+          const parts = detected.map((s) => s.name).slice(0, 2);
+          const extra = detected.length > 2 ? ` +${detected.length - 2} more` : "";
+          const autoName = parts.join(" & ") + extra;
+          setAppName(autoName);
+          await saveIntakeConversation(sb, appId, userId, finalMessages, null, true);
+          await updateApplicationFlags(sb, appId, { intake_done: true, name: autoName });
         }
 
         setTimeout(() => go(1), 900);
+
       } else {
-        setMessages((prev) => [...prev, { role: "assistant", content: text }]);
+        // ── Mid-conversation message — save intake progress immediately ────────
+        const updatedMessages = [...history, { role: "assistant" as const, content: text }];
+        setMessages(updatedMessages);
+        if (appId && userId) {
+          const sb = createClient();
+          // Fire-and-forget is fine here — data will be re-saved at streams detection
+          saveIntakeConversation(sb, appId, userId, updatedMessages, null, false).catch(
+            (e) => console.error("[apply] intake progress save:", e)
+          );
+        }
       }
     } catch (e) { setChatError(e instanceof Error ? e.message : "Connection error"); }
     finally { setAiTyping(false); }
@@ -1882,6 +1791,37 @@ function ApplyPageInner() {
   const updateStream = useCallback((updated: RevenueStream) => {
     setStreams((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
   }, []);
+
+  // ── Called by DriverChat the moment items are detected ──────────────────────
+  // Saves items + driver conversation immediately (no debounce).
+  // Also marks drivers_done on the application if every stream now has data.
+  const handleItemsSaved = useCallback(async (
+    streamId: string,
+    items: StreamItem[],
+    driverMessages: ChatMessage[],
+  ) => {
+    if (!appId || !userId || !isDbId(streamId)) return;
+    try {
+      const sb = createClient();
+      await saveStreamItems(sb, streamId, userId, items.map((it, pos) => ({
+        name: it.name, category: it.category,
+        volume: it.volume, price: it.price,
+        unit: it.unit, note: it.note ?? undefined, position: pos,
+      })));
+      await saveDriverConversation(sb, appId, userId, streamId, driverMessages, null, true);
+      // Mark drivers_done if every stream now has items
+      setStreams((prev) => {
+        const updated = prev.map((s) => s.id === streamId ? { ...s, driverDone: true } : s);
+        if (updated.every((s) => s.driverDone || s.items.length > 0)) {
+          updateApplicationFlags(sb, appId, { drivers_done: true }).catch(console.error);
+        }
+        return updated;
+      });
+    } catch (e) {
+      console.error("[apply] items save error:", e);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appId, userId]);
 
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
@@ -1997,12 +1937,37 @@ function ApplyPageInner() {
                   </Link>
                   <motion.button
                     whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                    onClick={() => setNameDone(true)}
-                    className="flex-1 flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20"
+                    disabled={isSaving}
+                    onClick={async () => {
+                      if (appId) {
+                        setIsSaving(true); setSaveError(null);
+                        try {
+                          const sb = createClient();
+                          const finalName = appName !== "New Application" ? appName : null;
+                          await updateApplicationFlags(sb, appId, {
+                            ...(finalName ? { name: finalName } : {}),
+                            wizard_step: 0,
+                          });
+                        } catch (e) {
+                          setSaveError(e instanceof Error ? e.message : "Save failed");
+                          setIsSaving(false);
+                          return;
+                        }
+                        setIsSaving(false);
+                      }
+                      setNameDone(true);
+                    }}
+                    className="flex-1 flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-60"
                     style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
-                    Continue <ArrowRight className="w-4 h-4" />
+                    {isSaving ? (
+                      <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                      </svg> Saving…</>
+                    ) : <>Continue <ArrowRight className="w-4 h-4" /></>}
                   </motion.button>
                 </div>
+                {saveError && <p className="text-xs text-red-500 text-center">{saveError}</p>}
               </motion.div>
             )}
 
@@ -2055,19 +2020,40 @@ function ApplyPageInner() {
                 </div>
 
                 <div className="flex gap-3">
-                  <button onClick={() => setNameDone(false)}
+                  <button onClick={() => { setNameDone(false); setIsSaving(false); setSaveError(null); }}
                     className="flex items-center gap-2 px-5 py-4 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
                     <ArrowLeft className="w-4 h-4" /> Back
                   </button>
                   <motion.button
                     whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                    disabled={!situation}
-                    onClick={() => { setSituationDone(true); }}
+                    disabled={!situation || isSaving}
+                    onClick={async () => {
+                      if (!situation) return;
+                      if (appId) {
+                        setIsSaving(true); setSaveError(null);
+                        try {
+                          const sb = createClient();
+                          await updateApplicationFlags(sb, appId, { situation, wizard_step: 0 });
+                        } catch (e) {
+                          setSaveError(e instanceof Error ? e.message : "Save failed");
+                          setIsSaving(false);
+                          return;
+                        }
+                        setIsSaving(false);
+                      }
+                      setSituationDone(true);
+                    }}
                     className="flex-1 flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
                     style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
-                    Begin Business Mapping <ArrowRight className="w-4 h-4" />
+                    {isSaving ? (
+                      <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                      </svg> Saving…</>
+                    ) : <>Begin Business Mapping <ArrowRight className="w-4 h-4" /></>}
                   </motion.button>
                 </div>
+                {saveError && <p className="text-xs text-red-500 text-center">{saveError}</p>}
               </motion.div>
             )}
 
@@ -2299,17 +2285,13 @@ function ApplyPageInner() {
                 )}
 
                 <button
-                  disabled={streams.length === 0}
+                  disabled={streams.length === 0 || isSaving}
                   onClick={async () => {
-                    // Cancel any pending debounced save to avoid concurrent saveStreams calls
-                    clearTimeout(streamSaveTimer.current);
-
-                    if (appId && userId) {
-                      try {
+                    setIsSaving(true); setSaveError(null);
+                    try {
+                      if (appId && userId) {
                         const sb = createClient();
-                        // AWAIT the save — we need DB UUIDs in local state before entering
-                        // driver collection, otherwise DriverChat's onUpdate calls won't
-                        // be able to match the stream by ID and items will be lost.
+                        // Await the save — DB UUIDs must exist before DriverChat mounts
                         const savedStreams = await saveStreams(sb, appId, userId,
                           streams.map((s, i) => ({
                             id: isDbId(s.id) ? s.id : undefined,
@@ -2322,8 +2304,7 @@ function ApplyPageInner() {
                             position: i,
                           }))
                         );
-                        // Sync any newly assigned DB UUIDs back into local state so
-                        // DriverChat always works with stable DB IDs from here on.
+                        // Sync newly assigned DB UUIDs so DriverChat always has stable IDs
                         const idMap: Record<string, string> = {};
                         streams.forEach((s, i) => {
                           const db = savedStreams[i];
@@ -2332,15 +2313,27 @@ function ApplyPageInner() {
                         if (Object.keys(idMap).length > 0) {
                           setStreams((prev) => prev.map((s) => ({ ...s, id: idMap[s.id] ?? s.id })));
                         }
-                        await updateApplicationFlags(sb, appId, { intake_done: true });
-                      } catch (e) { console.error("[apply] step1→2 save:", e); }
+                        await updateApplicationFlags(sb, appId, { intake_done: true, wizard_step: 2 });
+                      }
+                      setStreamIdx(0); setDriverMode("chat"); go(2);
+                    } catch (e) {
+                      setSaveError(e instanceof Error ? e.message : "Save failed — please retry");
+                    } finally {
+                      setIsSaving(false);
                     }
-                    setStreamIdx(0); setDriverMode("chat"); go(2);
                   }}
-                  className="w-full flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-40"
+                  className="w-full flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-50"
                   style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
-                  Build Item-Level Revenue Data <ArrowRight className="w-4 h-4" />
+                  {isSaving ? (
+                    <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                    </svg> Saving structure…</>
+                  ) : <>Collect Revenue Data <ArrowRight className="w-4 h-4" /></>}
                 </button>
+                {saveError && (
+                  <p className="text-xs text-red-500 text-center -mt-2">{saveError}</p>
+                )}
               </motion.div>
             )}
 
@@ -2413,6 +2406,7 @@ function ApplyPageInner() {
                 {driverMode === "chat"   && <DriverChat
                   stream={currentStream}
                   onUpdate={updateStream}
+                  onItemsSaved={handleItemsSaved}
                   situation={situation}
                   isFirstStream={streamIdx === 0}
                   onForecastYears={setForecastHorizon}
@@ -2463,14 +2457,15 @@ function ApplyPageInner() {
                     </button>
                   ) : (
                     <button
-                      disabled={!allStreamsReady}
+                      disabled={!allStreamsReady || isSaving}
                       onClick={async () => {
-                        // Force-save all streams + items before entering forecast
-                        // (debounced auto-save might not have fired yet)
-                        if (appId && userId) {
-                          try {
+                        setIsSaving(true); setSaveError(null);
+                        try {
+                          if (appId && userId) {
                             const sb = createClient();
-                            const savedStreams = await saveStreams(sb, appId, userId,
+                            // Final pass: save any stream parameter edits (growth %, etc.)
+                            // Items were already saved immediately via handleItemsSaved.
+                            await saveStreams(sb, appId, userId,
                               streams.map((s, i) => ({
                                 id: isDbId(s.id) ? s.id : undefined,
                                 name: s.name, type: s.type, confidence: s.confidence,
@@ -2482,27 +2477,30 @@ function ApplyPageInner() {
                                 position: i,
                               }))
                             );
-                            for (let i = 0; i < savedStreams.length; i++) {
-                              const local = streams[i]; const db = savedStreams[i];
-                              if (!local || !db) continue;
-                              if (local.items.length > 0) {
-                                await saveStreamItems(sb, db.id, userId, local.items.map((it, pos) => ({
-                                  name: it.name, category: it.category, volume: it.volume, price: it.price,
-                                  unit: it.unit, note: it.note, position: pos,
-                                })));
-                              }
-                            }
-                            await updateApplicationFlags(sb, appId, { drivers_done: true });
-                          } catch (e) { console.error("[apply] pre-forecast save:", e); }
+                            await updateApplicationFlags(sb, appId, { drivers_done: true, wizard_step: 3 });
+                          }
+                          go(3);
+                        } catch (e) {
+                          setSaveError(e instanceof Error ? e.message : "Save failed — please retry");
+                        } finally {
+                          setIsSaving(false);
                         }
-                        go(3);
                       }}
-                      className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-40"
+                      className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-50"
                       style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
-                      <BarChart3 className="w-4 h-4" /> Generate Revenue Forecast
+                      {isSaving
+                        ? <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                          </svg> Saving…</>
+                        : <><BarChart3 className="w-4 h-4" /> Generate Revenue Forecast</>
+                      }
                     </button>
                   )}
                 </div>
+                {saveError && (
+                  <p className="text-xs text-red-500 text-center -mt-2">{saveError}</p>
+                )}
               </motion.div>
             )}
 
@@ -2537,9 +2535,9 @@ function ApplyPageInner() {
                     <ArrowLeft className="w-4 h-4" /> Adjust Numbers
                   </button>
                   <button
-                    disabled={isSavingForecast}
+                    disabled={isSaving}
                     onClick={async () => {
-                      setIsSavingForecast(true);
+                      setIsSaving(true); setSaveError(null);
                       try {
                         // Build projection using the user's chosen horizon + start date
                         const startDate = new Date(forecastStartYear, forecastStartMonth, 1);
@@ -2605,12 +2603,13 @@ function ApplyPageInner() {
                         router.push("/dashboard");
                       } catch (e) {
                         console.error("[apply] forecast save error:", e);
-                        setIsSavingForecast(false); // let user retry
+                        setSaveError(e instanceof Error ? e.message : "Save failed — please retry");
+                        setIsSaving(false); // let user retry
                       }
                     }}
                     className="flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-60"
                     style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
-                    {isSavingForecast ? (
+                    {isSaving ? (
                       <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
                         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
@@ -2619,6 +2618,9 @@ function ApplyPageInner() {
                       <>Save &amp; Continue Application <ArrowRight className="w-4 h-4" /></>
                     )}
                   </button>
+                  {saveError && (
+                    <p className="text-xs text-red-500 col-span-2 text-center -mt-2">{saveError}</p>
+                  )}
                 </div>
               </motion.div>
             )}
