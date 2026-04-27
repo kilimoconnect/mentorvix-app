@@ -24,6 +24,18 @@ import {
 
 const EASE = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
+/** Strip lightweight markdown the AI may emit — bold, italic, inline code, headings, hr */
+function cleanAI(text: string): string {
+  return text
+    .replace(/\*\*\*(.*?)\*\*\*/g, "$1")   // bold+italic
+    .replace(/\*\*(.*?)\*\*/g,    "$1")    // bold
+    .replace(/\*(.*?)\*/g,        "$1")    // italic
+    .replace(/`([^`]+)`/g,        "$1")    // inline code
+    .replace(/^#{1,6}\s+/gm,      "")      // headings
+    .replace(/^---+\s*$/gm,       "")      // horizontal rules
+    .trim();
+}
+
 /* ═══════════════════════════════════════ situations ══ */
 const SITUATIONS = [
   {
@@ -862,7 +874,7 @@ function DriverChat({ stream, onUpdate, onItemsSaved, situation, isFirstStream, 
                 ? "text-white rounded-tr-sm"
                 : "bg-slate-50 border border-slate-100 text-slate-800 rounded-tl-sm"
             }`} style={m.role === "user" ? { background: "linear-gradient(135deg,#0e7490,#0891b2)" } : {}}>
-              {m.content}
+              {cleanAI(m.content)}
             </div>
             {m.role === "assistant" && (
               <button onClick={() => speakMsg(m.content, i)}
@@ -2736,7 +2748,7 @@ function ApplyPageInner() {
                                 ? "text-white rounded-tr-sm"
                                 : "bg-white border border-slate-100 text-slate-800 rounded-tl-sm shadow-sm"
                             }`} style={m.role === "user" ? { background: "linear-gradient(135deg,#0e7490,#0891b2)" } : {}}>
-                              {m.content}
+                              {cleanAI(m.content)}
                             </div>
                             {m.role === "assistant" && (
                               <button onClick={() => speakMessage(m.content, i)}

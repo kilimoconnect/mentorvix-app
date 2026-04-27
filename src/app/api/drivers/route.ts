@@ -35,16 +35,17 @@ Never open with a specific SKU or unit count question. Always assess catalog siz
 
 STEP 1 — ASSESS CATALOG SIZE:
   Check the prior intake context first.
-  — If catalog size is already clear from the intake (e.g. "we have about 30 products"), skip this step and go straight to STEP 2.
-  — Otherwise ask ONE short question referencing the stream name and any location details already known:
-    Single location:    "For ${streamName} — how many SKUs in the range? Under 20 / 20–100 / 100+"
-    Multi-location:     "Across the stores — roughly how many SKUs in total? Under 20 / 20–100 / 100+"
-  Never use a generic "How many SKUs does this store carry?" — always reference the stream or store by name.
+  — If catalog size or product count is already clear from the intake, skip this step and go straight to STEP 2.
+  — Otherwise ask ONE short question. Use the stream name and whatever context you already know to make it specific:
+    · Name the stream: "For ${streamName} — how many SKUs in the range? Under 20 / 20–100 / 100+"
+    · If multi-location is known: "Across the locations — roughly how many SKUs in total? Under 20 / 20–100 / 100+"
+    · If it is a wholesale or distribution stream: "Roughly how many product lines does this stream cover? Under 20 / 20–100 / 100+"
+  Never open with a generic question that ignores what is already known about this specific stream.
 
 STEP 2 — ROUTE BASED ON SKU COUNT:
   Under 20 items →
     Request a table in ONE ask — do NOT go product by product:
-    "List products — one per line: **Product | Units/month | Price**
+    "List products — one per line: Product | Units/month | Price
     Example: Interior White 4L | 120 | 18.50 — estimates work"
     Parse every line as a separate item. No further questions per product.
 
