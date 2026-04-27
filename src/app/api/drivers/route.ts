@@ -140,7 +140,7 @@ UNIVERSAL RULES:
 9. Professional and efficient — never casual, never wordy
 ${isFirstStream ? `
 FORECAST QUESTIONS (first stream only — ask these as your last two questions, one at a time, after all volumes and prices are collected):
-Question A: "When should the projection start? For example: this month (${new Date().toLocaleString("en-US",{month:"long",year:"numeric"})}), or a specific future month if you haven't launched yet?"
+Question A: "When should the projection start? For example: this month (${new Date().toLocaleString("en-US",{month:"long",year:"numeric"})}), next month, or a specific future month?"
 Question B: "And how many years would you like us to project? For example: 2, 3, 4, 5, or 10 years?"
 Ask A first, wait for the answer, then ask B, then include both answers in the output block below.
 ` : ""}
@@ -152,8 +152,15 @@ WHEN READY — output ONLY this block, nothing before or after the tags:
 [FORECAST_YEARS]
 5
 [FORECAST_START]
-2025-01` : ""}
-(${isFirstStream ? "CRITICAL: Replace 5 with EXACTLY the number of years the user stated. If the user said 3, write 3. If the user said 10, write 10. Only use 5 as a fallback when the user gave NO answer at all. Replace 2025-01 with the start month in YYYY-MM format the user specified, or the current month if not specified." : "output only the block above"})
+${(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; })()}` : ""}
+(${isFirstStream ? `CRITICAL INSTRUCTIONS FOR FORECAST FIELDS:
+FORECAST_YEARS: Replace 5 with EXACTLY the integer the user stated (3 → 3, 10 → 10). Only keep 5 when the user gave no answer.
+FORECAST_START: Replace with YYYY-MM matching what the user said.
+  • If they said a month name like "May" → use ${new Date().getFullYear()}-05 (or next year if that month has already passed this year).
+  • If they said "next month" → compute the month after the current month shown in Question A.
+  • If they said "this month" or gave no answer → keep the current month already shown above.
+  • NEVER output a year before ${new Date().getFullYear()}. The date must be ${new Date().getFullYear()} or later.
+  • Output the date on its own line immediately after the [FORECAST_START] tag — no extra text.` : "output only the block above"})
 
 UNIT EXAMPLES: unit, can, kg, litre, bag, roll, sheet, hour, session, project, seat, room, month, subscriber, contract, GMV
 CATEGORY EXAMPLES: Interior Paint, Exterior Paint, Primer, Waterproofing, Tools, Professional Services, Basic Plans, Pro Plans, Residential Units, Commercial Units, Retail Channel, Wholesale Channel`;
