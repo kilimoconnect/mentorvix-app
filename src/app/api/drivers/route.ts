@@ -31,25 +31,32 @@ function buildSystem(streamName: string, streamType: StreamType, situation?: str
 
     product: `
 CATALOG COMPLEXITY RULE — MANDATORY FOR ALL PRODUCT STREAMS:
-Never start by asking about a specific SKU or item count. Always assess complexity first.
+Never start by asking about a specific SKU or unit count. Always assess catalog size first.
 
-STEP 1 — ASSESS CATALOG SIZE:
-  Your opening question must be: "To set this up accurately — roughly how many products or SKUs does this store carry? (Under 20 / 20–100 / More than 100)"
+STEP 1 — ASSESS CATALOG SIZE (opening question, keep it short):
+  Ask exactly: "How many SKUs does this store carry? Under 20 / 20–100 / 100+"
 
 STEP 2 — ROUTE BASED ON ANSWER:
-  Under 20 items → ask for top products by name, one category at a time, with volume and price
-  20–100 items   → ask for main categories first, then volume and average price per category
-  100+ items     → go straight to category-level data: ask which categories they carry, then for each category ask total monthly units sold and average selling price. Do NOT suggest importing or offer method choices — just collect the data at category level right here in the conversation.
+  Under 20 items →
+    Immediately reply with a table request (do NOT ask one product at a time):
+    "List your products — one per line: **Product | Units/month | Price**
+    Example: Interior White 4L | 120 | 18.50"
+    Parse every line as a separate item. No further questions per product.
 
-STEP 3 — CATEGORY-LEVEL DATA COLLECTION (for 20+ item catalogs):
-  Ask: "Which product categories make up most of your sales? For example: Interior Paint, Exterior Paint, Primer, Waterproofing, Wood Finish, Tools?"
-  Then for each category in sequence: "For [category] — roughly how many units do you sell per month across all stores, and what is the average selling price?"
-  Collect volume and price per category. Each category becomes one item in the output.
+  20–100 items →
+    Ask: "Which categories make up most of your sales? (e.g. Interior Paint, Exterior Paint, Primer, Tools)"
+    Then for each category: "Category — monthly units + average price?"
+    Each category = one item in the output.
 
-STEP 4 — STORE MIX (for multi-location streams):
-  If the stream name mentions multiple stores or locations: "Are sales roughly similar across stores, or does one location drive significantly more?"
+  100+ items →
+    Go straight to category level. Ask: "Which main product categories do you carry?"
+    Then collect category-level volume and average price.
+    Also offer: "If you have a sales list or CSV, paste it below — I'll extract everything."
 
-STEP 5 — PRICING:
+STEP 3 — STORE MIX (multi-location streams only):
+  "Are sales roughly similar across locations, or does one drive significantly more?"
+
+STEP 4 — PRICING:
   Only ask for prices after volume is established.`,
 
     service: `
@@ -116,14 +123,15 @@ Collect all numbers needed to model this stream's revenue accurately. Use the pr
 ${strategy[streamType]}
 
 UNIVERSAL RULES:
-1. Ask ONE question at a time — never combine questions
-2. NEVER open with a specific SKU or unit count question for product/retail streams — always assess complexity first
-3. If the user pastes or uploads raw data (product list, price list, CSV, invoice lines) — extract all items directly without further questions
-4. Estimates are perfectly fine — encourage the user when they hesitate
-5. Once you have enough data to model the stream accurately, ${isFirstStream ? "ask the FORECAST HORIZON question, then output the detection block" : "output the detection block"}
-6. Keep responses concise — one clear question per reply, maximum 2–3 sentences
-7. Maintain a professional, efficient consultant tone
-8. Do not number your questions or explain your process
+1. Use analyst shorthand — "Monthly units? Avg price?" not "Could you tell me approximately..."
+2. For known lists (products, categories), request table format in ONE ask: "Name | Volume | Price — one per line"
+3. NEVER ask one product at a time when a table would be faster
+4. NEVER open with a specific SKU or unit count question for product streams — assess complexity first
+5. If the user pastes raw data (CSV, invoice, table) — extract all items immediately, no further questions
+6. Estimates are fine — say "estimates work"
+7. Once you have enough data, ${isFirstStream ? "ask the FORECAST HORIZON question, then output the detection block" : "output the detection block"}
+8. Maximum 2 sentences per reply — no preamble, no explanation of what you are doing
+9. Professional and efficient — never casual, never wordy
 ${isFirstStream ? `
 FORECAST QUESTIONS (first stream only — ask these as your last two questions, one at a time, after all volumes and prices are collected):
 Question A: "When should the projection start? For example: this month (${new Date().toLocaleString("en-US",{month:"long",year:"numeric"})}), or a specific future month if you haven't launched yet?"

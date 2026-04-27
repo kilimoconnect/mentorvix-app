@@ -119,10 +119,15 @@ interface StreamItem  { id: string; name: string; category: string; volume: numb
 interface RevenueStream {
   id: string; name: string; type: StreamType; confidence: Confidence;
   items: StreamItem[];
-  monthlyGrowthPct: number;
-  subNewPerMonth: number;    // subscription: new subscribers per month
-  subChurnPct: number;       // subscription: monthly churn %
-  rentalOccupancyPct: number; // rental: % of units occupied
+  // Growth model — driver-based (volume × price, compounded separately)
+  scenario:             GrowthScenario;    // preset selector
+  volumeGrowthPct:      number;            // % per month (unit/volume growth)
+  annualPriceGrowthPct: number;            // % per year  (price/ARPU uplift)
+  monthlyGrowthPct:     number;            // effective combined rate — written to DB
+  // Stream-type specific drivers
+  subNewPerMonth:     number;   // subscription: new subscribers per month
+  subChurnPct:        number;   // subscription: monthly churn %
+  rentalOccupancyPct: number;   // rental: % of units occupied
   driverMessages: ChatMessage[];
   driverDone: boolean;
 }
@@ -147,6 +152,21 @@ const CONF_STYLE: Record<Confidence, string> = {
   medium: "bg-amber-50   text-amber-700   border-amber-100",
   low:    "bg-red-50     text-red-600     border-red-100",
 };
+
+/* ═════════════════════════════ growth model ══ */
+type GrowthScenario = "conservative" | "base" | "growth";
+
+const GROWTH_PRESETS: Record<GrowthScenario, {
+  label: string; desc: string; volPct: number; pricePct: number; confidence: Confidence;
+}> = {
+  conservative: { label: "Conservative", desc: "Low growth, stable pricing",  volPct: 0.5, pricePct: 3.0, confidence: "high"   },
+  base:         { label: "Base",         desc: "Realistic execution",          volPct: 1.5, pricePct: 5.0, confidence: "medium" },
+  growth:       { label: "Growth Case",  desc: "Strong performance scenario",  volPct: 3.0, pricePct: 8.0, confidence: "low"    },
+};
+
+function effectiveMonthlyGrowth(volPct: number, annualPricePct: number): number {
+  return parseFloat((volPct + annualPricePct / 12).toFixed(2));
+}
 
 const COL_LABELS: Record<StreamType, { vol: string; price: string; rev: string }> = {
   product:      { vol: "Units/mo",       price: "Unit Price",     rev: "Monthly Rev"   },
@@ -213,9 +233,14 @@ const isDbId = (id: string) =>
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
 function makeStream(name: string, type: StreamType, confidence: Confidence): RevenueStream {
+  const base = GROWTH_PRESETS.base;
   return {
     id: uid(), name, type, confidence, items: [],
-    monthlyGrowthPct: 2, subNewPerMonth: 0, subChurnPct: 0, rentalOccupancyPct: 100,
+    scenario: "base",
+    volumeGrowthPct:      base.volPct,
+    annualPriceGrowthPct: base.pricePct,
+    monthlyGrowthPct:     effectiveMonthlyGrowth(base.volPct, base.pricePct),
+    subNewPerMonth: 0, subChurnPct: 0, rentalOccupancyPct: 100,
     driverMessages: [], driverDone: false,
   };
 }
@@ -269,6 +294,10 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
         streamRev += rev;
       };
 
+      // Shared growth factors — volume and price compound independently
+      const volFactor   = Math.pow(1 + (s.volumeGrowthPct      ?? 0) / 100,  i);
+      const priceFactor = Math.pow(1 + (s.annualPriceGrowthPct ?? 0) / 1200, i); // annual → per-month
+
       if (s.type === "subscription") {
         // Churn model: subscribers_t = subscribers_{t-1} + new - churn
         if (i > 0) {
@@ -277,23 +306,21 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
         }
         const initial = Math.max(1, s.items.reduce((a, it) => a + it.volume, 0));
         const subFactor = subTotals[s.id] / initial;
-        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * it.price * subFactor)));
+        // Subscription: volume growth through churn model; price uplift applied separately
+        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * it.price * subFactor * priceFactor)));
 
       } else if (s.type === "rental") {
-        // Revenue = units × rate × occupancy%
+        // Revenue = units × rate × occupancy% × volume growth × price growth
         const occ = (s.rentalOccupancyPct ?? 100) / 100;
-        const factor = Math.pow(1 + s.monthlyGrowthPct / 100, i);
-        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * it.price * occ * factor)));
+        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * volFactor * it.price * priceFactor * occ)));
 
       } else if (s.type === "marketplace") {
-        // Revenue = GMV × commission%
-        const factor = Math.pow(1 + s.monthlyGrowthPct / 100, i);
-        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * (it.price / 100) * factor)));
+        // Revenue = GMV × commission% — GMV grows with volume, commission rate may increase with price
+        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * volFactor * (it.price / 100) * priceFactor)));
 
       } else {
-        // product, service, contract, custom → units × price
-        const factor = Math.pow(1 + s.monthlyGrowthPct / 100, i);
-        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * it.price * factor)));
+        // product, service, contract, custom → (units × volFactor) × (price × priceFactor)
+        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * volFactor * it.price * priceFactor)));
       }
 
       return { id: s.id, name: s.name, type: s.type, rev: streamRev, byCategory };
@@ -541,18 +568,80 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
 
   return (
     <div className="space-y-3">
-      {/* Growth slider (hidden for subscription — churn model controls growth) */}
-      {stream.type !== "subscription" && (
-        <div className="flex items-center gap-3 bg-slate-50 rounded-xl px-4 py-3">
-          <span className="text-xs font-medium text-slate-500 flex-shrink-0">Monthly growth</span>
-          <input type="range" min={0} max={20} step={0.5} value={stream.monthlyGrowthPct}
-            onChange={(e) => onUpdate({ ...stream, monthlyGrowthPct: Number(e.target.value) })}
-            className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer" style={{ accentColor: "#0e7490" }} />
-          <span className="text-xs font-bold w-10 text-right flex-shrink-0" style={{ color: "#0e7490" }}>
-            +{stream.monthlyGrowthPct}%
+      {/* ── Growth Assumptions card ── */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <p className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Growth Assumptions</p>
+          {/* Scenario selector */}
+          <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
+            {(["conservative", "base", "growth"] as GrowthScenario[]).map((sc) => (
+              <button key={sc} onClick={() => {
+                const p = GROWTH_PRESETS[sc];
+                onUpdate({ ...stream, scenario: sc, volumeGrowthPct: p.volPct, annualPriceGrowthPct: p.pricePct, monthlyGrowthPct: effectiveMonthlyGrowth(p.volPct, p.pricePct) });
+              }}
+                className={`text-[10px] font-bold px-2 py-1 rounded-md capitalize transition-all ${
+                  stream.scenario === sc ? "bg-white text-slate-800 shadow-sm" : "text-slate-400 hover:text-slate-600"
+                }`}>
+                {GROWTH_PRESETS[sc].label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Scenario description */}
+        <p className="text-[10px] text-slate-400 italic">{GROWTH_PRESETS[stream.scenario]?.desc ?? "Custom growth inputs"}</p>
+
+        {/* Volume + Price inputs */}
+        <div className="grid grid-cols-2 gap-3">
+          {/* Volume Growth — hidden for subscription (churn model drives volume) */}
+          {stream.type !== "subscription" && (
+            <div>
+              <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider block mb-1.5">
+                Volume Growth
+              </label>
+              <div className="flex items-center gap-1.5">
+                <input type="number" min={0} max={30} step={0.1}
+                  value={stream.volumeGrowthPct}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value) || 0;
+                    onUpdate({ ...stream, volumeGrowthPct: v, monthlyGrowthPct: effectiveMonthlyGrowth(v, stream.annualPriceGrowthPct ?? 0) });
+                  }}
+                  className="w-16 text-xs font-bold text-slate-800 border border-slate-200 rounded-lg px-2 py-1.5 text-center focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/20" />
+                <span className="text-[11px] text-slate-400">% / month</span>
+              </div>
+            </div>
+          )}
+          {/* Annual Price Increase — all stream types */}
+          <div className={stream.type === "subscription" ? "col-span-2" : ""}>
+            <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider block mb-1.5">
+              {stream.type === "subscription" ? "Annual ARPU Increase" : "Annual Price Increase"}
+            </label>
+            <div className="flex items-center gap-1.5">
+              <input type="number" min={0} max={50} step={0.5}
+                value={stream.annualPriceGrowthPct}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value) || 0;
+                  onUpdate({ ...stream, annualPriceGrowthPct: v, monthlyGrowthPct: effectiveMonthlyGrowth(stream.volumeGrowthPct ?? 0, v) });
+                }}
+                className="w-16 text-xs font-bold text-slate-800 border border-slate-200 rounded-lg px-2 py-1.5 text-center focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/20" />
+              <span className="text-[11px] text-slate-400">% / year</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Effective rate + Confidence */}
+        <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+          <div>
+            <span className="text-[10px] text-slate-400">Effective rate: </span>
+            <span className="text-[10px] font-bold text-slate-700" style={{ color: "#0e7490" }}>
+              +{stream.monthlyGrowthPct.toFixed(2)}% / month
+            </span>
+          </div>
+          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${CONF_STYLE[GROWTH_PRESETS[stream.scenario]?.confidence ?? "medium"]}`}>
+            {GROWTH_PRESETS[stream.scenario]?.confidence === "high" ? "High" : GROWTH_PRESETS[stream.scenario]?.confidence === "low" ? "Low" : "Medium"} confidence
           </span>
         </div>
-      )}
+      </div>
 
       {/* Type-specific controls */}
       <StreamTypeControls stream={stream} onUpdate={onUpdate} />
@@ -1615,7 +1704,11 @@ function ApplyPageInner() {
         name:                s.name,
         type:                s.type as StreamType,
         confidence:          s.confidence as Confidence,
+        // Growth fields — DB only stores combined monthly rate; decompose on restore
         monthlyGrowthPct:    Number(s.monthly_growth_pct),
+        volumeGrowthPct:     Number(s.monthly_growth_pct), // treat stored rate as volume growth
+        annualPriceGrowthPct: 0,                            // price growth unknown — default 0
+        scenario:            (Number(s.monthly_growth_pct) <= 1.0 ? "conservative" : Number(s.monthly_growth_pct) <= 2.5 ? "base" : "growth") as GrowthScenario,
         subNewPerMonth:      Number(s.sub_new_per_month),
         subChurnPct:         Number(s.sub_churn_pct),
         rentalOccupancyPct:  Number(s.rental_occupancy_pct),
