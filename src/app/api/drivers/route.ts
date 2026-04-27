@@ -14,7 +14,7 @@ const SITUATION_LABELS: Record<string, string> = {
   turnaround:      "TURNAROUND / RECOVERY — be sensitive. Focus on current active revenue, not peak.",
 };
 
-function buildSystem(streamName: string, streamType: StreamType, situation?: string, isFirstStream?: boolean): string {
+function buildSystem(streamName: string, streamType: StreamType, situation?: string, isFirstStream?: boolean, intakeContext?: string): string {
 
   const formulaHint: Record<StreamType, string> = {
     product:      "Revenue = Units Sold × Selling Price",
@@ -100,14 +100,18 @@ OPENING STRATEGY FOR CUSTOM / CONVERSION STREAMS:
     ? `\nCLIENT SITUATION: ${SITUATION_LABELS[situation]}\n`
     : "";
 
+  const priorCtx = intakeContext
+    ? `\nPRIOR CONVERSATION (business mapping session — already completed with this client):\n${intakeContext}\n\nCRITICAL: The above conversation already established key facts about this business. Use that information directly — do NOT ask again for anything already answered. Adjust your opening question to reflect what you already know.\n`
+    : "";
+
   return `You are a revenue data specialist at Mentorvix, collecting item-level sales data for one revenue stream. You think at the level of a commercial analyst — not a chatbot.
-${situationCtx}
+${situationCtx}${priorCtx}
 STREAM: "${streamName}"
 TYPE: ${streamType}
 PROJECTION FORMULA: ${formulaHint[streamType]}
 
 YOUR MISSION:
-Collect all numbers needed to model this stream's revenue accurately. You must think at the right level of abstraction — catalog before SKU, category before item, structure before detail.
+Collect all numbers needed to model this stream's revenue accurately. Use the prior conversation context to skip questions already answered. Ask only what is still missing.
 
 ${strategy[streamType]}
 
@@ -178,18 +182,19 @@ async function callGemini(messages: Message[], system: string): Promise<string> 
 
 export async function POST(req: NextRequest) {
   try {
-    const { messages, stream, situation, isFirstStream } = await req.json() as {
+    const { messages, stream, situation, isFirstStream, intakeContext } = await req.json() as {
       messages: Message[];
       stream: { name: string; type: StreamType };
       situation?: string;
       isFirstStream?: boolean;
+      intakeContext?: string;
     };
 
     if (!stream?.name) {
       return NextResponse.json({ error: "Stream name required" }, { status: 400 });
     }
 
-    const system   = buildSystem(stream.name, stream.type, situation, isFirstStream);
+    const system   = buildSystem(stream.name, stream.type, situation, isFirstStream, intakeContext);
     const provider = chooseProvider();
     const text     = provider === "gemini"
       ? await callGemini(messages ?? [], system)

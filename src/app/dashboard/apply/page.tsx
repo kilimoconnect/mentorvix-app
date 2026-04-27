@@ -559,12 +559,13 @@ function ItemTable({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s: 
 }
 
 /* ═══════════════════════════════════════ DriverChat ══ */
-function DriverChat({ stream, onUpdate, situation, isFirstStream, onForecastYears }: {
+function DriverChat({ stream, onUpdate, situation, isFirstStream, onForecastYears, intakeContext }: {
   stream: RevenueStream;
   onUpdate: (s: RevenueStream) => void;
   situation: string | null;
   isFirstStream?: boolean;
   onForecastYears?: (years: number) => void;
+  intakeContext?: string;
 }) {
   const [input,       setInput]       = useState("");
   const [typing,      setTyping]      = useState(false);
@@ -593,7 +594,7 @@ function DriverChat({ stream, onUpdate, situation, isFirstStream, onForecastYear
       const res = await fetch("/api/drivers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, stream: { name: stream.name, type: stream.type }, situation, isFirstStream }),
+        body: JSON.stringify({ messages: history, stream: { name: stream.name, type: stream.type }, situation, isFirstStream, intakeContext }),
       });
       const data = await res.json() as { text?: string; provider?: Provider; error?: string };
       if (data.error) throw new Error(data.error);
@@ -1823,7 +1824,14 @@ export default function ApplyPage() {
                 </div>
 
                 {/* Mode content */}
-                {driverMode === "chat"   && <DriverChat   stream={currentStream} onUpdate={updateStream} situation={situation} isFirstStream={streamIdx === 0} onForecastYears={setForecastYears} />}
+                {driverMode === "chat"   && <DriverChat
+                  stream={currentStream}
+                  onUpdate={updateStream}
+                  situation={situation}
+                  isFirstStream={streamIdx === 0}
+                  onForecastYears={setForecastYears}
+                  intakeContext={messages.map((m) => `${m.role === "user" ? "Client" : "AI"}: ${m.content}`).join("\n")}
+                />}
                 {driverMode === "import" && <ImportPane   stream={currentStream} onUpdate={updateStream} />}
                 {driverMode === "manual" && (
                   <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-xs text-amber-700">
