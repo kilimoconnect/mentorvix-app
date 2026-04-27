@@ -166,8 +166,14 @@ export function getCurrencySymbol(code: string | null | undefined): string {
 export function makeFmt(currency: string | null | undefined) {
   const sym = getCurrencySymbol(currency);
   return (n: number): string => {
-    if (n >= 1_000_000) return `${sym}${(n / 1_000_000).toFixed(1)}M`;
-    if (n >= 1_000)     return `${sym}${(n / 1_000).toFixed(1)}K`;
+    if (n >= 1_000_000) {
+      const v = n / 1_000_000;
+      return `${sym}${v.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}M`;
+    }
+    if (n >= 1_000) {
+      const v = n / 1_000;
+      return `${sym}${v.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}K`;
+    }
     return `${sym}${Math.round(n).toLocaleString()}`;
   };
 }

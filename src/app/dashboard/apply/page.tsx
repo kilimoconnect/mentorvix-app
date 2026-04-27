@@ -1691,32 +1691,73 @@ function ForecastView({
                       <td colSpan={99} className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-cyan-700">Revenue</td>
                     </tr>
 
-                    {/* Stream rows */}
+                    {/* Stream rows + item drilldown */}
                     {streams.map((s, si) => {
                       const streamColor = MIX_COLORS[si % MIX_COLORS.length];
                       const yearTotal   = streamYearTotal(s.id, selectedYearData);
+                      const isExpanded  = expandedStreams.has(s.id);
+                      const sMRR        = streamMRR(s);
                       return (
-                        <tr key={s.id} className={si % 2 === 0 ? "bg-white" : "bg-slate-50/50"}>
-                          <td className="px-3 py-2 text-[11px] sticky left-0 bg-inherit">
-                            <div className="flex items-center gap-2">
-                              <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: streamColor }} />
-                              <span className="font-medium text-slate-800">{s.name}</span>
-                            </div>
-                          </td>
-                          {quarters.map((q) => (
-                            <>
-                              {q.months.map((m) => (
-                                <TD key={m.yearMonth} cls="border-l border-slate-50/80">
-                                  {fmt(streamMonthRev(s.id, m))}
+                        <>
+                          <tr key={s.id} className={si % 2 === 0 ? "bg-white" : "bg-slate-50/50"}>
+                            <td className="px-3 py-2 text-[11px] sticky left-0 bg-inherit">
+                              <div className="flex items-center gap-2">
+                                <div className="w-2 h-2 rounded-full shrink-0" style={{ background: streamColor }} />
+                                <span className="font-medium text-slate-800">{s.name}</span>
+                                {s.items.length > 0 && (
+                                  <button onClick={() => toggleExpanded(s.id)}
+                                    className="flex items-center gap-0.5 text-[10px] text-slate-400 hover:text-slate-600 ml-1">
+                                    {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                                    <span>{s.items.length} item{s.items.length !== 1 ? "s" : ""}</span>
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                            {quarters.map((q) => (
+                              <>
+                                {q.months.map((m) => (
+                                  <TD key={m.yearMonth} cls="border-l border-slate-50/80">
+                                    {fmt(streamMonthRev(s.id, m))}
+                                  </TD>
+                                ))}
+                                <TD key={`${q.label}-tot`} cls="font-semibold border-l border-slate-200 bg-slate-50/80">
+                                  {fmt(q.months.reduce((a, m) => a + streamMonthRev(s.id, m), 0))}
                                 </TD>
-                              ))}
-                              <TD key={`${q.label}-tot`} cls="font-semibold border-l border-slate-200 bg-slate-50/80">
-                                {fmt(q.months.reduce((a, m) => a + streamMonthRev(s.id, m), 0))}
-                              </TD>
-                            </>
-                          ))}
-                          <TD cls="font-bold border-l border-slate-200">{fmt(yearTotal)}</TD>
-                        </tr>
+                              </>
+                            ))}
+                            <TD cls="font-bold border-l border-slate-200">{fmt(yearTotal)}</TD>
+                          </tr>
+                          {/* Item drilldown rows */}
+                          {isExpanded && s.items.map((it) => {
+                            const itMRR = it.volume * (s.type === "marketplace" ? (it.price / 100) : s.type === "rental" ? it.price * ((s.rentalOccupancyPct ?? 100) / 100) : it.price);
+                            const frac  = sMRR > 0 ? itMRR / sMRR : 0;
+                            return (
+                              <tr key={it.id} className="bg-slate-50/30 border-t border-slate-50">
+                                <td className="pl-8 pr-3 py-1.5 text-[10px] text-slate-500 sticky left-0 bg-slate-50/30">
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="w-1 h-1 rounded-full bg-slate-300 shrink-0" />
+                                    {it.name}{it.category ? ` · ${it.category}` : ""}
+                                  </span>
+                                </td>
+                                {quarters.map((q) => (
+                                  <>
+                                    {q.months.map((m) => (
+                                      <td key={m.yearMonth} className="px-3 py-1.5 text-right text-[10px] tabular-nums whitespace-nowrap text-slate-400 border-l border-slate-50/80">
+                                        {fmt(Math.round(streamMonthRev(s.id, m) * frac))}
+                                      </td>
+                                    ))}
+                                    <td key={`${q.label}-itot`} className="px-3 py-1.5 text-right text-[10px] tabular-nums whitespace-nowrap text-slate-400 font-medium border-l border-slate-200 bg-slate-50/80">
+                                      {fmt(Math.round(q.months.reduce((a, m) => a + streamMonthRev(s.id, m), 0) * frac))}
+                                    </td>
+                                  </>
+                                ))}
+                                <td className="px-3 py-1.5 text-right text-[10px] tabular-nums whitespace-nowrap text-slate-400 font-medium border-l border-slate-200">
+                                  {fmt(Math.round(yearTotal * frac))}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </>
                       );
                     })}
 
