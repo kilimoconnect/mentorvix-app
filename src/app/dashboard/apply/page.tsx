@@ -2154,27 +2154,40 @@ function ApplyPageInner() {
 
                 <button
                   disabled={streams.length === 0}
-                  onClick={() => {
-                    // Fire-and-forget: persist any last-second edits before moving on
+                  onClick={async () => {
+                    // Cancel any pending debounced save to avoid concurrent saveStreams calls
+                    clearTimeout(streamSaveTimer.current);
+
                     if (appId && userId) {
-                      (async () => {
-                        try {
-                          const sb = createClient();
-                          await saveStreams(sb, appId, userId,
-                            streams.map((s, i) => ({
-                              id: isDbId(s.id) ? s.id : undefined,
-                              name: s.name, type: s.type, confidence: s.confidence,
-                              monthly_growth_pct: s.monthlyGrowthPct,
-                              sub_new_per_month: s.subNewPerMonth,
-                              sub_churn_pct: s.subChurnPct,
-                              rental_occupancy_pct: s.rentalOccupancyPct,
-                              driver_done: s.driverDone,
-                              position: i,
-                            }))
-                          );
-                          await updateApplicationFlags(sb, appId, { intake_done: true });
-                        } catch (e) { console.error("[apply] step1→2 save:", e); }
-                      })();
+                      try {
+                        const sb = createClient();
+                        // AWAIT the save — we need DB UUIDs in local state before entering
+                        // driver collection, otherwise DriverChat's onUpdate calls won't
+                        // be able to match the stream by ID and items will be lost.
+                        const savedStreams = await saveStreams(sb, appId, userId,
+                          streams.map((s, i) => ({
+                            id: isDbId(s.id) ? s.id : undefined,
+                            name: s.name, type: s.type, confidence: s.confidence,
+                            monthly_growth_pct: s.monthlyGrowthPct,
+                            sub_new_per_month: s.subNewPerMonth,
+                            sub_churn_pct: s.subChurnPct,
+                            rental_occupancy_pct: s.rentalOccupancyPct,
+                            driver_done: s.driverDone,
+                            position: i,
+                          }))
+                        );
+                        // Sync any newly assigned DB UUIDs back into local state so
+                        // DriverChat always works with stable DB IDs from here on.
+                        const idMap: Record<string, string> = {};
+                        streams.forEach((s, i) => {
+                          const db = savedStreams[i];
+                          if (db && s.id !== db.id) idMap[s.id] = db.id;
+                        });
+                        if (Object.keys(idMap).length > 0) {
+                          setStreams((prev) => prev.map((s) => ({ ...s, id: idMap[s.id] ?? s.id })));
+                        }
+                        await updateApplicationFlags(sb, appId, { intake_done: true });
+                      } catch (e) { console.error("[apply] step1→2 save:", e); }
                     }
                     setStreamIdx(0); setDriverMode("chat"); go(2);
                   }}
