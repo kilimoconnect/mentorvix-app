@@ -1066,6 +1066,7 @@ function ForecastView({
   streams,
   onUpdateStream,
   horizonYears,
+  onHorizonChange,
   startYear,
   startMonth,
   currency,
@@ -1073,14 +1074,18 @@ function ForecastView({
   streams:          RevenueStream[];
   onUpdateStream:   (s: RevenueStream) => void;
   horizonYears:     number;
+  onHorizonChange?: (years: number) => void;
   startYear:        number;
   startMonth:       number;
   currency:         string | null;
 }) {
   const fmt = makeFmt(currency);
-  const [view,             setView]             = useState<"annual" | "monthly">("annual");
-  const [selectedYear,     setSelectedYear]     = useState(1);
-  const [showAssumptions,  setShowAssumptions]  = useState(false);
+  const [view,            setView]            = useState<"annual" | "monthly" | "sensitivity">("annual");
+  const [selectedYear,    setSelectedYear]    = useState(1);
+  const [showAssumptions, setShowAssumptions] = useState(false);
+  const [expandedStreams,  setExpandedStreams]  = useState<Set<string>>(new Set());
+
+  const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
   const startDate  = new Date(startYear, startMonth, 1);
   const totalMths  = horizonYears * 12;
@@ -1088,9 +1093,32 @@ function ForecastView({
   const years      = groupByYear(projection);
   const grandTotal = years.reduce((a, y) => a + y.total, 0);
   const totalMRR   = streams.reduce((a, s) => a + streamMRR(s), 0);
+  const totalItems = streams.reduce((a, s) => a + s.items.length, 0);
 
-  const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const QTR = ["Q1","Q1","Q1","Q2","Q2","Q2","Q3","Q3","Q3","Q4","Q4","Q4"];
+  const cagr = years.length > 1 && (years[0]?.total ?? 0) > 0
+    ? ((Math.pow(years[years.length - 1].total / years[0].total, 1 / (years.length - 1)) - 1) * 100)
+    : null;
+
+  // Dominant scenario across all streams
+  const scenarioCounts = streams.reduce((acc, s) => { acc[s.scenario] = (acc[s.scenario] ?? 0) + 1; return acc; }, {} as Partial<Record<GrowthScenario, number>>);
+  const dominantScenario: GrowthScenario = (scenarioCounts["growth"] ?? 0) > 0 && (scenarioCounts["growth"] ?? 0) >= (scenarioCounts["base"] ?? 0) && (scenarioCounts["growth"] ?? 0) >= (scenarioCounts["conservative"] ?? 0) ? "growth" : (scenarioCounts["base"] ?? 0) > 0 && (scenarioCounts["base"] ?? 0) >= (scenarioCounts["conservative"] ?? 0) ? "base" : "conservative";
+
+  const applyGlobalScenario = (sc: GrowthScenario) => {
+    const p = GROWTH_PRESETS[sc];
+    streams.forEach((s) => onUpdateStream({ ...s, scenario: sc, volumeGrowthPct: p.volPct, annualPriceGrowthPct: p.pricePct, monthlyGrowthPct: effectiveMonthlyGrowth(p.volPct, p.pricePct) }));
+  };
+
+  const toggleExpanded = (id: string) =>
+    setExpandedStreams((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  // Sensitivity scenario definitions
+  const SENSITIVITY_ROWS = [
+    { label: "Bear Case",      volMult: 0.25, priceMult: 0.5,  color: "#ef4444" },
+    { label: "Conservative",   volMult: 0.5,  priceMult: 1.0,  color: "#f59e0b" },
+    { label: "Base (current)", volMult: 1.0,  priceMult: 1.0,  color: "#0e7490", isCurrent: true },
+    { label: "Growth Case",    volMult: 2.0,  priceMult: 1.0,  color: "#059669" },
+    { label: "Bull Case",      volMult: 3.0,  priceMult: 1.5,  color: "#7c3aed" },
+  ] as const;
 
   // ── Cell helpers ──────────────────────────────────────────────────────────
   const TH = ({ children, cls = "" }: { children: React.ReactNode; cls?: string }) => (
@@ -1098,11 +1126,6 @@ function ForecastView({
   );
   const TD = ({ children, cls = "", style }: { children: React.ReactNode; cls?: string; style?: React.CSSProperties }) => (
     <td className={`px-3 py-2 text-right text-[11px] tabular-nums whitespace-nowrap ${cls}`} style={style}>{children}</td>
-  );
-  const LabelCell = ({ children, indent = false }: { children: React.ReactNode; indent?: boolean }) => (
-    <td className={`px-3 py-2 text-[11px] font-medium whitespace-nowrap sticky left-0 bg-inherit ${indent ? "pl-7 text-slate-500 font-normal" : "text-slate-800 font-semibold"}`}>
-      {children}
-    </td>
   );
 
   // ── Stream total for a year ───────────────────────────────────────────────
@@ -1127,61 +1150,126 @@ function ForecastView({
   return (
     <div className="space-y-4">
 
-      {/* ── Config bar ── */}
-      <div className="bg-white rounded-2xl border border-slate-100 px-4 py-3 flex flex-wrap gap-3 items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Calendar className="w-3.5 h-3.5 text-slate-400" />
-          <span className="text-xs text-slate-500">
-            <span className="font-semibold text-slate-700">{horizonYears}-year</span> projection starting{" "}
-            <span className="font-semibold text-slate-700">{MONTH_NAMES[startMonth]} {startYear}</span>
+      {/* ── Control bar ── */}
+      <div className="bg-white rounded-2xl border border-slate-100 px-4 pt-3.5 pb-3 space-y-3">
+        {/* Row 1: Global scenario toggle */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0">Scenario</span>
+          <div className="flex bg-slate-100 rounded-lg p-0.5 gap-0.5">
+            {(["conservative", "base", "growth"] as GrowthScenario[]).map((sc) => {
+              const active = dominantScenario === sc;
+              const cls = sc === "conservative"
+                ? (active ? "bg-amber-500 text-white shadow-sm" : "text-slate-400 hover:text-amber-600")
+                : sc === "base"
+                  ? (active ? "bg-cyan-600 text-white shadow-sm" : "text-slate-400 hover:text-cyan-700")
+                  : (active ? "bg-emerald-500 text-white shadow-sm" : "text-slate-400 hover:text-emerald-600");
+              return (
+                <button key={sc} onClick={() => applyGlobalScenario(sc)}
+                  className={`text-[11px] font-semibold px-3 py-1 rounded-md transition-all ${cls}`}>
+                  {GROWTH_PRESETS[sc].label}
+                </button>
+              );
+            })}
+          </div>
+          <span className="text-[10px] text-slate-400 italic hidden sm:block">
+            {GROWTH_PRESETS[dominantScenario].desc} · all streams
           </span>
         </div>
-        {/* View toggle */}
-        <div className="flex bg-slate-100 rounded-lg p-0.5">
-          {(["annual", "monthly"] as const).map((v) => (
-            <button key={v} onClick={() => setView(v)}
-              className={`text-xs font-semibold px-3 py-1.5 rounded-md transition-all capitalize ${
-                view === v ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"
-              }`}>{v}</button>
-          ))}
+        {/* Row 2: Start date + horizon + view toggle */}
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span className="text-xs text-slate-500">Starting</span>
+            <span className="text-xs font-semibold text-slate-700">{MONTH_NAMES[startMonth]} {startYear}</span>
+            <span className="text-xs text-slate-300">·</span>
+            <span className="text-xs text-slate-500">Horizon</span>
+            <select
+              value={horizonYears}
+              onChange={(e) => onHorizonChange?.(Number(e.target.value))}
+              className="text-xs font-semibold text-slate-700 bg-slate-100 border-0 rounded-md px-2 py-0.5 cursor-pointer focus:outline-none focus:ring-1 focus:ring-cyan-500 appearance-none pr-5"
+              style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236b7280' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 4px center" }}
+            >
+              {[1,2,3,4,5,7,10].map((y) => (
+                <option key={y} value={y}>{y} {y === 1 ? "year" : "years"}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex bg-slate-100 rounded-lg p-0.5">
+            {(["annual", "monthly", "sensitivity"] as const).map((v) => (
+              <button key={v} onClick={() => setView(v)}
+                className={`text-xs font-semibold px-3 py-1.5 rounded-md transition-all capitalize ${
+                  view === v ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                }`}>{v}</button>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* ── KPI summary row ── */}
+      {/* ── KPI Cards ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {[
-          { label: "Monthly baseline",        val: fmt(totalMRR),                              sub: "MRR estimate" },
-          { label: `${horizonYears}-yr total`, val: fmt(grandTotal),                            sub: "Cumulative revenue" },
-          { label: "Year 1 revenue",           val: fmt(years[0]?.total ?? 0),                  sub: "First 12 months" },
-          { label: `Year ${horizonYears}`,     val: fmt(years[years.length - 1]?.total ?? 0),   sub: "Final year" },
+          { label: "Current Monthly Revenue",             val: fmt(totalMRR),                              sub: "Baseline MRR" },
+          { label: `Cumulative ${horizonYears}-Year Revenue`, val: fmt(grandTotal),                        sub: "Total projection" },
+          { label: "First-Year Revenue",                  val: fmt(years[0]?.total ?? 0),                  sub: "Months 1 – 12" },
+          { label: "Final-Year Revenue",                  val: fmt(years[years.length - 1]?.total ?? 0),   sub: `Year ${horizonYears}` },
         ].map(({ label, val, sub }) => (
           <div key={label} className="bg-white rounded-xl border border-slate-100 px-4 py-3">
-            <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">{label}</p>
+            <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 leading-tight">{label}</p>
             <p className="text-sm font-bold text-slate-900">{val}</p>
             <p className="text-[10px] text-slate-400 mt-0.5">{sub}</p>
           </div>
         ))}
       </div>
 
+      {/* ── Model Summary Strip ── */}
+      <div className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-1.5">
+        {[
+          { label: "Streams",    val: String(streams.length) },
+          { label: "Items",      val: String(totalItems) },
+          { label: "Currency",   val: currency ?? "—" },
+          { label: "Confidence", val: "Medium", highlight: "amber" },
+          { label: "CAGR",       val: cagr !== null ? `${cagr >= 0 ? "+" : ""}${cagr.toFixed(1)}%` : "—", highlight: cagr !== null && cagr > 0 ? "emerald" : "" },
+        ].map(({ label, val, highlight }, i) => (
+          <div key={label} className={`flex items-center gap-1.5 ${i > 0 ? "sm:border-l sm:border-slate-200 sm:pl-5" : ""}`}>
+            <span className="text-[10px] text-slate-400 uppercase tracking-wider">{label}</span>
+            <span className={`text-[11px] font-bold ${highlight === "emerald" ? "text-emerald-600" : highlight === "amber" ? "text-amber-600" : "text-slate-700"}`}>{val}</span>
+          </div>
+        ))}
+      </div>
+
       {/* ── Annual bar chart ── */}
       {years.length > 0 && grandTotal > 0 && (
-        <div className="bg-white rounded-2xl border border-slate-100 px-5 pt-4 pb-5">
-          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Annual Revenue Trajectory</p>
-          <div className="flex items-end gap-2" style={{ height: 80 }}>
+        <div className="bg-white rounded-2xl border border-slate-100 px-5 pt-4 pb-4">
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-xs font-bold text-slate-700 uppercase tracking-wider">Annual Revenue Trajectory</p>
+            {cagr !== null && (
+              <div className="flex items-center gap-1.5 bg-emerald-50 border border-emerald-100 rounded-full px-3 py-1">
+                <TrendingUp className="w-3 h-3 text-emerald-600" />
+                <span className="text-[10px] font-bold text-emerald-700">CAGR {cagr >= 0 ? "+" : ""}{cagr.toFixed(1)}%</span>
+              </div>
+            )}
+          </div>
+          <div className="flex items-end gap-3" style={{ height: 148 }}>
             {years.map((y, i) => {
-              const pct = grandTotal > 0 ? (y.total / Math.max(...years.map((yy) => yy.total))) * 100 : 0;
-              const color = MIX_COLORS[i % MIX_COLORS.length];
+              const maxY = Math.max(...years.map((yy) => yy.total));
+              const pct  = maxY > 0 ? (y.total / maxY) * 100 : 4;
+              const prev = years[i - 1];
+              const yoy  = prev && prev.total > 0 ? ((y.total - prev.total) / prev.total) * 100 : null;
               return (
-                <div key={y.year} className="flex-1 flex flex-col items-center gap-1.5 min-w-0">
-                  <span className="text-[9px] font-semibold text-slate-500 truncate w-full text-center">{fmt(y.total)}</span>
+                <div key={y.year} className="flex-1 flex flex-col items-center min-w-0" style={{ height: "100%", justifyContent: "flex-end" }}>
+                  <span className="text-[9px] font-bold text-slate-600 truncate w-full text-center leading-tight">{fmt(y.total)}</span>
+                  {yoy !== null
+                    ? <span className={`text-[8px] font-bold mt-0.5 ${yoy >= 0 ? "text-emerald-600" : "text-red-500"}`}>{yoy >= 0 ? "▲" : "▼"}{Math.abs(yoy).toFixed(1)}%</span>
+                    : <span className="text-[8px] text-transparent mt-0.5">–</span>
+                  }
                   <motion.div
                     initial={{ height: 0 }}
-                    animate={{ height: `${Math.max(pct, 4)}%` }}
-                    transition={{ duration: 0.6, delay: i * 0.06, ease: EASE }}
-                    className="w-full rounded-t-md"
-                    style={{ background: i === years.length - 1 ? "#0e7490" : color, opacity: 0.85, minHeight: 4 }}
+                    animate={{ height: `${Math.max(pct, 3)}%` }}
+                    transition={{ duration: 0.6, delay: i * 0.07, ease: EASE }}
+                    className="w-full rounded-t-lg mt-1"
+                    style={{ background: i === years.length - 1 ? "#0e7490" : MIX_COLORS[i % MIX_COLORS.length], opacity: 0.88, minHeight: 6 }}
                   />
-                  <span className="text-[9px] text-slate-400 whitespace-nowrap">Yr {y.year}</span>
+                  <span className="text-[10px] font-semibold text-slate-500 whitespace-nowrap mt-1.5">Yr {y.year}</span>
                 </div>
               );
             })}
@@ -1190,19 +1278,99 @@ function ForecastView({
       )}
 
       {/* ── Revenue Mix ── */}
-      <RevenueMix streams={streams} months={projection} currency={currency} />
+      {(() => {
+        if (!projection.length || !streams.length) return null;
+        const mixTotals = streams.map((s, i) => ({
+          id: s.id, name: s.name,
+          color: MIX_COLORS[i % MIX_COLORS.length],
+          total: projection.reduce((a, m) => a + (m.byStream.find((b) => b.id === s.id)?.rev ?? 0), 0),
+        }));
+        const mixGrand = mixTotals.reduce((a, t) => a + t.total, 0);
+        if (!mixGrand) return null;
+        const isSingle = streams.length === 1;
+        return (
+          <div className="bg-white rounded-2xl border border-slate-100 p-5">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                {isSingle ? "Revenue Concentration" : "Revenue Mix"}
+              </p>
+              {isSingle && <span className="text-[10px] text-slate-400 italic">Single-stream business profile</span>}
+            </div>
+            {isSingle ? (
+              <div className="flex items-center gap-4">
+                <div className="flex-1 bg-slate-100 rounded-lg h-8 overflow-hidden">
+                  <motion.div
+                    initial={{ width: 0 }} animate={{ width: "100%" }}
+                    transition={{ duration: 0.7, ease: EASE }}
+                    className="h-full rounded-lg flex items-center px-3"
+                    style={{ background: mixTotals[0].color }}
+                  >
+                    <span className="text-[10px] font-bold text-white truncate">{mixTotals[0].name}</span>
+                  </motion.div>
+                </div>
+                <div className="text-right shrink-0">
+                  <p className="text-sm font-bold text-slate-900">100%</p>
+                  <p className="text-[10px] text-slate-400">{fmt(mixTotals[0].total)} total</p>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex rounded-lg overflow-hidden h-5 mb-4 gap-px">
+                  {mixTotals.map((t) => (
+                    <motion.div key={t.id}
+                      initial={{ width: 0 }} animate={{ width: `${(t.total / mixGrand) * 100}%` }}
+                      transition={{ duration: 0.7, ease: EASE }}
+                      style={{ background: t.color, minWidth: t.total / mixGrand > 0.02 ? undefined : 0 }}
+                      title={`${t.name}: ${Math.round((t.total / mixGrand) * 100)}%`}
+                    />
+                  ))}
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {mixTotals.map((t) => {
+                    const pct = Math.round((t.total / mixGrand) * 100);
+                    return (
+                      <div key={t.id} className="flex items-center gap-2 min-w-0">
+                        <div className="w-3 h-3 rounded-sm shrink-0" style={{ background: t.color }} />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-xs font-medium text-slate-700 truncate">{t.name}</p>
+                          <p className="text-xs text-slate-400">{fmt(t.total)} · {pct}%</p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        );
+      })()}
 
-      {/* ── Revenue Assumptions (inline edit without going back) ── */}
+      {/* ── Assumptions ── */}
       <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
         <button
           onClick={() => setShowAssumptions((v) => !v)}
           className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-slate-50 transition-colors">
-          <div className="flex items-center gap-2">
-            <TrendingUp className="w-4 h-4 text-slate-400" />
-            <span className="text-xs font-semibold text-slate-700">Revenue Assumptions</span>
-            <span className="text-[10px] text-slate-400 font-normal">· adjust growth without going back</span>
+          <div className="flex items-center gap-3 flex-wrap min-w-0">
+            <TrendingUp className="w-4 h-4 text-slate-400 shrink-0" />
+            <span className="text-xs font-bold text-slate-700 shrink-0">Assumptions</span>
+            {!showAssumptions && streams.length > 0 && (
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-[10px] text-slate-400">
+                  Vol: <span className="font-semibold text-slate-600">+{streams[0].volumeGrowthPct}%/mo</span>
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  Price: <span className="font-semibold text-slate-600">+{streams[0].annualPriceGrowthPct}%/yr</span>
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  Start: <span className="font-semibold text-slate-600">{MONTH_NAMES[startMonth]} {startYear}</span>
+                </span>
+                <span className="text-[10px] text-slate-400">
+                  Method: <span className="font-semibold text-slate-600">User Input</span>
+                </span>
+              </div>
+            )}
           </div>
-          {showAssumptions ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+          {showAssumptions ? <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />}
         </button>
         {showAssumptions && (
           <div className="px-5 pb-5 space-y-4 border-t border-slate-100">
@@ -1251,14 +1419,21 @@ function ForecastView({
                       <span className="text-xs font-bold w-10 text-right text-amber-700 flex-shrink-0">{s.rentalOccupancyPct}%</span>
                     </div>
                   ) : (
-                    <div className="flex items-center gap-3">
-                      <span className="text-[10px] text-slate-500 flex-shrink-0">Monthly growth</span>
-                      <input type="range" min={0} max={20} step={0.5} value={s.monthlyGrowthPct}
-                        onChange={(e) => onUpdateStream({ ...s, monthlyGrowthPct: Number(e.target.value) })}
-                        className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer" style={{ accentColor: "#0e7490" }} />
-                      <span className="text-xs font-bold w-10 text-right flex-shrink-0" style={{ color: "#0e7490" }}>
-                        +{s.monthlyGrowthPct}%
-                      </span>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-3">
+                        <span className="text-[10px] text-slate-500 w-28 shrink-0">Volume growth</span>
+                        <input type="range" min={0} max={20} step={0.5} value={s.volumeGrowthPct}
+                          onChange={(e) => { const v = parseFloat(e.target.value) || 0; onUpdateStream({ ...s, volumeGrowthPct: v, monthlyGrowthPct: effectiveMonthlyGrowth(v, s.annualPriceGrowthPct ?? 0) }); }}
+                          className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer" style={{ accentColor: "#0e7490" }} />
+                        <span className="text-xs font-bold w-14 text-right shrink-0 text-cyan-700">+{s.volumeGrowthPct}%/mo</span>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-[10px] text-slate-500 w-28 shrink-0">Annual price rise</span>
+                        <input type="range" min={0} max={30} step={0.5} value={s.annualPriceGrowthPct}
+                          onChange={(e) => { const v = parseFloat(e.target.value) || 0; onUpdateStream({ ...s, annualPriceGrowthPct: v, monthlyGrowthPct: effectiveMonthlyGrowth(s.volumeGrowthPct ?? 0, v) }); }}
+                          className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer" style={{ accentColor: "#7c3aed" }} />
+                        <span className="text-xs font-bold w-14 text-right shrink-0 text-violet-700">+{s.annualPriceGrowthPct}%/yr</span>
+                      </div>
                     </div>
                   )}
                   {si < streams.length - 1 && <div className="mt-4 border-t border-slate-100" />}
@@ -1305,30 +1480,65 @@ function ForecastView({
                   </td>
                 </tr>
 
-                {/* One row per stream */}
+                {/* One row per stream + expandable item drilldown */}
                 {streams.map((s, si) => {
                   const streamColor = MIX_COLORS[si % MIX_COLORS.length];
                   const yearTotals  = years.map((y) => streamYearTotal(s.id, y));
                   const streamGrand = yearTotals.reduce((a, v) => a + v, 0);
-                  const cagr = years.length > 1 && yearTotals[0] > 0
+                  const sCagr = years.length > 1 && yearTotals[0] > 0
                     ? ((Math.pow(yearTotals[yearTotals.length - 1] / yearTotals[0], 1 / (years.length - 1)) - 1) * 100)
                     : null;
+                  const isExpanded  = expandedStreams.has(s.id);
+                  const sMRR        = streamMRR(s);
                   return (
-                    <tr key={s.id} className={si % 2 === 0 ? "bg-white" : "bg-slate-50/50"}>
-                      <td className="px-3 py-2.5 text-[11px] sticky left-0 bg-inherit">
-                        <div className="flex items-center gap-2">
-                          <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: streamColor }} />
-                          <span className="font-medium text-slate-800">{s.name}</span>
-                        </div>
-                      </td>
-                      {yearTotals.map((v, i) => <TD key={i}>{fmt(v)}</TD>)}
-                      <TD cls="font-semibold border-l border-slate-100">{fmt(streamGrand)}</TD>
-                      {years.length > 1 && (
-                        <TD cls={cagr !== null ? (cagr >= 0 ? "text-emerald-600" : "text-red-500") : ""}>
-                          {cagr !== null ? `${cagr >= 0 ? "+" : ""}${cagr.toFixed(1)}%` : "—"}
-                        </TD>
-                      )}
-                    </tr>
+                    <>
+                      <tr key={s.id} className={si % 2 === 0 ? "bg-white" : "bg-slate-50/50"}>
+                        <td className="px-3 py-2.5 text-[11px] sticky left-0 bg-inherit">
+                          <div className="flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full shrink-0" style={{ background: streamColor }} />
+                            <span className="font-medium text-slate-800">{s.name}</span>
+                            {s.items.length > 0 && (
+                              <button onClick={() => toggleExpanded(s.id)}
+                                className="flex items-center gap-0.5 text-[10px] text-slate-400 hover:text-slate-600 ml-1">
+                                {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                                <span>{s.items.length} item{s.items.length !== 1 ? "s" : ""}</span>
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                        {yearTotals.map((v, i) => <TD key={i}>{fmt(v)}</TD>)}
+                        <TD cls="font-semibold border-l border-slate-100">{fmt(streamGrand)}</TD>
+                        {years.length > 1 && (
+                          <TD cls={sCagr !== null ? (sCagr >= 0 ? "text-emerald-600" : "text-red-500") : ""}>
+                            {sCagr !== null ? `${sCagr >= 0 ? "+" : ""}${sCagr.toFixed(1)}%` : "—"}
+                          </TD>
+                        )}
+                      </tr>
+                      {/* Item drilldown rows */}
+                      {isExpanded && s.items.map((it) => {
+                        const itMRR  = it.volume * (s.type === "marketplace" ? (it.price / 100) : s.type === "rental" ? it.price * ((s.rentalOccupancyPct ?? 100) / 100) : it.price);
+                        const frac   = sMRR > 0 ? itMRR / sMRR : 0;
+                        return (
+                          <tr key={it.id} className="bg-slate-50/30 border-t border-slate-50">
+                            <td className="pl-8 pr-3 py-2 text-[10px] text-slate-500 sticky left-0 bg-slate-50/30">
+                              <span className="flex items-center gap-1.5">
+                                <span className="w-1 h-1 rounded-full bg-slate-300 shrink-0" />
+                                {it.name}{it.category ? ` · ${it.category}` : ""}
+                              </span>
+                            </td>
+                            {yearTotals.map((yt, i) => (
+                              <td key={i} className="px-3 py-2 text-right text-[10px] tabular-nums whitespace-nowrap text-slate-500">
+                                {fmt(Math.round(yt * frac))}
+                              </td>
+                            ))}
+                            <td className="px-3 py-2 text-right text-[10px] tabular-nums text-slate-500 border-l border-slate-100">
+                              {fmt(Math.round(streamGrand * frac))}
+                            </td>
+                            {years.length > 1 && <td className="px-3 py-2 text-right text-[10px] text-slate-300">—</td>}
+                          </tr>
+                        );
+                      })}
+                    </>
                   );
                 })}
 
@@ -1527,29 +1737,111 @@ function ForecastView({
         </div>
       )}
 
-      {/* ── Confidence note ── */}
-      <div className="flex items-start gap-3 rounded-xl px-4 py-3 bg-amber-50 border border-amber-100">
-        <Info className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-        <p className="text-xs text-amber-700">
-          <span className="font-semibold">Projection confidence: Medium</span> — based on your inputs.
-          Connect bank records or import verified sales data to reach High confidence.
-        </p>
+      {/* ══ SENSITIVITY VIEW ══ */}
+      {view === "sensitivity" && (
+        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+          <div className="px-4 pt-4 pb-2 border-b border-slate-100">
+            <p className="text-xs font-bold text-slate-800 uppercase tracking-wider">Sensitivity Analysis</p>
+            <p className="text-[10px] text-slate-400 mt-0.5">Revenue outcome across growth scenarios · {horizonYears}-year horizon</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              <thead>
+                <tr style={{ background: "#042f3d" }}>
+                  <th className="px-4 py-3 text-left text-[11px] font-bold text-white sticky left-0 min-w-[150px]" style={{ background: "#042f3d" }}>Scenario</th>
+                  <th className="px-3 py-2 text-right text-[11px] font-bold text-slate-300 whitespace-nowrap">Vol/mo</th>
+                  <th className="px-3 py-2 text-right text-[11px] font-bold text-slate-300 whitespace-nowrap">Price/yr</th>
+                  <th className="px-3 py-2 text-right text-[11px] font-bold text-white whitespace-nowrap">Year 1</th>
+                  <th className="px-3 py-2 text-right text-[11px] font-bold text-white whitespace-nowrap">Final Year</th>
+                  <TH cls="text-cyan-300 border-l border-white/10">Grand Total</TH>
+                  <TH cls="text-slate-300">CAGR</TH>
+                </tr>
+              </thead>
+              <tbody>
+                {SENSITIVITY_ROWS.map((row, ri) => {
+                  const adjStreams = streams.map((s) => ({
+                    ...s,
+                    volumeGrowthPct:      (s.volumeGrowthPct ?? 0) * row.volMult,
+                    annualPriceGrowthPct: (s.annualPriceGrowthPct ?? 0) * row.priceMult,
+                  }));
+                  const adjProj  = projectRevenue(adjStreams, totalMths, startDate);
+                  const adjYears = groupByYear(adjProj);
+                  const adjTotal = adjYears.reduce((a, y) => a + y.total, 0);
+                  const adjCagr  = adjYears.length > 1 && (adjYears[0]?.total ?? 0) > 0
+                    ? ((Math.pow(adjYears[adjYears.length - 1].total / adjYears[0].total, 1 / (adjYears.length - 1)) - 1) * 100)
+                    : null;
+                  const isBase = "isCurrent" in row && row.isCurrent;
+                  return (
+                    <tr key={row.label}
+                      className={isBase ? "border-y-2 border-cyan-200" : ri % 2 === 0 ? "bg-white" : "bg-slate-50/40"}
+                      style={isBase ? { background: "#f0f9ff" } : {}}>
+                      <td className="px-4 py-3 text-[11px] sticky left-0 bg-inherit">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: row.color }} />
+                          <span className={`font-semibold ${isBase ? "text-cyan-700" : "text-slate-700"}`}>{row.label}</span>
+                          {isBase && <span className="text-[9px] bg-cyan-100 text-cyan-700 font-bold px-1.5 py-0.5 rounded-full">current</span>}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 text-right text-[11px] tabular-nums text-slate-600">
+                        +{((streams[0]?.volumeGrowthPct ?? 0) * row.volMult).toFixed(1)}%
+                      </td>
+                      <td className="px-3 py-3 text-right text-[11px] tabular-nums text-slate-600">
+                        +{((streams[0]?.annualPriceGrowthPct ?? 0) * row.priceMult).toFixed(1)}%
+                      </td>
+                      <td className="px-3 py-3 text-right text-[11px] tabular-nums font-semibold text-slate-800">
+                        {fmt(adjYears[0]?.total ?? 0)}
+                      </td>
+                      <td className="px-3 py-3 text-right text-[11px] tabular-nums font-semibold text-slate-800">
+                        {fmt(adjYears[adjYears.length - 1]?.total ?? 0)}
+                      </td>
+                      <TD cls="font-bold border-l border-slate-100" style={{ color: isBase ? "#0e7490" : row.color }}>{fmt(adjTotal)}</TD>
+                      <TD cls={adjCagr !== null ? (adjCagr > 10 ? "text-emerald-600 font-semibold" : adjCagr > 0 ? "text-slate-700" : "text-red-500") : "text-slate-400"}>
+                        {adjCagr !== null ? `${adjCagr >= 0 ? "+" : ""}${adjCagr.toFixed(1)}%` : "—"}
+                      </TD>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="px-4 py-2.5 text-[10px] text-slate-400 border-t border-slate-100">
+            Bear/Bull cases apply 0.25× / 3× volume multipliers and 0.5× / 1.5× price multipliers to your current stream assumptions.
+          </p>
+        </div>
+      )}
+
+      {/* ── Confidence Banner ── */}
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+        <div className="flex items-start gap-3">
+          <Info className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+          <div>
+            <p className="text-xs font-bold text-amber-800">Forecast Confidence: Medium</p>
+            <p className="text-xs text-amber-700 mt-0.5">Based on manual estimates only. Connect verified sales data or import bank records to reach High confidence.</p>
+          </div>
+        </div>
       </div>
 
-      {/* ── Financial statements CTA ── */}
+      {/* ── Financial Model CTA ── */}
       <div className="rounded-2xl p-5 text-white" style={{ background: "linear-gradient(135deg,#0a1628,#0f2a4a)" }}>
         <div className="flex items-start gap-3 mb-4">
-          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "rgba(14,116,144,0.3)" }}>
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: "rgba(14,116,144,0.3)" }}>
             <BarChart3 className="w-4 h-4 text-cyan-400" />
           </div>
           <div>
-            <p className="text-sm font-bold text-white">Ready to build your Financial Statements</p>
-            <p className="text-xs text-slate-400 mt-0.5">Your revenue model feeds into P&amp;L, Cash Flow, Balance Sheet, and Loan Readiness score.</p>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-cyan-400 mb-0.5">Next Step</p>
+            <p className="text-sm font-bold text-white">Generate Full Financial Model</p>
+            <p className="text-xs text-slate-400 mt-0.5">Your revenue model feeds directly into P&amp;L, Cash Flow, Balance Sheet, and Loan Readiness scoring.</p>
           </div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-          {["P&L Statement", "Cash Flow", "Balance Sheet", "Loan Readiness"].map((label) => (
-            <div key={label} className="py-2 px-3 rounded-lg text-xs font-semibold text-slate-300 border border-white/10 text-center" title="Coming soon">
+          {[
+            { label: "Income Statement", icon: ScrollText },
+            { label: "Cash Flow",        icon: TrendingUp },
+            { label: "Balance Sheet",    icon: Landmark },
+            { label: "Loan Readiness",   icon: CheckCircle2 },
+          ].map(({ label, icon: Icon }) => (
+            <div key={label} className="py-2.5 px-3 rounded-lg text-xs font-semibold text-slate-300 border border-white/10 text-center flex items-center justify-center gap-1.5" title="Coming soon">
+              <Icon className="w-3 h-3 text-slate-400 shrink-0" />
               {label}
             </div>
           ))}
@@ -3320,9 +3612,9 @@ function ApplyPageInner() {
                       Revenue Forecast
                     </span>
                   </div>
-                  <h2 className="text-2xl font-bold text-slate-900">Multi-Year Revenue Projection</h2>
+                  <h2 className="text-2xl font-bold text-slate-900">Revenue Projection Model</h2>
                   <p className="text-slate-500 text-sm mt-1">
-                    {streams.length} stream{streams.length !== 1 ? "s" : ""} · item-level · by category · month by month
+                    {forecastHorizon}-year forecast · Item-level drivers · Scenario-ready
                   </p>
                 </div>
 
@@ -3330,6 +3622,7 @@ function ApplyPageInner() {
                   streams={streams}
                   onUpdateStream={updateStream}
                   horizonYears={forecastHorizon}
+                  onHorizonChange={setForecastHorizon}
                   startYear={forecastStartYear}
                   startMonth={forecastStartMonth}
                   currency={currency}

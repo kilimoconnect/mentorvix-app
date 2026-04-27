@@ -147,7 +147,7 @@ WHEN READY — output ONLY this block, nothing before or after the tags:
 5
 [FORECAST_START]
 2025-01` : ""}
-(${isFirstStream ? "Replace 5 with the number of years specified. Replace 2025-01 with the start month in YYYY-MM format. Default to current month and 5 years if unclear." : "output only the block above"})
+(${isFirstStream ? "CRITICAL: Replace 5 with EXACTLY the number of years the user stated. If the user said 3, write 3. If the user said 10, write 10. Only use 5 as a fallback when the user gave NO answer at all. Replace 2025-01 with the start month in YYYY-MM format the user specified, or the current month if not specified." : "output only the block above"})
 
 UNIT EXAMPLES: unit, can, kg, litre, bag, roll, sheet, hour, session, project, seat, room, month, subscriber, contract, GMV
 CATEGORY EXAMPLES: Interior Paint, Exterior Paint, Primer, Waterproofing, Tools, Professional Services, Basic Plans, Pro Plans, Residential Units, Commercial Units, Retail Channel, Wholesale Channel`;
