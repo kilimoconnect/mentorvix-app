@@ -297,6 +297,14 @@ function parseItems(text: string): StreamItem[] | null {
   } catch { return null; }
 }
 
+function parseForecastYears(text: string): number | null {
+  const idx = text.indexOf("[FORECAST_YEARS]");
+  if (idx === -1) return null;
+  const after = text.slice(idx + "[FORECAST_YEARS]".length).trim();
+  const n = parseInt(after.split(/[\s\n,]/)[0], 10);
+  return !isNaN(n) && n >= 1 && n <= 50 ? n : null;
+}
+
 function parseStreams(text: string): RevenueStream[] | null {
   const idx = text.indexOf("[STREAMS_DETECTED]");
   if (idx === -1) return null;
@@ -547,10 +555,12 @@ function ItemTable({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s: 
 }
 
 /* ═══════════════════════════════════════ DriverChat ══ */
-function DriverChat({ stream, onUpdate, situation }: {
+function DriverChat({ stream, onUpdate, situation, isFirstStream, onForecastYears }: {
   stream: RevenueStream;
   onUpdate: (s: RevenueStream) => void;
   situation: string | null;
+  isFirstStream?: boolean;
+  onForecastYears?: (years: number) => void;
 }) {
   const [input,       setInput]       = useState("");
   const [typing,      setTyping]      = useState(false);
@@ -579,13 +589,16 @@ function DriverChat({ stream, onUpdate, situation }: {
       const res = await fetch("/api/drivers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, stream: { name: stream.name, type: stream.type }, situation }),
+        body: JSON.stringify({ messages: history, stream: { name: stream.name, type: stream.type }, situation, isFirstStream }),
       });
       const data = await res.json() as { text?: string; provider?: Provider; error?: string };
       if (data.error) throw new Error(data.error);
       const text = data.text ?? "";
       const items = parseItems(text);
       if (items) {
+        // Capture forecast horizon if provided (first stream only)
+        const fy = parseForecastYears(text);
+        if (fy && onForecastYears) onForecastYears(fy);
         const cleanText = text.slice(0, text.indexOf("[ITEMS_DETECTED]")).trim() ||
           `I've collected all the data for ${stream.name}. Review and edit the items below.`;
         const newMsgs = [...history, { role: "assistant" as const, content: cleanText }];
@@ -880,13 +893,16 @@ function RevenueMix({ streams, months }: { streams: RevenueStream[]; months: Pro
 }
 
 /* ═══════════════════════════════════════ ForecastView ══ */
-function ForecastView({ streams }: { streams: RevenueStream[] }) {
+function ForecastView({ streams, defaultHorizon = 5 }: { streams: RevenueStream[]; defaultHorizon?: number }) {
   const now = new Date();
   const [startYear,    setStartYear]    = useState(now.getFullYear());
   const [startMonth,   setStartMonth]   = useState(now.getMonth());
-  const [horizonYears, setHorizonYears] = useState(3);
+  const [horizonYears, setHorizonYears] = useState(defaultHorizon);
   const [view,         setView]         = useState<"annual" | "monthly">("annual");
   const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+
+  // Sync if the parent updates defaultHorizon after data collection
+  useEffect(() => { setHorizonYears(defaultHorizon); }, [defaultHorizon]);
 
   const startDate  = new Date(startYear, startMonth, 1);
   const totalMths  = horizonYears * 12;
@@ -1302,9 +1318,10 @@ export default function ApplyPage() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Streams
-  const [streams,    setStreams]    = useState<RevenueStream[]>([]);
-  const [streamIdx,  setStreamIdx]  = useState(0);
-  const [driverMode, setDriverMode] = useState<DriverMode>("chat");
+  const [streams,      setStreams]      = useState<RevenueStream[]>([]);
+  const [streamIdx,    setStreamIdx]    = useState(0);
+  const [driverMode,   setDriverMode]   = useState<DriverMode>("chat");
+  const [forecastYears, setForecastYears] = useState(5);
 
   // Voice — mic (speech-to-text) + per-message speaker (Web Speech API, best available voice)
   const [micActive,    setMicActive]    = useState(false);
@@ -1802,7 +1819,7 @@ export default function ApplyPage() {
                 </div>
 
                 {/* Mode content */}
-                {driverMode === "chat"   && <DriverChat   stream={currentStream} onUpdate={updateStream} situation={situation} />}
+                {driverMode === "chat"   && <DriverChat   stream={currentStream} onUpdate={updateStream} situation={situation} isFirstStream={streamIdx === 0} onForecastYears={setForecastYears} />}
                 {driverMode === "import" && <ImportPane   stream={currentStream} onUpdate={updateStream} />}
                 {driverMode === "manual" && (
                   <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-xs text-amber-700">
@@ -1875,7 +1892,7 @@ export default function ApplyPage() {
                   </p>
                 </div>
 
-                <ForecastView streams={streams} />
+                <ForecastView streams={streams} defaultHorizon={forecastYears} />
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                   <button onClick={() => go(2)}

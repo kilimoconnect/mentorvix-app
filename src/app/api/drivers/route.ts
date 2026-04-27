@@ -14,7 +14,7 @@ const SITUATION_LABELS: Record<string, string> = {
   turnaround:      "TURNAROUND / RECOVERY — be sensitive. Focus on current active revenue, not peak.",
 };
 
-function buildSystem(streamName: string, streamType: StreamType, situation?: string): string {
+function buildSystem(streamName: string, streamType: StreamType, situation?: string, isFirstStream?: boolean): string {
 
   const formulaHint: Record<StreamType, string> = {
     product:      "Revenue = Units Sold × Selling Price",
@@ -116,16 +116,23 @@ UNIVERSAL RULES:
 2. NEVER open with a specific SKU or unit count question for product/retail streams — always assess complexity first
 3. If the user pastes or uploads raw data (product list, price list, CSV, invoice lines) — extract all items directly without further questions
 4. Estimates are perfectly fine — encourage the user when they hesitate
-5. Once you have enough data to model the stream accurately, output the detection block
+5. Once you have enough data to model the stream accurately, ${isFirstStream ? "ask the FORECAST HORIZON question, then output the detection block" : "output the detection block"}
 6. Keep responses concise — one clear question per reply, maximum 2–3 sentences
 7. Maintain a professional, efficient consultant tone
 8. Do not number your questions or explain your process
-
-WHEN READY — output ONLY this block, nothing before or after the tag:
+${isFirstStream ? `
+FORECAST HORIZON (first stream only — ask this as your very last question, after all volumes and prices are collected):
+"One last question — how many years would you like us to project this revenue forecast? For example: 3 years, 5 years, or 10 years?"
+Wait for the answer, then include it in the output block below.
+` : ""}
+WHEN READY — output ONLY this block, nothing before or after the tags:
 [ITEMS_DETECTED]
 [
   {"name":"item name","category":"category","volume":50,"price":25.00,"unit":"unit","note":"optional context"}
-]
+]${isFirstStream ? `
+[FORECAST_YEARS]
+5` : ""}
+(${isFirstStream ? "Replace 5 with the number of years the client specified; default to 5 if unclear" : "output only the block above"})
 
 UNIT EXAMPLES: unit, can, kg, litre, bag, roll, sheet, hour, session, project, seat, room, month, subscriber, contract, GMV
 CATEGORY EXAMPLES: Interior Paint, Exterior Paint, Primer, Waterproofing, Tools, Professional Services, Basic Plans, Pro Plans, Residential Units, Commercial Units, Retail Channel, Wholesale Channel`;
@@ -171,17 +178,18 @@ async function callGemini(messages: Message[], system: string): Promise<string> 
 
 export async function POST(req: NextRequest) {
   try {
-    const { messages, stream, situation } = await req.json() as {
+    const { messages, stream, situation, isFirstStream } = await req.json() as {
       messages: Message[];
       stream: { name: string; type: StreamType };
       situation?: string;
+      isFirstStream?: boolean;
     };
 
     if (!stream?.name) {
       return NextResponse.json({ error: "Stream name required" }, { status: 400 });
     }
 
-    const system   = buildSystem(stream.name, stream.type, situation);
+    const system   = buildSystem(stream.name, stream.type, situation, isFirstStream);
     const provider = chooseProvider();
     const text     = provider === "gemini"
       ? await callGemini(messages ?? [], system)
