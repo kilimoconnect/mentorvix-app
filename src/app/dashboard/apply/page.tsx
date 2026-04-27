@@ -1495,16 +1495,22 @@ function ApplyPageInner() {
         setForecastStartMonth(state.forecastConfig.start_month);
       }
 
-      // Jump to the furthest step the user reached (capped at step 3 = forecast)
-      const targetStep = Math.min(app.wizard_step ?? 0, 3);
-      if (targetStep > 0) { setDir(1); setStep(targetStep); }
+      // Jump to the furthest step the user reached (capped at step 3 = forecast).
+      // If wizard_step is 0 but streams exist (step auto-save didn't fire before
+      // the user left), force at least step 1 so the streams are actually shown.
+      const savedStep  = Math.min(app.wizard_step ?? 0, 3);
+      const targetStep = Math.max(savedStep, 1); // streams exist → at least Confirm Structure
+      setDir(1);
+      setStep(targetStep);
       return false; // no DB reset needed
     }
 
-    // ── No streams in DB (race condition from earlier session) ────────────────
-    // Stay at step 0 (intake chat). If the user has conversation history,
-    // flag that we should re-run stream detection so they don't start over.
-    if (intake?.messages?.length && intake.is_complete) {
+    // ── No streams in DB ────────────────────────────────────────────────────────
+    // Trigger re-detection if the user has conversation history AND either
+    //   • intake.is_complete = true  (debounced save confirmed detection), OR
+    //   • app.intake_done   = true  (immediate save in callIntake confirmed detection)
+    // We use both because the debounced save might not have fired before the user left.
+    if (intake?.messages?.length && (intake.is_complete || app.intake_done)) {
       setNeedsRedetection(true);
     }
     // Tell the caller to reset wizard_step in DB so the cycle doesn't repeat
