@@ -761,7 +761,7 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
                   <span className="text-[9px] text-slate-400 w-6 text-right shrink-0">
                     {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][mi]}
                   </span>
-                  <input type="range" min={0.1} max={3} step={0.05} value={v}
+                  <input type="range" min={0} max={3} step={0.05} value={v}
                     onChange={(e) => {
                       const mults = [...stream.seasonalityMultipliers];
                       mults[mi] = parseFloat(e.target.value);
