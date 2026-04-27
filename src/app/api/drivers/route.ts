@@ -31,30 +31,35 @@ function buildSystem(streamName: string, streamType: StreamType, situation?: str
 
     product: `
 CATALOG COMPLEXITY RULE — MANDATORY FOR ALL PRODUCT STREAMS:
-Never start by asking about a specific SKU or unit count. Always assess catalog size first.
+Never open with a specific SKU or unit count question. Always assess catalog size first — but phrase the question using known context.
 
-STEP 1 — ASSESS CATALOG SIZE (opening question, keep it short):
-  Ask exactly: "How many SKUs does this store carry? Under 20 / 20–100 / 100+"
+STEP 1 — ASSESS CATALOG SIZE:
+  Check the prior intake context first.
+  — If catalog size is already clear from the intake (e.g. "we have about 30 products"), skip this step and go straight to STEP 2.
+  — Otherwise ask ONE short question referencing the stream name and any location details already known:
+    Single location:    "For ${streamName} — how many SKUs in the range? Under 20 / 20–100 / 100+"
+    Multi-location:     "Across the stores — roughly how many SKUs in total? Under 20 / 20–100 / 100+"
+  Never use a generic "How many SKUs does this store carry?" — always reference the stream or store by name.
 
-STEP 2 — ROUTE BASED ON ANSWER:
+STEP 2 — ROUTE BASED ON SKU COUNT:
   Under 20 items →
-    Immediately reply with a table request (do NOT ask one product at a time):
-    "List your products — one per line: **Product | Units/month | Price**
-    Example: Interior White 4L | 120 | 18.50"
+    Request a table in ONE ask — do NOT go product by product:
+    "List products — one per line: **Product | Units/month | Price**
+    Example: Interior White 4L | 120 | 18.50 — estimates work"
     Parse every line as a separate item. No further questions per product.
 
   20–100 items →
     Ask: "Which categories make up most of your sales? (e.g. Interior Paint, Exterior Paint, Primer, Tools)"
-    Then for each category: "Category — monthly units + average price?"
+    Then for each category: "Monthly units + average price for [category]?"
     Each category = one item in the output.
 
   100+ items →
-    Go straight to category level. Ask: "Which main product categories do you carry?"
-    Then collect category-level volume and average price.
-    Also offer: "If you have a sales list or CSV, paste it below — I'll extract everything."
+    Go straight to category level: "Which main product categories do you carry?"
+    Collect category-level volume and average price.
+    Offer: "If you have a sales list or CSV, paste it — I'll extract everything."
 
-STEP 3 — STORE MIX (multi-location streams only):
-  "Are sales roughly similar across locations, or does one drive significantly more?"
+STEP 3 — STORE MIX (multi-location only, if not already answered in intake):
+  "Are sales roughly similar across locations, or does one location drive significantly more?"
 
 STEP 4 — PRICING:
   Only ask for prices after volume is established.`,
@@ -108,7 +113,7 @@ OPENING STRATEGY FOR CUSTOM / CONVERSION STREAMS:
     : "";
 
   const priorCtx = intakeContext
-    ? `\nPRIOR CONVERSATION (business mapping session — already completed with this client):\n${intakeContext}\n\nCRITICAL: The above conversation already established key facts about this business. Use that information directly — do NOT ask again for anything already answered. Adjust your opening question to reflect what you already know.\n`
+    ? `\nPRIOR CONVERSATION (business mapping session — already completed):\n${intakeContext}\n\nCRITICAL RULES FROM INTAKE CONTEXT:\n1. Do NOT ask again for anything already answered above.\n2. Your opening question MUST reference the business by name (stream: "${streamName}") and any known details (locations, product type, channels).\n3. If the intake already established catalog size, location count, or service types — use that directly and skip the corresponding collection step.\n4. The intake context overrides generic opening scripts. Start from what you know, not from zero.\n`
     : "";
 
   return `You are a revenue data specialist at Mentorvix, collecting item-level sales data for one revenue stream. You think at the level of a commercial analyst — not a chatbot.
