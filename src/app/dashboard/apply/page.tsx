@@ -5,7 +5,12 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { getOrCreateApplication, saveStreams, saveStreamItems } from "@/lib/supabase/revenue";
+import {
+  getOrCreateApplication, saveStreams, saveStreamItems,
+  saveIntakeConversation, saveDriverConversation,
+  loadApplicationState, updateApplicationFlags,
+  type DbApplication, type ApplicationState,
+} from "@/lib/supabase/revenue";
 import {
   ArrowLeft, ArrowRight, Plus, Trash2, Edit3, Check, X,
   BrainCircuit, BarChart3, TrendingUp, ShoppingBag, Briefcase,
@@ -173,6 +178,10 @@ function resolveVoice(
 /* ═══════════════════════════════════════ helpers ══ */
 let _id = 0;
 const uid = () => `i${++_id}`;
+
+/** True if the string looks like a Postgres UUID (came from the DB) */
+const isDbId = (id: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
 function makeStream(name: string, type: StreamType, confidence: Confidence): RevenueStream {
   return {
@@ -1328,6 +1337,14 @@ export default function ApplyPage() {
   const [driverMode,   setDriverMode]   = useState<DriverMode>("chat");
   const [forecastYears, setForecastYears] = useState(5);
 
+  // ── DB persistence state ────────────────────────────────────────────────────
+  const [appId,       setAppId]       = useState<string | null>(null);
+  const [userId,      setUserId]      = useState<string | null>(null);
+  const [isRestoring, setIsRestoring] = useState(true);
+  const isSavingRef  = useRef(false);   // guard against save → setState → save loops
+  const intakeSaveTimer  = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const streamSaveTimer  = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
   // Voice — mic (speech-to-text) + per-message speaker (Web Speech API, best available voice)
   const [micActive,    setMicActive]    = useState(false);
   const [speakingIdx,  setSpeakingIdx]  = useState<number | null>(null);
@@ -1394,6 +1411,176 @@ export default function ApplyPage() {
 
   const go = (n: number) => { setDir(n > step ? 1 : -1); setStep(n); };
 
+  // ── Restore a saved application state into local state ──────────────────────
+  function restoreFromDb(app: DbApplication, state: ApplicationState) {
+    if (app.situation) setSituation(app.situation as SituationId);
+
+    const intake = state.intakeConversation;
+    if (intake?.messages?.length) {
+      setMessages(intake.messages as ChatMessage[]);
+      if (intake.is_complete) setSituationDone(true);
+    }
+
+    if (state.streams.length > 0) {
+      const restored: RevenueStream[] = state.streams.map((s) => ({
+        id:                  s.id,
+        name:                s.name,
+        type:                s.type as StreamType,
+        confidence:          s.confidence as Confidence,
+        monthlyGrowthPct:    Number(s.monthly_growth_pct),
+        subNewPerMonth:      Number(s.sub_new_per_month),
+        subChurnPct:         Number(s.sub_churn_pct),
+        rentalOccupancyPct:  Number(s.rental_occupancy_pct),
+        driverDone:          s.driver_done,
+        items: (state.itemsByStream[s.id] ?? []).map((it) => ({
+          id:       it.id,
+          name:     it.name,
+          category: it.category,
+          volume:   Number(it.volume),
+          price:    Number(it.price),
+          unit:     it.unit,
+          note:     it.note ?? undefined,
+        })),
+        driverMessages: ((state.driverConversations.find((c) => c.stream_id === s.id)?.messages) ?? []) as ChatMessage[],
+      }));
+      setStreams(restored);
+    }
+
+    if (state.forecastConfig) {
+      setForecastYears(state.forecastConfig.horizon_years);
+    }
+
+    // Jump to the furthest step the user reached
+    const targetStep = Math.min(app.wizard_step ?? 0, 3); // cap at step 3
+    if (targetStep > 0) {
+      setDir(1);
+      setStep(targetStep);
+    }
+  }
+
+  // ── On mount: get/create application, restore if progress exists ─────────────
+  useEffect(() => {
+    (async () => {
+      setIsRestoring(true);
+      try {
+        const sb = createClient();
+        const { data: { user } } = await sb.auth.getUser();
+        if (!user) { setIsRestoring(false); return; }
+        setUserId(user.id);
+        const app = await getOrCreateApplication(sb, user.id);
+        setAppId(app.id);
+        // Restore if there is any saved progress
+        if (app.wizard_step > 0 || app.intake_done) {
+          const state = await loadApplicationState(sb, app.id);
+          restoreFromDb(app, state);
+        }
+      } catch (e) {
+        console.error("[apply] restore error", e);
+      } finally {
+        setIsRestoring(false);
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Auto-save: situation ────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!appId || !situation) return;
+    const sb = createClient();
+    updateApplicationFlags(sb, appId, { situation }).catch(console.error);
+  }, [situation, appId]);
+
+  // ── Auto-save: wizard step ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (!appId) return;
+    const sb = createClient();
+    updateApplicationFlags(sb, appId, { wizard_step: step }).catch(console.error);
+  }, [step, appId]);
+
+  // ── Auto-save: intake messages (debounced 800 ms) ───────────────────────────
+  useEffect(() => {
+    if (!appId || !userId || messages.length === 0) return;
+    clearTimeout(intakeSaveTimer.current);
+    const isComplete = streams.length > 0;
+    intakeSaveTimer.current = setTimeout(async () => {
+      try {
+        const sb = createClient();
+        await saveIntakeConversation(sb, appId, userId, messages, null, isComplete);
+        if (isComplete) {
+          await updateApplicationFlags(sb, appId, { intake_done: true });
+        }
+      } catch (e) { console.error("[apply] intake save error", e); }
+    }, 800);
+    return () => clearTimeout(intakeSaveTimer.current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.length, streams.length, appId, userId]);
+
+  // ── Auto-save: streams + items + driver messages (debounced 1.2 s) ──────────
+  useEffect(() => {
+    if (!appId || !userId || streams.length === 0 || isSavingRef.current) return;
+    clearTimeout(streamSaveTimer.current);
+    streamSaveTimer.current = setTimeout(async () => {
+      isSavingRef.current = true;
+      try {
+        const sb = createClient();
+        // Save streams — strip local IDs so DB generates UUIDs for new ones
+        const savedStreams = await saveStreams(sb, appId, userId,
+          streams.map((s, i) => ({
+            id:                   isDbId(s.id) ? s.id : undefined,
+            name:                 s.name,
+            type:                 s.type,
+            confidence:           s.confidence,
+            monthly_growth_pct:   s.monthlyGrowthPct,
+            sub_new_per_month:    s.subNewPerMonth,
+            sub_churn_pct:        s.subChurnPct,
+            rental_occupancy_pct: s.rentalOccupancyPct,
+            driver_done:          s.driverDone,
+            position:             i,
+          }))
+        );
+
+        // If any streams got new DB IDs, update local state
+        const idMap: Record<string, string> = {};
+        streams.forEach((s, i) => {
+          const db = savedStreams[i];
+          if (db && s.id !== db.id) idMap[s.id] = db.id;
+        });
+        if (Object.keys(idMap).length > 0) {
+          setStreams((prev) => prev.map((s) => ({ ...s, id: idMap[s.id] ?? s.id })));
+        }
+
+        // Save items + driver conversations per stream (use DB IDs)
+        for (let i = 0; i < savedStreams.length; i++) {
+          const local = streams[i];
+          const db    = savedStreams[i];
+          if (!local || !db) continue;
+
+          if (local.items.length > 0) {
+            await saveStreamItems(sb, db.id, userId, local.items.map((it, pos) => ({
+              name: it.name, category: it.category,
+              volume: it.volume, price: it.price,
+              unit: it.unit, note: it.note, position: pos,
+            })));
+          }
+          if (local.driverMessages.length > 0) {
+            await saveDriverConversation(sb, appId, userId, db.id, local.driverMessages, null, local.driverDone);
+          }
+        }
+
+        const allDone = streams.every((s) => s.driverDone || s.items.length > 0);
+        if (allDone) {
+          await updateApplicationFlags(sb, appId, { drivers_done: true });
+        }
+      } catch (e) {
+        console.error("[apply] streams save error", e);
+      } finally {
+        isSavingRef.current = false;
+      }
+    }, 1200);
+    return () => clearTimeout(streamSaveTimer.current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streams, appId, userId]);
+
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, aiTyping]);
   // Fire opening message only after situation is confirmed and no messages yet
   useEffect(() => {
@@ -1452,6 +1639,20 @@ export default function ApplyPage() {
     center: { opacity: 1, x: 0, transition: { duration: 0.38, ease: EASE } },
     exit:   (d: number) => ({ opacity: 0, x: d > 0 ? -48 : 48, transition: { duration: 0.25, ease: EASE } }),
   };
+
+  // Show a simple full-screen loader while restoring saved state from DB
+  if (isRestoring) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 rounded-2xl flex items-center justify-center" style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
+            <BrainCircuit className="w-5 h-5 text-white animate-pulse" />
+          </div>
+          <p className="text-sm text-slate-500 font-medium">Restoring your progress…</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col">
