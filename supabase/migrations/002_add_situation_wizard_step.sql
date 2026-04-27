@@ -12,7 +12,9 @@ ALTER TABLE applications
   ADD COLUMN IF NOT EXISTS wizard_step INTEGER NOT NULL DEFAULT 0;
 
 -- Update the application_summaries view to expose the new columns
-CREATE OR REPLACE VIEW application_summaries AS
+-- Must drop first — CREATE OR REPLACE cannot change column order
+DROP VIEW IF EXISTS application_summaries;
+CREATE VIEW application_summaries AS
 SELECT
   a.id,
   a.user_id,
