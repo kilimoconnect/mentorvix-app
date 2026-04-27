@@ -7,8 +7,8 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import {
   getOrCreateApplication, saveStreams, saveStreamItems,
-  saveIntakeConversation, saveDriverConversation,
-  loadApplicationState, updateApplicationFlags,
+  saveIntakeConversation, saveDriverConversation, saveForecastConfig,
+  saveProjectionSnapshot, loadApplicationState, updateApplicationFlags,
   type DbApplication, type ApplicationState,
 } from "@/lib/supabase/revenue";
 import {
@@ -1456,7 +1456,9 @@ function ApplyPageInner() {
     const intake = state.intakeConversation;
     if (intake?.messages?.length) {
       setMessages(intake.messages as ChatMessage[]);
-      if (intake.is_complete) setSituationDone(true);
+      // Any messages mean the user already passed situation selection — restore that gate.
+      // (is_complete is only true once streams are detected; don't wait for it.)
+      setSituationDone(true);
     }
 
     if (state.streams.length > 0) {
@@ -1657,6 +1659,17 @@ function ApplyPageInner() {
     return () => clearTimeout(streamSaveTimer.current);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streams, appId, userId]);
+
+  // ── Auto-save: forecast config (horizon + start date) ──────────────────────
+  useEffect(() => {
+    if (!appId || !userId || isRestoring) return;
+    const sb = createClient();
+    saveForecastConfig(sb, appId, userId, {
+      startMonth: forecastStartMonth,
+      startYear:  forecastStartYear,
+      horizonYears: forecastHorizon,
+    }).catch(console.error);
+  }, [forecastHorizon, forecastStartYear, forecastStartMonth, appId, userId, isRestoring]);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, aiTyping]);
   // Fire opening message only after situation is confirmed and no messages yet
@@ -2330,20 +2343,31 @@ function ApplyPageInner() {
                     <ArrowLeft className="w-4 h-4" /> Adjust Numbers
                   </button>
                   <button onClick={async () => {
-                    const projection = projectRevenue(streams, 36, new Date());
-                    // Save to localStorage immediately
-                    const localData = { streams, projection };
-                    localStorage.setItem("mvx_revenue_model", JSON.stringify(localData));
+                    // Build projection using the user's chosen horizon + start date
+                    const startDate = new Date(forecastStartYear, forecastStartMonth, 1);
+                    const projection = projectRevenue(streams, forecastHorizon * 12, startDate);
 
-                    // Persist to Supabase in background
-                    try {
-                      const supabase = createClient();
-                      const { data: { user } } = await supabase.auth.getUser();
-                      if (user) {
-                        const app = await getOrCreateApplication(supabase, user.id);
-                        const savedStreams = await saveStreams(
-                          supabase, app.id, user.id,
+                    // Derive dashboard metrics from the projection
+                    const monthlyBaseline   = projection[0]?.total ?? 0;
+                    const year1Revenue      = projection.slice(0, 12).reduce((a, m) => a + m.total, 0);
+                    const totalRevenue      = projection.reduce((a, m) => a + m.total, 0);
+                    const lastMonths        = projection.slice(-12);
+                    const finalYearRevenue  = lastMonths.reduce((a, m) => a + m.total, 0);
+
+                    // Keep localStorage for any legacy readers
+                    localStorage.setItem("mvx_revenue_model", JSON.stringify({
+                      streams, projection, applicationId: appId,
+                    }));
+
+                    // Persist everything to Supabase using the session's appId
+                    if (appId && userId) {
+                      try {
+                        const sb = createClient();
+
+                        // 1. Final stream + item save (with correct DB IDs)
+                        const savedStreams = await saveStreams(sb, appId, userId,
                           streams.map((s, i) => ({
+                            id: isDbId(s.id) ? s.id : undefined,
                             name: s.name, type: s.type, confidence: s.confidence,
                             monthly_growth_pct: s.monthlyGrowthPct,
                             sub_new_per_month: s.subNewPerMonth,
@@ -2351,30 +2375,38 @@ function ApplyPageInner() {
                             rental_occupancy_pct: s.rentalOccupancyPct,
                             driver_done: s.driverDone,
                             position: i,
-                          })),
+                          }))
                         );
-                        // Save items for each stream (match by position)
-                        for (let idx = 0; idx < savedStreams.length; idx++) {
-                          const localStream = streams[idx];
-                          if (localStream?.items?.length) {
-                            await saveStreamItems(
-                              supabase, savedStreams[idx].id, user.id,
-                              localStream.items.map((it, pos) => ({
-                                name: it.name, category: it.category,
-                                volume: it.volume, price: it.price,
-                                unit: it.unit, note: it.note, position: pos,
-                              })),
-                            );
+                        for (let i = 0; i < savedStreams.length; i++) {
+                          const local = streams[i]; const db = savedStreams[i];
+                          if (local?.items?.length && db) {
+                            await saveStreamItems(sb, db.id, userId, local.items.map((it, pos) => ({
+                              name: it.name, category: it.category,
+                              volume: it.volume, price: it.price,
+                              unit: it.unit, note: it.note, position: pos,
+                            })));
                           }
                         }
-                        // Re-save with applicationId so dashboard can delete from DB
-                        localStorage.setItem("mvx_revenue_model", JSON.stringify({
-                          ...localData, applicationId: app.id,
-                        }));
+
+                        // 2. Forecast config
+                        const fConfig = await saveForecastConfig(sb, appId, userId, {
+                          startMonth:   forecastStartMonth,
+                          startYear:    forecastStartYear,
+                          horizonYears: forecastHorizon,
+                        });
+
+                        // 3. Projection snapshot (powers dashboard metrics)
+                        await saveProjectionSnapshot(sb, appId, userId, fConfig.id, {
+                          monthlyBaseline, year1Revenue, totalRevenue, finalYearRevenue,
+                        }, projection);
+
+                        // 4. Mark forecast complete
+                        await updateApplicationFlags(sb, appId, {
+                          forecast_done: true, drivers_done: true, wizard_step: 3,
+                        });
+                      } catch (e) {
+                        console.error("[apply] forecast save error:", e);
                       }
-                    } catch (e) {
-                      console.error("[apply] Supabase save error:", e);
-                      // Non-blocking — local save already happened
                     }
 
                     router.push("/dashboard");
