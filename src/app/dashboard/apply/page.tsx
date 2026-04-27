@@ -1720,46 +1720,54 @@ function ApplyPageInner() {
       const detected = parseStreams(text);
 
       if (detected) {
-        // ── Streams detected — this is a critical save point ──────────────────
+        // ── Streams detected ───────────────────────────────────────────────────
         const clean = text.slice(0, text.indexOf("[STREAMS_DETECTED]")).trim() ||
           `Great — I've identified ${detected.length} income source${detected.length !== 1 ? "s" : ""}. Let me show you what I found.`;
         const finalMessages = [...history, { role: "assistant" as const, content: clean }];
         setMessages(finalMessages);
         setStreams(detected);
 
+        // DB save — has its own try/catch so a failure is NON-FATAL.
+        // go(1) always fires regardless. If IDs are still local, the
+        // Confirm Structure → Collect Revenue Data button retries the save
+        // and assigns proper DB UUIDs before DriverChat mounts.
         if (appId && userId) {
-          // AWAIT the stream save so DB UUIDs exist before DriverChat mounts on step 2.
-          // If this save fails, stay on step 0 so the user can retry.
-          const sb = createClient();
-          const savedStreams = await saveStreams(sb, appId, userId,
-            detected.map((s, i) => ({
-              name: s.name, type: s.type, confidence: s.confidence,
-              monthly_growth_pct: s.monthlyGrowthPct,
-              sub_new_per_month: s.subNewPerMonth,
-              sub_churn_pct: s.subChurnPct,
-              rental_occupancy_pct: s.rentalOccupancyPct,
-              driver_done: s.driverDone,
-              position: i,
-            }))
-          );
-          // Map local IDs → DB UUIDs before any step transition
-          const idMap: Record<string, string> = {};
-          detected.forEach((s, i) => {
-            const db = savedStreams[i];
-            if (db && s.id !== db.id) idMap[s.id] = db.id;
-          });
-          if (Object.keys(idMap).length > 0) {
-            setStreams((prev) => prev.map((s) => ({ ...s, id: idMap[s.id] ?? s.id })));
+          try {
+            const sb = createClient();
+            const savedStreams = await saveStreams(sb, appId, userId,
+              detected.map((s, i) => ({
+                name: s.name, type: s.type, confidence: s.confidence,
+                monthly_growth_pct: s.monthlyGrowthPct,
+                sub_new_per_month: s.subNewPerMonth,
+                sub_churn_pct: s.subChurnPct,
+                rental_occupancy_pct: s.rentalOccupancyPct,
+                driver_done: s.driverDone,
+                position: i,
+              }))
+            );
+            // Map local IDs → DB UUIDs
+            const idMap: Record<string, string> = {};
+            detected.forEach((s, i) => {
+              const db = savedStreams[i];
+              if (db && s.id !== db.id) idMap[s.id] = db.id;
+            });
+            if (Object.keys(idMap).length > 0) {
+              setStreams((prev) => prev.map((s) => ({ ...s, id: idMap[s.id] ?? s.id })));
+            }
+            // Auto-name + mark intake done
+            const parts = detected.map((s) => s.name).slice(0, 2);
+            const extra = detected.length > 2 ? ` +${detected.length - 2} more` : "";
+            const autoName = parts.join(" & ") + extra;
+            setAppName(autoName);
+            await saveIntakeConversation(sb, appId, userId, finalMessages, null, true);
+            await updateApplicationFlags(sb, appId, { intake_done: true, name: autoName });
+          } catch (saveErr) {
+            // Non-fatal — step 1→2 save will retry and assign proper DB IDs
+            console.error("[apply] detection save (non-fatal):", saveErr);
           }
-          // Auto-name + mark intake done
-          const parts = detected.map((s) => s.name).slice(0, 2);
-          const extra = detected.length > 2 ? ` +${detected.length - 2} more` : "";
-          const autoName = parts.join(" & ") + extra;
-          setAppName(autoName);
-          await saveIntakeConversation(sb, appId, userId, finalMessages, null, true);
-          await updateApplicationFlags(sb, appId, { intake_done: true, name: autoName });
         }
 
+        // Always advance — save failure does not block the user
         setTimeout(() => go(1), 900);
 
       } else {
