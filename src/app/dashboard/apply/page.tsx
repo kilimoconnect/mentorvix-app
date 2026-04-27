@@ -1249,31 +1249,55 @@ function ForecastView({
               </div>
             )}
           </div>
-          <div className="flex items-end gap-3" style={{ height: 148 }}>
-            {years.map((y, i) => {
-              const maxY = Math.max(...years.map((yy) => yy.total));
-              const pct  = maxY > 0 ? (y.total / maxY) * 100 : 4;
-              const prev = years[i - 1];
-              const yoy  = prev && prev.total > 0 ? ((y.total - prev.total) / prev.total) * 100 : null;
-              return (
-                <div key={y.year} className="flex-1 flex flex-col items-center min-w-0" style={{ height: "100%", justifyContent: "flex-end" }}>
-                  <span className="text-[9px] font-bold text-slate-600 truncate w-full text-center leading-tight">{fmt(y.total)}</span>
-                  {yoy !== null
-                    ? <span className={`text-[8px] font-bold mt-0.5 ${yoy >= 0 ? "text-emerald-600" : "text-red-500"}`}>{yoy >= 0 ? "▲" : "▼"}{Math.abs(yoy).toFixed(1)}%</span>
-                    : <span className="text-[8px] text-transparent mt-0.5">–</span>
-                  }
-                  <motion.div
-                    initial={{ height: 0 }}
-                    animate={{ height: `${Math.max(pct, 3)}%` }}
-                    transition={{ duration: 0.6, delay: i * 0.07, ease: EASE }}
-                    className="w-full rounded-t-lg mt-1"
-                    style={{ background: i === years.length - 1 ? "#0e7490" : MIX_COLORS[i % MIX_COLORS.length], opacity: 0.88, minHeight: 6 }}
-                  />
-                  <span className="text-[10px] font-semibold text-slate-500 whitespace-nowrap mt-1.5">Yr {y.year}</span>
+          {/* Three independent rows: labels / bars / axis */}
+          {(() => {
+            const maxY = Math.max(...years.map((yy) => yy.total));
+            return (
+              <div>
+                {/* Row 1 — value + YoY labels (fixed 36px) */}
+                <div className="flex gap-3" style={{ height: 36 }}>
+                  {years.map((y, i) => {
+                    const prev = years[i - 1];
+                    const yoy  = prev && prev.total > 0 ? ((y.total - prev.total) / prev.total) * 100 : null;
+                    return (
+                      <div key={y.year} className="flex-1 flex flex-col items-center justify-end min-w-0">
+                        <span className="text-[9px] font-bold text-slate-700 truncate w-full text-center leading-tight">{fmt(y.total)}</span>
+                        {yoy !== null
+                          ? <span className={`text-[8px] font-bold mt-0.5 ${yoy >= 0 ? "text-emerald-600" : "text-red-500"}`}>{yoy >= 0 ? "▲" : "▼"}{Math.abs(yoy).toFixed(1)}%</span>
+                          : <span className="text-[8px] text-transparent mt-0.5" aria-hidden>–</span>
+                        }
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
-          </div>
+                {/* Row 2 — bars (fixed 96px, grow from bottom) */}
+                <div className="flex items-end gap-3 mt-1" style={{ height: 96 }}>
+                  {years.map((y, i) => {
+                    const pct = maxY > 0 ? (y.total / maxY) * 100 : 4;
+                    return (
+                      <div key={y.year} className="flex-1 h-full flex items-end min-w-0">
+                        <motion.div
+                          initial={{ height: 0 }}
+                          animate={{ height: `${Math.max(pct, 3)}%` }}
+                          transition={{ duration: 0.6, delay: i * 0.07, ease: EASE }}
+                          className="w-full rounded-t-lg"
+                          style={{ background: i === years.length - 1 ? "#0e7490" : MIX_COLORS[i % MIX_COLORS.length], opacity: 0.88, minHeight: 6 }}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Row 3 — axis labels (fixed 24px) */}
+                <div className="flex gap-3 mt-1.5">
+                  {years.map((y) => (
+                    <div key={y.year} className="flex-1 text-center min-w-0">
+                      <span className="text-[10px] font-semibold text-slate-500 whitespace-nowrap">Yr {y.year}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
