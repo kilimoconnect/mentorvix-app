@@ -29,43 +29,49 @@ const SITUATIONS = [
   {
     id: "existing",
     icon: Store,
-    title: "Existing Business",
-    desc: "My business is already operating",
+    title: "Existing Operating Business",
+    desc: "My business is already generating revenue",
+    insight: "Uses your current revenue base with forward growth and margin assumptions.",
     color: "#059669", bg: "#f0fdf4",
   },
   {
     id: "new_business",
     icon: Rocket,
-    title: "Starting a New Business",
+    title: "New Business Launch",
     desc: "Launching a new company, product, or brand",
+    insight: "Builds from zero — projects market entry, ramp-up curve, and unit economics.",
     color: "#0e7490", bg: "#f0f9ff",
   },
   {
     id: "expansion",
     icon: TrendingUp,
-    title: "Expansion / Growth",
+    title: "Expansion & Growth",
     desc: "Adding locations, products, or capacity to an existing business",
+    insight: "Models current operations plus incremental expansion revenue and cost layers.",
     color: "#7c3aed", bg: "#faf5ff",
   },
   {
     id: "working_capital",
     icon: Banknote,
-    title: "Working Capital",
+    title: "Working Capital Need",
     desc: "Short-term funding for operations, inventory, or a busy season",
+    insight: "Short-term cashflow model focused on liquidity cycles and operational coverage.",
     color: "#b45309", bg: "#fffbeb",
   },
   {
     id: "asset_purchase",
     icon: Wrench,
-    title: "Asset Purchase",
+    title: "Asset / Equipment Purchase",
     desc: "Buying equipment, vehicles, or machinery",
+    insight: "Includes depreciation schedules and asset-backed revenue uplift projections.",
     color: "#0f766e", bg: "#f0fdfa",
   },
   {
     id: "turnaround",
     icon: RefreshCcw,
-    title: "Turnaround / Recovery",
+    title: "Recovery & Restructuring",
     desc: "Revenue has declined — need restructuring or a cash injection",
+    insight: "Applies recovery benchmarks and restructuring cost assumptions to the model.",
     color: "#e11d48", bg: "#fff1f2",
   },
 ] as const;
@@ -1451,6 +1457,7 @@ function ApplyPageInner() {
   const [currency,      setCurrency]      = useState<CurrencyCode | null>(null);
   const [nameDone,      setNameDone]      = useState(false);  // passed the "name your project" screen
   const [situationDone, setSituationDone] = useState(false);
+  const [notSureOpen,   setNotSureOpen]   = useState(false); // "Not sure which applies?" drawer
 
   // Currency-aware number formatter used everywhere outside ForecastView/RevenueMix
   const fmt = makeFmt(currency);
@@ -1877,7 +1884,7 @@ function ApplyPageInner() {
         </Link>
         <div className="flex-1 flex items-center justify-center">
           <div className="flex items-center gap-2">
-            {["Setup", "Context", "Revenue Streams", "Inputs", "Forecast"].map((label, i) => (
+            {["Context", "Revenue Mapping", "Structure Review", "Driver Inputs", "Forecast"].map((label, i) => (
               <div key={i} className="flex items-center gap-1.5">
                 <div className={`flex items-center gap-1.5 text-xs font-medium ${displayStep >= i ? "text-cyan-700" : "text-slate-400"}`}>
                   <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold"
@@ -1898,7 +1905,7 @@ function ApplyPageInner() {
       </div>
 
       <div className="flex-1 flex items-start sm:items-center justify-center px-4 py-6 sm:py-10 overflow-hidden">
-        <div className="w-full max-w-2xl">
+        <div className="w-full max-w-3xl">
           <AnimatePresence mode="wait" custom={dir}>
 
             {/* ══ SCREEN A: Create your revenue model ══ */}
@@ -2028,121 +2035,225 @@ function ApplyPageInner() {
               </motion.div>
             )}
 
-            {/* ══ SCREEN B: Business situation ══ */}
+            {/* ══ SCREEN B: Select business context ══ */}
             {!situationDone && nameDone && (
-              <motion.div key="situation" custom={1} variants={slide} initial="enter" animate="center" exit="exit"
-                className="space-y-6">
+              <motion.div key="situation" custom={1} variants={slide} initial="enter" animate="center" exit="exit">
 
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: "#0e7490" }}>
-                    Step 1 of 5
+                {/* Header */}
+                <div className="mb-5">
+                  <p className="text-[11px] font-bold uppercase tracking-widest mb-2" style={{ color: "#0891b2" }}>
+                    Revenue Projection Setup &nbsp;·&nbsp; Step 1 of 5
                   </p>
-                  <h2 className="text-2xl font-bold text-slate-900">What is your current situation?</h2>
-                  <p className="text-sm text-slate-500 mt-1">
-                    Select the one that best describes why you need funding.
+                  <h2 className="text-2xl sm:text-[1.75rem] font-bold text-slate-900 leading-tight">
+                    Select your business context
+                  </h2>
+                  <p className="text-sm text-slate-500 mt-2 leading-relaxed">
+                    This determines the forecast methodology and funding pathway used for your model.
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {SITUATIONS.map(({ id, icon: Icon, title, desc, color, bg }) => {
-                    const selected = situation === id;
-                    return (
-                      <motion.button key={id} onClick={() => setSituation(id)}
-                        whileHover={{ y: -2 }} whileTap={{ scale: 0.98 }}
-                        className={`text-left p-4 rounded-2xl border-2 transition-all ${
-                          selected
-                            ? "border-cyan-500 shadow-md"
-                            : "border-slate-100 hover:border-slate-200 bg-white"
-                        }`}
-                        style={selected ? { background: bg, borderColor: color } : {}}>
-                        <div className="flex items-start gap-3">
-                          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
-                            style={{ background: selected ? "white" : bg }}>
-                            <Icon className="w-4 h-4" style={{ color }} />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-bold text-slate-800 mb-0.5">{title}</p>
-                            <p className="text-xs text-slate-500 leading-relaxed">{desc}</p>
-                          </div>
-                          {selected && (
-                            <div className="w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5"
-                              style={{ background: color }}>
-                              <Check className="w-3 h-3 text-white" />
+                {/* Two-column workspace */}
+                <div className="grid grid-cols-1 lg:grid-cols-[1fr_220px] gap-5">
+
+                  {/* ── Left column ── */}
+                  <div className="space-y-4">
+
+                    {/* Situation cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {SITUATIONS.map(({ id, icon: Icon, title, desc, insight, color, bg }) => {
+                        const selected = situation === id;
+                        return (
+                          <motion.button key={id} onClick={() => setSituation(id)}
+                            whileHover={{ y: -1, boxShadow: "0 4px 20px rgba(0,0,0,0.10)" }}
+                            whileTap={{ scale: 0.985 }}
+                            className={`text-left rounded-2xl border-2 transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 ${
+                              selected
+                                ? "shadow-lg"
+                                : "border-slate-100 hover:border-slate-200 bg-white"
+                            }`}
+                            style={selected ? { background: bg, borderColor: color, boxShadow: `0 4px 20px ${color}22` } : {}}>
+                            <div className="p-4">
+                              <div className="flex items-start gap-3">
+                                <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
+                                  style={{ background: selected ? "white" : bg }}>
+                                  <Icon className="w-4 h-4" style={{ color }} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <p className="text-sm font-bold text-slate-800">{title}</p>
+                                    {selected && (
+                                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                                        style={{ background: color, color: "white" }}>
+                                        Selected
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-xs text-slate-500 leading-relaxed mt-0.5">{desc}</p>
+                                </div>
+                              </div>
+                              {/* Intelligence micro-text — shown when selected */}
+                              {selected && (
+                                <motion.div
+                                  initial={{ opacity: 0, height: 0 }}
+                                  animate={{ opacity: 1, height: "auto" }}
+                                  className="mt-3 pt-3 border-t"
+                                  style={{ borderColor: `${color}33` }}>
+                                  <p className="text-[11px] leading-relaxed font-medium" style={{ color }}>
+                                    {insight}
+                                  </p>
+                                </motion.div>
+                              )}
                             </div>
-                          )}
-                        </div>
-                      </motion.button>
-                    );
-                  })}
-                </div>
-
-                {/* ── Currency selector ── */}
-                <div className="bg-white rounded-2xl border border-slate-200 px-4 py-3.5">
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <div className="w-7 h-7 rounded-lg bg-cyan-50 flex items-center justify-center">
-                        <span className="text-xs font-bold text-cyan-700">
-                          {currency ? getCurrencySymbol(currency) : "¤"}
-                        </span>
-                      </div>
-                      <span className="text-xs font-semibold text-slate-700">Currency</span>
+                          </motion.button>
+                        );
+                      })}
                     </div>
-                    <select
-                      value={currency ?? ""}
-                      onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
-                      className="flex-1 text-sm text-slate-700 bg-transparent border-0 focus:outline-none focus:ring-0 cursor-pointer"
-                    >
-                      <option value="" disabled>Select your currency…</option>
-                      {CURRENCIES.map((c) => (
-                        <option key={c.code} value={c.code}>
-                          {c.symbol} — {c.name} ({c.code})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  {!currency && (
-                    <p className="text-[10px] text-slate-400 mt-2 ml-9">
-                      All revenue figures will be displayed in your selected currency.
-                    </p>
-                  )}
-                </div>
 
-                <div className="flex gap-3">
-                  <button onClick={() => { setNameDone(false); setIsSaving(false); setSaveError(null); }}
-                    className="flex items-center gap-2 px-5 py-4 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
-                    <ArrowLeft className="w-4 h-4" /> Back
-                  </button>
-                  <motion.button
-                    whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                    disabled={!situation || !currency || isSaving}
-                    onClick={async () => {
-                      if (!situation || !currency) return;
-                      if (appId) {
-                        setIsSaving(true); setSaveError(null);
-                        try {
-                          const sb = createClient();
-                          // Save situation + currency so the restore gate opens on next login.
-                          await updateApplicationFlags(sb, appId, { situation, currency });
-                        } catch (e) {
-                          setSaveError(e instanceof Error ? e.message : (e as {message?: string}).message ?? "Save failed");
-                          setIsSaving(false);
-                          return;
-                        }
-                        setIsSaving(false);
-                      }
-                      setSituationDone(true);
-                    }}
-                    className="flex-1 flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
-                    style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
-                    {isSaving ? (
-                      <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                      </svg> Saving…</>
-                    ) : <>Begin Business Mapping <ArrowRight className="w-4 h-4" /></>}
-                  </motion.button>
-                </div>
-                {saveError && <p className="text-xs text-red-500 text-center">{saveError}</p>}
+                    {/* "Not sure?" drawer */}
+                    <div className="text-center">
+                      <button
+                        type="button"
+                        onClick={() => setNotSureOpen(v => !v)}
+                        className="text-xs text-slate-400 hover:text-cyan-600 transition-colors underline underline-offset-2 decoration-dotted">
+                        Not sure which applies?
+                      </button>
+                      <AnimatePresence>
+                        {notSureOpen && (
+                          <motion.div
+                            key="not-sure"
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="overflow-hidden">
+                            <div className="mt-3 bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3.5 text-left space-y-2">
+                              <p className="text-xs font-semibold text-slate-700">Why this matters</p>
+                              <p className="text-xs text-slate-500 leading-relaxed">
+                                Lenders and investors evaluate new businesses differently from existing operators. Your selection shapes the forecasting logic, risk assumptions, and funding narrative throughout the model — choosing the closest match gives you the most accurate output.
+                              </p>
+                              <p className="text-xs text-slate-400">
+                                You can update this at any time before submitting.
+                              </p>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </div>
+
+                    {/* Reporting Currency */}
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-[0_1px_8px_rgba(0,0,0,0.05)] px-4 py-4">
+                      <div className="mb-2.5">
+                        <p className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">Reporting Currency</p>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          All projections, statements, and dashboards will use this currency.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-cyan-50 flex items-center justify-center flex-shrink-0">
+                          <span className="text-sm font-bold text-cyan-700">
+                            {currency ? getCurrencySymbol(currency) : "¤"}
+                          </span>
+                        </div>
+                        <select
+                          value={currency ?? ""}
+                          onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
+                          className="flex-1 text-sm text-slate-700 bg-transparent border-0 focus:outline-none focus:ring-0 cursor-pointer"
+                        >
+                          <option value="" disabled>Select reporting currency…</option>
+                          {CURRENCIES.map((c) => (
+                            <option key={c.code} value={c.code}>
+                              {c.symbol} — {c.name} ({c.code})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Buttons */}
+                    <div className="flex gap-3">
+                      <button onClick={() => { setNameDone(false); setIsSaving(false); setSaveError(null); }}
+                        className="flex items-center gap-2 px-5 py-3.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+                        <ArrowLeft className="w-4 h-4" /> Back
+                      </button>
+                      <motion.button
+                        whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                        disabled={!situation || !currency || isSaving}
+                        onClick={async () => {
+                          if (!situation || !currency) return;
+                          if (appId) {
+                            setIsSaving(true); setSaveError(null);
+                            try {
+                              const sb = createClient();
+                              await updateApplicationFlags(sb, appId, { situation, currency });
+                            } catch (e) {
+                              setSaveError(e instanceof Error ? e.message : (e as {message?: string}).message ?? "Save failed");
+                              setIsSaving(false);
+                              return;
+                            }
+                            setIsSaving(false);
+                          }
+                          setSituationDone(true);
+                        }}
+                        className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-40 disabled:cursor-not-allowed"
+                        style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
+                        {isSaving ? (
+                          <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                          </svg> Saving…</>
+                        ) : <>Continue to Revenue Mapping <ArrowRight className="w-4 h-4" /></>}
+                      </motion.button>
+                    </div>
+                    {saveError && <p className="text-xs text-red-500">{saveError}</p>}
+                  </div>
+
+                  {/* ── Right: Model Setup panel ── */}
+                  <div className="hidden lg:block">
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-[0_2px_16px_rgba(0,0,0,0.07)] p-4 sticky top-4">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">
+                        Model Setup
+                      </p>
+                      <div className="space-y-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs text-slate-500 flex-shrink-0">Business</span>
+                          <span className="text-xs font-semibold text-slate-700 text-right truncate max-w-[120px]">
+                            {appName !== "New Application" ? appName : <span className="italic text-slate-400">Unnamed</span>}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500">Scenario</span>
+                          <span className="text-xs font-medium text-slate-700">Base</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500">Context</span>
+                          <span className="text-xs font-medium text-right" style={{ color: situation ? SITUATIONS.find(s => s.id === situation)?.color ?? "#64748b" : "#94a3b8" }}>
+                            {situation ? SITUATIONS.find(s => s.id === situation)?.title ?? "—" : <span className="italic text-slate-400">Pending</span>}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-slate-500">Currency</span>
+                          <span className="text-xs font-medium text-slate-700">
+                            {currency
+                              ? <>{getCurrencySymbol(currency)} <span className="text-slate-400 font-normal">{currency}</span></>
+                              : <span className="italic text-slate-400">Pending</span>}
+                          </span>
+                        </div>
+                        <div className="border-t border-slate-100 pt-2 flex items-center justify-between">
+                          <span className="text-xs text-slate-500">Autosave</span>
+                          <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                            On
+                          </span>
+                        </div>
+                      </div>
+                      <div className="mt-4 pt-3 border-t border-slate-100">
+                        <p className="text-[10px] text-slate-400 leading-relaxed">
+                          Your context selection shapes the forecast methodology, risk weighting, and funding narrative throughout your model.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                </div>{/* /two-column */}
               </motion.div>
             )}
 
