@@ -121,14 +121,6 @@ const COL_LABELS: Record<StreamType, { vol: string; price: string; rev: string }
   custom:       { vol: "Volume",         price: "Price",          rev: "Monthly Rev"   },
 };
 
-const HORIZONS = [
-  { label: "1 yr",   years: 1  },
-  { label: "3 yrs",  years: 3  },
-  { label: "5 yrs",  years: 5  },
-  { label: "10 yrs", years: 10 },
-  { label: "30 yrs", years: 30 },
-];
-
 // Distinct colour palette for revenue-mix chart (one per stream)
 const MIX_COLORS = [
   "#0e7490","#7c3aed","#059669","#b45309","#e11d48","#6366f1",
@@ -285,11 +277,24 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
 }
 
 function groupByYear(months: ProjMonth[]) {
+  // Use rolling 12-month periods (Year 1 = months 0-11, Year 2 = 12-23, …)
+  // so each period is exactly 12 months regardless of the start date.
+  // Calendar-year grouping causes partial first/last years when start ≠ Jan.
   const map = new Map<number, ProjMonth[]>();
-  months.forEach((m) => { if (!map.has(m.year)) map.set(m.year, []); map.get(m.year)!.push(m); });
-  return Array.from(map.entries()).map(([year, ms]) => ({
-    year, months: ms, total: ms.reduce((a, b) => a + b.total, 0),
-  }));
+  months.forEach((m) => {
+    const period = Math.floor(m.index / 12);
+    if (!map.has(period)) map.set(period, []);
+    map.get(period)!.push(m);
+  });
+  return Array.from(map.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([period, ms]) => ({
+      year:       period + 1,                    // 1-based: Year 1, Year 2 …
+      months:     ms,
+      total:      ms.reduce((a, b) => a + b.total, 0),
+      startLabel: ms[0].yearMonth,               // e.g. "Apr 2026"
+      endLabel:   ms[ms.length - 1].yearMonth,   // e.g. "Mar 2027"
+    }));
 }
 
 /* ═══════════════════════════════════════ parsing ══ */
@@ -935,22 +940,18 @@ function RevenueMix({ streams, months }: { streams: RevenueStream[]; months: Pro
 function ForecastView({
   streams,
   onUpdateStream,
-  horizonYears, setHorizonYears,
-  startYear,    setStartYear,
-  startMonth,   setStartMonth,
+  horizonYears,
+  startYear,
+  startMonth,
 }: {
   streams:          RevenueStream[];
   onUpdateStream:   (s: RevenueStream) => void;
   horizonYears:     number;
-  setHorizonYears:  (n: number) => void;
   startYear:        number;
-  setStartYear:     (n: number) => void;
   startMonth:       number;
-  setStartMonth:    (n: number) => void;
 }) {
-  const now = new Date();
   const [view,             setView]             = useState<"annual" | "monthly">("annual");
-  const [selectedYear,     setSelectedYear]     = useState(startYear);
+  const [selectedYear,     setSelectedYear]     = useState(1);
   const [showAssumptions,  setShowAssumptions]  = useState(false);
 
   const startDate  = new Date(startYear, startMonth, 1);
@@ -1000,32 +1001,12 @@ function ForecastView({
 
       {/* ── Config bar ── */}
       <div className="bg-white rounded-2xl border border-slate-100 px-4 py-3 flex flex-wrap gap-3 items-center justify-between">
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-1.5">
-            <Calendar className="w-3.5 h-3.5 text-slate-400" />
-            <span className="text-xs font-semibold text-slate-500">Start</span>
-            <select value={startMonth} onChange={(e) => setStartMonth(Number(e.target.value))}
-              className="text-xs border border-slate-200 rounded-md px-2 py-1 text-slate-700 focus:border-cyan-500 focus:outline-none bg-white">
-              {MONTH_NAMES.map((m, i) => <option key={i} value={i}>{m}</option>)}
-            </select>
-            <select value={startYear} onChange={(e) => setStartYear(Number(e.target.value))}
-              className="text-xs border border-slate-200 rounded-md px-2 py-1 text-slate-700 focus:border-cyan-500 focus:outline-none bg-white">
-              {Array.from({ length: 10 }, (_, i) => now.getFullYear() + i).map((y) => (
-                <option key={y} value={y}>{y}</option>
-              ))}
-            </select>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="text-xs font-semibold text-slate-500 mr-0.5">Horizon</span>
-            {HORIZONS.map(({ label, years: y }) => (
-              <button key={y} onClick={() => setHorizonYears(y)}
-                className={`text-xs font-semibold px-2 py-1 rounded-md border transition-all ${
-                  horizonYears === y ? "text-white border-transparent" : "border-slate-200 text-slate-500 hover:border-slate-300"
-                }`} style={horizonYears === y ? { background: "#0e7490" } : {}}>
-                {label}
-              </button>
-            ))}
-          </div>
+        <div className="flex items-center gap-2">
+          <Calendar className="w-3.5 h-3.5 text-slate-400" />
+          <span className="text-xs text-slate-500">
+            <span className="font-semibold text-slate-700">{horizonYears}-year</span> projection starting{" "}
+            <span className="font-semibold text-slate-700">{MONTH_NAMES[startMonth]} {startYear}</span>
+          </span>
         </div>
         {/* View toggle */}
         <div className="flex bg-slate-100 rounded-lg p-0.5">
@@ -1072,7 +1053,7 @@ function ForecastView({
                     className="w-full rounded-t-md"
                     style={{ background: i === years.length - 1 ? "#0e7490" : color, opacity: 0.85, minHeight: 4 }}
                   />
-                  <span className="text-[9px] text-slate-400 whitespace-nowrap">FY {y.year}</span>
+                  <span className="text-[9px] text-slate-400 whitespace-nowrap">Yr {y.year}</span>
                 </div>
               );
             })}
@@ -1178,9 +1159,9 @@ function ForecastView({
                   <th className="px-3 py-3 text-left text-[11px] font-bold text-white sticky left-0 min-w-[180px]" style={{ background: "#042f3d" }}>
                     Revenue Stream
                   </th>
-                  {years.map((y, i) => (
+                  {years.map((y) => (
                     <TH key={y.year} cls="text-white">
-                      FY {y.year}{horizonYears > 1 ? <span className="block text-[9px] font-normal opacity-60">Year {i + 1}</span> : null}
+                      Year {y.year}<span className="block text-[9px] font-normal opacity-60">{y.startLabel} – {y.endLabel}</span>
                     </TH>
                   ))}
                   <TH cls="text-cyan-300 border-l border-white/10">Grand Total</TH>
@@ -1277,7 +1258,7 @@ function ForecastView({
                     ? "bg-white text-slate-800 border-slate-200"
                     : "text-slate-400 border-transparent hover:text-slate-600"
                 }`}>
-                FY {y.year}
+                Yr {y.year}
               </button>
             ))}
           </div>
@@ -1305,7 +1286,7 @@ function ForecastView({
                         </th>
                       ))}
                       <th className="px-3 py-2 text-right text-[10px] font-bold text-cyan-200 border-l border-white/20">
-                        FY {selectedYear}
+                        Yr {selectedYear}
                       </th>
                     </tr>
                     {/* Month header row */}
@@ -2544,9 +2525,9 @@ function ApplyPageInner() {
                 <ForecastView
                   streams={streams}
                   onUpdateStream={updateStream}
-                  horizonYears={forecastHorizon}     setHorizonYears={setForecastHorizon}
-                  startYear={forecastStartYear}      setStartYear={setForecastStartYear}
-                  startMonth={forecastStartMonth}    setStartMonth={setForecastStartMonth}
+                  horizonYears={forecastHorizon}
+                  startYear={forecastStartYear}
+                  startMonth={forecastStartMonth}
                 />
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">

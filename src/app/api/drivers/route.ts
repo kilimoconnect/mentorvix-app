@@ -127,7 +127,7 @@ UNIVERSAL RULES:
 ${isFirstStream ? `
 FORECAST QUESTIONS (first stream only — ask these as your last two questions, one at a time, after all volumes and prices are collected):
 Question A: "When should the projection start? For example: this month (${new Date().toLocaleString("en-US",{month:"long",year:"numeric"})}), or a specific future month if you haven't launched yet?"
-Question B: "And how many years would you like us to project? For example: 3, 5, or 10 years?"
+Question B: "And how many years would you like us to project? For example: 2, 3, 4, 5, or 10 years?"
 Ask A first, wait for the answer, then ask B, then include both answers in the output block below.
 ` : ""}
 WHEN READY — output ONLY this block, nothing before or after the tags:
