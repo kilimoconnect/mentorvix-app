@@ -1442,8 +1442,12 @@ export default function ApplyPage() {
 
   const go = (n: number) => { setDir(n > step ? 1 : -1); setStep(n); };
 
+  // ── needsRedetection: set when messages restored but no streams in DB ────────
+  const [needsRedetection, setNeedsRedetection] = useState(false);
+
   // ── Restore a saved application state into local state ──────────────────────
-  function restoreFromDb(app: DbApplication, state: ApplicationState) {
+  // Returns true if wizard_step needs to be reset in DB (streams missing)
+  function restoreFromDb(app: DbApplication, state: ApplicationState): boolean {
     if (app.name) setAppName(app.name);
     if (app.situation) setSituation(app.situation as SituationId);
 
@@ -1476,20 +1480,27 @@ export default function ApplyPage() {
         driverMessages: ((state.driverConversations.find((c) => c.stream_id === s.id)?.messages) ?? []) as ChatMessage[],
       }));
       setStreams(restored);
+
+      if (state.forecastConfig) {
+        setForecastHorizon(state.forecastConfig.horizon_years);
+        setForecastStartYear(state.forecastConfig.start_year);
+        setForecastStartMonth(state.forecastConfig.start_month);
+      }
+
+      // Jump to the furthest step the user reached (capped at step 3 = forecast)
+      const targetStep = Math.min(app.wizard_step ?? 0, 3);
+      if (targetStep > 0) { setDir(1); setStep(targetStep); }
+      return false; // no DB reset needed
     }
 
-    if (state.forecastConfig) {
-      setForecastHorizon(state.forecastConfig.horizon_years);
-      setForecastStartYear(state.forecastConfig.start_year);
-      setForecastStartMonth(state.forecastConfig.start_month);
+    // ── No streams in DB (race condition from earlier session) ────────────────
+    // Stay at step 0 (intake chat). If the user has conversation history,
+    // flag that we should re-run stream detection so they don't start over.
+    if (intake?.messages?.length && intake.is_complete) {
+      setNeedsRedetection(true);
     }
-
-    // Jump to the furthest step the user reached
-    const targetStep = Math.min(app.wizard_step ?? 0, 3); // cap at step 3
-    if (targetStep > 0) {
-      setDir(1);
-      setStep(targetStep);
-    }
+    // Tell the caller to reset wizard_step in DB so the cycle doesn't repeat
+    return app.wizard_step > 0;
   }
 
   // ── On mount: get/create application, restore if progress exists ─────────────
@@ -1506,7 +1517,11 @@ export default function ApplyPage() {
         // Restore if there is any saved progress
         if (app.wizard_step > 0 || app.intake_done) {
           const state = await loadApplicationState(sb, app.id);
-          restoreFromDb(app, state);
+          const needsReset = restoreFromDb(app, state);
+          // If streams were missing, reset wizard_step so next visit starts fresh
+          if (needsReset) {
+            await updateApplicationFlags(sb, app.id, { wizard_step: 0 });
+          }
         }
       } catch (e) {
         console.error("[apply] restore error", e);
@@ -1628,6 +1643,15 @@ export default function ApplyPage() {
     if (situationDone && messages.length === 0) callIntake([]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [situationDone]);
+
+  // ── Auto-redetect: restored messages but streams missing from DB ─────────────
+  // Replays the full conversation through the intake AI to re-extract streams.
+  useEffect(() => {
+    if (!needsRedetection || aiTyping || messages.length === 0) return;
+    setNeedsRedetection(false);
+    callIntake(messages);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [needsRedetection]);
 
   const callIntake = useCallback(async (history: ChatMessage[]) => {
     setAiTyping(true); setChatError("");
