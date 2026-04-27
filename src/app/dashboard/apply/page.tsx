@@ -1572,10 +1572,15 @@ export default function ApplyPage() {
   }, [messages.length, streams.length, appId, userId]);
 
   // ── Auto-save: streams + items + driver messages (debounced 1.2 s) ──────────
+  // NOTE: isSavingRef.current is checked INSIDE the timeout, not here.
+  // Checking it at effect level would swallow edits made while a save is in
+  // progress — the effect fires, returns early, sets no new timer, and when the
+  // save finishes without calling setStreams the effect never re-runs.
   useEffect(() => {
-    if (!appId || !userId || streams.length === 0 || isSavingRef.current) return;
+    if (!appId || !userId || streams.length === 0) return;
     clearTimeout(streamSaveTimer.current);
     streamSaveTimer.current = setTimeout(async () => {
+      if (isSavingRef.current) return; // a concurrent save is already running
       isSavingRef.current = true;
       try {
         const sb = createClient();
@@ -2089,8 +2094,32 @@ export default function ApplyPage() {
                   </button>
                 </div>
 
-                <button onClick={() => { setStreamIdx(0); setDriverMode("chat"); go(2); }}
+                <button
                   disabled={streams.length === 0}
+                  onClick={() => {
+                    // Fire-and-forget: persist any last-second edits before moving on
+                    if (appId && userId) {
+                      (async () => {
+                        try {
+                          const sb = createClient();
+                          await saveStreams(sb, appId, userId,
+                            streams.map((s, i) => ({
+                              id: isDbId(s.id) ? s.id : undefined,
+                              name: s.name, type: s.type, confidence: s.confidence,
+                              monthly_growth_pct: s.monthlyGrowthPct,
+                              sub_new_per_month: s.subNewPerMonth,
+                              sub_churn_pct: s.subChurnPct,
+                              rental_occupancy_pct: s.rentalOccupancyPct,
+                              driver_done: s.driverDone,
+                              position: i,
+                            }))
+                          );
+                          await updateApplicationFlags(sb, appId, { intake_done: true });
+                        } catch (e) { console.error("[apply] step1→2 save:", e); }
+                      })();
+                    }
+                    setStreamIdx(0); setDriverMode("chat"); go(2);
+                  }}
                   className="w-full flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-40"
                   style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
                   Build Item-Level Revenue Data <ArrowRight className="w-4 h-4" />
