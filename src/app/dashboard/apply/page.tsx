@@ -1957,7 +1957,7 @@ function ApplyPageInner() {
                             wizard_step: 0,
                           });
                         } catch (e) {
-                          setSaveError(e instanceof Error ? e.message : "Save failed");
+                          setSaveError(e instanceof Error ? e.message : (e as {message?: string}).message ?? "Save failed");
                           setIsSaving(false);
                           return;
                         }
@@ -2043,7 +2043,7 @@ function ApplyPageInner() {
                           const sb = createClient();
                           await updateApplicationFlags(sb, appId, { situation, wizard_step: 0 });
                         } catch (e) {
-                          setSaveError(e instanceof Error ? e.message : "Save failed");
+                          setSaveError(e instanceof Error ? e.message : (e as {message?: string}).message ?? "Save failed");
                           setIsSaving(false);
                           return;
                         }
@@ -2325,7 +2325,8 @@ function ApplyPageInner() {
                       }
                       setStreamIdx(0); setDriverMode("chat"); go(2);
                     } catch (e) {
-                      setSaveError(e instanceof Error ? e.message : "Save failed — please retry");
+                      console.error("[Collect Revenue Data] save failed:", e);
+                      setSaveError(e instanceof Error ? e.message : (e as {message?: string}).message ?? "Save failed — please retry");
                     } finally {
                       setIsSaving(false);
                     }
@@ -2489,7 +2490,7 @@ function ApplyPageInner() {
                           }
                           go(3);
                         } catch (e) {
-                          setSaveError(e instanceof Error ? e.message : "Save failed — please retry");
+                          setSaveError(e instanceof Error ? e.message : (e as {message?: string}).message ?? "Save failed — please retry");
                         } finally {
                           setIsSaving(false);
                         }
@@ -2611,7 +2612,7 @@ function ApplyPageInner() {
                         router.push("/dashboard");
                       } catch (e) {
                         console.error("[apply] forecast save error:", e);
-                        setSaveError(e instanceof Error ? e.message : "Save failed — please retry");
+                        setSaveError(e instanceof Error ? e.message : (e as {message?: string}).message ?? "Save failed — please retry");
                         setIsSaving(false); // let user retry
                       }
                     }}

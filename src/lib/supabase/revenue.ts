@@ -150,7 +150,7 @@ export async function getOrCreateApplication(
     .limit(1)
     .maybeSingle();
 
-  if (findErr) throw findErr;
+  if (findErr) throw new Error(`getOrCreateApplication find: ${findErr.message}`);
   if (existing) return existing as DbApplication;
 
   // Create new
@@ -160,7 +160,7 @@ export async function getOrCreateApplication(
     .select()
     .single();
 
-  if (error) throw error;
+  if (error) throw new Error(`getOrCreateApplication insert: ${error.message}`);
   return data as DbApplication;
 }
 
@@ -174,7 +174,7 @@ export async function updateApplicationFlags(
     .from("applications")
     .update(flags)
     .eq("id", applicationId);
-  if (error) throw error;
+  if (error) throw new Error(`updateApplicationFlags: ${error.message}`);
 }
 
 /** Fetch all applications for a user (for dashboard list) */
@@ -220,7 +220,7 @@ export async function saveIntakeConversation(
       .eq("id", existing.id)
       .select()
       .single();
-    if (error) throw error;
+    if (error) throw new Error(`saveIntakeConversation update: ${error.message}`);
     return data as DbAiConversation;
   }
 
@@ -229,7 +229,7 @@ export async function saveIntakeConversation(
     .insert({ application_id: applicationId, user_id: userId, type: "intake", messages, provider, is_complete: isComplete })
     .select()
     .single();
-  if (error) throw error;
+  if (error) throw new Error(`saveIntakeConversation insert: ${error.message}`);
   return data as DbAiConversation;
 }
 
@@ -261,7 +261,7 @@ export async function saveDriverConversation(
       .eq("id", existing.id)
       .select()
       .single();
-    if (error) throw error;
+    if (error) throw new Error(`saveDriverConversation update: ${error.message}`);
     return data as DbAiConversation;
   }
 
@@ -278,7 +278,7 @@ export async function saveDriverConversation(
     })
     .select()
     .single();
-  if (error) throw error;
+  if (error) throw new Error(`saveDriverConversation insert: ${error.message}`);
   return data as DbAiConversation;
 }
 
@@ -306,44 +306,74 @@ export async function saveStreams(
     position: number;
   }>,
 ): Promise<DbRevenueStream[]> {
-  // Delete streams no longer in the list
-  const { data: existing } = await supabase
+  // ── 1. Delete streams no longer in the list ────────────────────────────────
+  const { data: existing, error: selErr } = await supabase
     .from("revenue_streams")
     .select("id")
     .eq("application_id", applicationId);
 
-  const currentIds = new Set(streams.map((s) => s.id).filter(Boolean));
+  if (selErr) throw new Error(`saveStreams select: ${selErr.message}`);
+
+  const currentDbIds = new Set(streams.map((s) => s.id).filter(Boolean));
   const toDelete = (existing ?? [])
     .map((r: { id: string }) => r.id)
-    .filter((id: string) => !currentIds.has(id));
+    .filter((id: string) => !currentDbIds.has(id));
 
   if (toDelete.length > 0) {
-    await supabase.from("revenue_streams").delete().in("id", toDelete);
+    const { error: delErr } = await supabase
+      .from("revenue_streams")
+      .delete()
+      .in("id", toDelete);
+    if (delErr) throw new Error(`saveStreams delete: ${delErr.message}`);
   }
 
-  // Upsert all current streams
-  const rows = streams.map((s, i) => ({
-    id: s.id ?? undefined,                // let DB generate if new
-    application_id: applicationId,
-    user_id: userId,
-    name: s.name,
-    type: s.type,
-    confidence: s.confidence,
-    monthly_growth_pct: s.monthly_growth_pct,
-    sub_new_per_month: s.sub_new_per_month,
-    sub_churn_pct: s.sub_churn_pct,
-    rental_occupancy_pct: s.rental_occupancy_pct,
-    driver_done: s.driver_done,
-    position: s.position ?? i,
-  }));
+  // ── 2. Separate new streams (no DB id) from existing ones (have DB id) ────
+  //   New streams  → INSERT  (lets the DB generate a UUID — avoids upsert ambiguity)
+  //   Existing     → UPSERT  (UPDATE the row in place, preserving stream_items FK)
+  const newStreams      = streams.filter((s) => !s.id);
+  const existingStreams = streams.filter((s) =>  s.id);
 
-  const { data, error } = await supabase
-    .from("revenue_streams")
-    .upsert(rows, { onConflict: "id" })
-    .select();
-  if (error) throw error;
+  const baseFields = (s: typeof streams[number], i: number) => ({
+    application_id:       applicationId,
+    user_id:              userId,
+    name:                 s.name,
+    type:                 s.type,
+    confidence:           s.confidence,
+    monthly_growth_pct:   s.monthly_growth_pct,
+    sub_new_per_month:    s.sub_new_per_month,
+    sub_churn_pct:        s.sub_churn_pct,
+    rental_occupancy_pct: s.rental_occupancy_pct,
+    driver_done:          s.driver_done,
+    position:             s.position ?? i,
+  });
+
+  const saved: DbRevenueStream[] = [];
+
+  if (newStreams.length > 0) {
+    const rows = newStreams.map((s, i) => baseFields(s, streams.indexOf(s) >= 0 ? streams.indexOf(s) : i));
+    const { data, error } = await supabase
+      .from("revenue_streams")
+      .insert(rows)
+      .select();
+    if (error) throw new Error(`saveStreams insert: ${error.message}`);
+    saved.push(...((data ?? []) as DbRevenueStream[]));
+  }
+
+  if (existingStreams.length > 0) {
+    const rows = existingStreams.map((s, i) => ({
+      id: s.id!,
+      ...baseFields(s, streams.indexOf(s) >= 0 ? streams.indexOf(s) : i),
+    }));
+    const { data, error } = await supabase
+      .from("revenue_streams")
+      .upsert(rows, { onConflict: "id" })
+      .select();
+    if (error) throw new Error(`saveStreams upsert: ${error.message}`);
+    saved.push(...((data ?? []) as DbRevenueStream[]));
+  }
+
   // Return sorted by position so callers can match by index
-  return ((data ?? []) as DbRevenueStream[]).sort((a, b) => a.position - b.position);
+  return saved.sort((a, b) => a.position - b.position);
 }
 
 /** Update a single stream's fields without touching the others */
@@ -401,7 +431,7 @@ export async function saveStreamItems(
     .from("stream_items")
     .insert(rows)
     .select();
-  if (error) throw error;
+  if (error) throw new Error(`saveStreamItems insert: ${error.message}`);
   return (data ?? []) as DbStreamItem[];
 }
 
@@ -428,7 +458,7 @@ export async function saveForecastConfig(
     )
     .select()
     .single();
-  if (error) throw error;
+  if (error) throw new Error(`saveForecastConfig: ${error.message}`);
   return data as DbForecastConfig;
 }
 
@@ -465,7 +495,7 @@ export async function saveProjectionSnapshot(
     })
     .select()
     .single();
-  if (error) throw error;
+  if (error) throw new Error(`saveProjectionSnapshot: ${error.message}`);
   return data as DbProjectionSnapshot;
 }
 
