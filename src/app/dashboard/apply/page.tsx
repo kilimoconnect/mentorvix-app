@@ -925,11 +925,13 @@ function RevenueMix({ streams, months }: { streams: RevenueStream[]; months: Pro
 /* ═══════════════════════════════════════ ForecastView ══ */
 function ForecastView({
   streams,
+  onUpdateStream,
   horizonYears, setHorizonYears,
   startYear,    setStartYear,
   startMonth,   setStartMonth,
 }: {
   streams:          RevenueStream[];
+  onUpdateStream:   (s: RevenueStream) => void;
   horizonYears:     number;
   setHorizonYears:  (n: number) => void;
   startYear:        number;
@@ -938,8 +940,9 @@ function ForecastView({
   setStartMonth:    (n: number) => void;
 }) {
   const now = new Date();
-  const [view,         setView]         = useState<"annual" | "monthly">("annual");
-  const [selectedYear, setSelectedYear] = useState(startYear);
+  const [view,             setView]             = useState<"annual" | "monthly">("annual");
+  const [selectedYear,     setSelectedYear]     = useState(startYear);
+  const [showAssumptions,  setShowAssumptions]  = useState(false);
 
   const startDate  = new Date(startYear, startMonth, 1);
   const totalMths  = horizonYears * 12;
@@ -1040,6 +1043,112 @@ function ForecastView({
             <p className="text-[10px] text-slate-400 mt-0.5">{sub}</p>
           </div>
         ))}
+      </div>
+
+      {/* ── Annual bar chart ── */}
+      {years.length > 0 && grandTotal > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-100 px-5 pt-4 pb-5">
+          <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Annual Revenue Trajectory</p>
+          <div className="flex items-end gap-2" style={{ height: 80 }}>
+            {years.map((y, i) => {
+              const pct = grandTotal > 0 ? (y.total / Math.max(...years.map((yy) => yy.total))) * 100 : 0;
+              const color = MIX_COLORS[i % MIX_COLORS.length];
+              return (
+                <div key={y.year} className="flex-1 flex flex-col items-center gap-1.5 min-w-0">
+                  <span className="text-[9px] font-semibold text-slate-500 truncate w-full text-center">{fmt(y.total)}</span>
+                  <motion.div
+                    initial={{ height: 0 }}
+                    animate={{ height: `${Math.max(pct, 4)}%` }}
+                    transition={{ duration: 0.6, delay: i * 0.06, ease: EASE }}
+                    className="w-full rounded-t-md"
+                    style={{ background: i === years.length - 1 ? "#0e7490" : color, opacity: 0.85, minHeight: 4 }}
+                  />
+                  <span className="text-[9px] text-slate-400 whitespace-nowrap">FY {y.year}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── Revenue Mix ── */}
+      <RevenueMix streams={streams} months={projection} />
+
+      {/* ── Revenue Assumptions (inline edit without going back) ── */}
+      <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+        <button
+          onClick={() => setShowAssumptions((v) => !v)}
+          className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-slate-50 transition-colors">
+          <div className="flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-slate-400" />
+            <span className="text-xs font-semibold text-slate-700">Revenue Assumptions</span>
+            <span className="text-[10px] text-slate-400 font-normal">· adjust growth without going back</span>
+          </div>
+          {showAssumptions ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+        </button>
+        {showAssumptions && (
+          <div className="px-5 pb-5 space-y-4 border-t border-slate-100">
+            {streams.map((s, si) => {
+              const Meta = STREAM_META[s.type];
+              const Icon = Meta.icon;
+              const mrr  = streamMRR(s);
+              return (
+                <div key={s.id} className="pt-4 first:pt-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: Meta.bg }}>
+                      <Icon className="w-3 h-3" style={{ color: Meta.color }} />
+                    </div>
+                    <span className="text-xs font-semibold text-slate-800">{s.name}</span>
+                    {mrr > 0 && <span className="text-xs text-emerald-600 font-medium ml-auto">{fmt(mrr)}/mo baseline</span>}
+                  </div>
+
+                  {s.type === "subscription" ? (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] text-slate-400 block mb-1">New subscribers / month</label>
+                        <input type="number" min={0} value={s.subNewPerMonth}
+                          onChange={(e) => onUpdateStream({ ...s, subNewPerMonth: Number(e.target.value) })}
+                          className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white focus:border-cyan-400 focus:outline-none" />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-slate-400 block mb-1">Monthly churn %</label>
+                        <input type="number" min={0} max={100} step={0.1} value={s.subChurnPct}
+                          onChange={(e) => onUpdateStream({ ...s, subChurnPct: Number(e.target.value) })}
+                          className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white focus:border-cyan-400 focus:outline-none" />
+                      </div>
+                      {(s.subNewPerMonth > 0 || s.subChurnPct > 0) && (
+                        <p className="col-span-2 text-[10px] text-emerald-600">
+                          Steady-state: <span className="font-bold">
+                            {s.subChurnPct > 0 ? Math.round(s.subNewPerMonth / (s.subChurnPct / 100)).toLocaleString() : "∞"} subscribers
+                          </span>
+                        </p>
+                      )}
+                    </div>
+                  ) : s.type === "rental" ? (
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] text-slate-500 flex-shrink-0">Occupancy %</span>
+                      <input type="range" min={0} max={100} step={1} value={s.rentalOccupancyPct}
+                        onChange={(e) => onUpdateStream({ ...s, rentalOccupancyPct: Number(e.target.value) })}
+                        className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer" style={{ accentColor: "#b45309" }} />
+                      <span className="text-xs font-bold w-10 text-right text-amber-700 flex-shrink-0">{s.rentalOccupancyPct}%</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3">
+                      <span className="text-[10px] text-slate-500 flex-shrink-0">Monthly growth</span>
+                      <input type="range" min={0} max={20} step={0.5} value={s.monthlyGrowthPct}
+                        onChange={(e) => onUpdateStream({ ...s, monthlyGrowthPct: Number(e.target.value) })}
+                        className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer" style={{ accentColor: "#0e7490" }} />
+                      <span className="text-xs font-bold w-10 text-right flex-shrink-0" style={{ color: "#0e7490" }}>
+                        +{s.monthlyGrowthPct}%
+                      </span>
+                    </div>
+                  )}
+                  {si < streams.length - 1 && <div className="mt-4 border-t border-slate-100" />}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* ══ ANNUAL VIEW — multi-year P&L style ══ */}
@@ -1340,6 +1449,7 @@ function ApplyPageInner() {
   const targetAppId = searchParams.get("id"); // optional — open a specific application
   const [step, setStep] = useState(0);
   const [dir,  setDir]  = useState(1);
+  const [isSavingForecast, setIsSavingForecast] = useState(false);
 
   // Situation detection (pre-gate)
   const [situation,     setSituation]     = useState<SituationId | null>(null);
@@ -1495,13 +1605,11 @@ function ApplyPageInner() {
         setForecastStartMonth(state.forecastConfig.start_month);
       }
 
-      // Jump to the furthest step the user reached (capped at step 3 = forecast).
-      // If wizard_step is 0 but streams exist (step auto-save didn't fire before
-      // the user left), force at least step 1 so the streams are actually shown.
-      const savedStep  = Math.min(app.wizard_step ?? 0, 3);
-      const targetStep = Math.max(savedStep, 1); // streams exist → at least Confirm Structure
+      // Always land on Confirm Structure (step 1) when returning with saved streams.
+      // This gives the user a clean entry point to review their stream list before
+      // proceeding, regardless of where they were when they last left.
       setDir(1);
-      setStep(targetStep);
+      setStep(1);
       return false; // no DB reset needed
     }
 
@@ -1782,6 +1890,18 @@ function ApplyPageInner() {
 
   // Count distinct types for summary
   const detectedTypes = [...new Set(streams.map((s) => s.type))];
+
+  // Auto-advance to next stream when AI finishes collecting items
+  const currentDone = streams[streamIdx]?.driverDone ?? false;
+  useEffect(() => {
+    if (step !== 2 || !currentDone || streamIdx >= streams.length - 1) return;
+    const t = setTimeout(() => {
+      setStreamIdx((prev) => Math.min(prev + 1, streams.length - 1));
+      setDriverMode("chat");
+    }, 1400); // brief pause so user sees the "complete" badge before sliding
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, currentDone, streamIdx, streams.length]);
 
   const slide = {
     enter:  (d: number) => ({ opacity: 0, x: d > 0 ? 48 : -48 }),
@@ -2135,8 +2255,13 @@ function ApplyPageInner() {
                             </button>
                           )}
                         </div>
-                        <div className="px-4 pb-3 ml-12">
-                          <p className="text-xs text-slate-400">{Meta.desc}</p>
+                        <div className="px-4 pb-3 ml-12 flex items-center justify-between gap-3">
+                          <p className="text-xs text-slate-400 flex-1">{Meta.desc}</p>
+                          {s.items.length > 0 ? (
+                            <span className="text-xs font-bold text-emerald-600 flex-shrink-0">{fmt(streamMRR(s))}/mo</span>
+                          ) : (
+                            <span className="text-[10px] text-slate-300 flex-shrink-0">no data yet</span>
+                          )}
                         </div>
                       </motion.div>
                     );
@@ -2157,6 +2282,21 @@ function ApplyPageInner() {
                     <RefreshCw className="w-3.5 h-3.5" /> Re-chat
                   </button>
                 </div>
+
+                {/* Total MRR summary — shown only when at least one stream has items */}
+                {streams.some((s) => s.items.length > 0) && (
+                  <div className="flex items-center justify-between bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <BarChart3 className="w-4 h-4 text-emerald-600" />
+                      <span className="text-xs font-medium text-emerald-700">
+                        {streams.filter((s) => s.items.length > 0).length} of {streams.length} stream{streams.length !== 1 ? "s" : ""} have data
+                      </span>
+                    </div>
+                    <span className="text-sm font-bold text-emerald-700">
+                      {fmt(streams.reduce((a, s) => a + streamMRR(s), 0))}/mo
+                    </span>
+                  </div>
+                )}
 
                 <button
                   disabled={streams.length === 0}
@@ -2209,19 +2349,26 @@ function ApplyPageInner() {
               <motion.div key={`drivers-${currentStream.id}`} custom={dir} variants={slide} initial="enter" animate="center" exit="exit"
                 className="space-y-4">
 
-                {/* Stream progress dots */}
-                <div className="flex items-center gap-2">
-                  {streams.map((s, i) => {
-                    const done = s.driverDone || s.items.length > 0;
-                    return (
-                      <button key={s.id} onClick={() => setStreamIdx(i)}
-                        title={s.name}
-                        className={`h-2 rounded-full transition-all ${i === streamIdx ? "w-6" : "w-2"} ${done ? "bg-emerald-500" : i === streamIdx ? "bg-cyan-600" : "bg-slate-200"}`} />
-                    );
-                  })}
-                  <span className="text-xs text-slate-400 ml-1">
-                    Stream {streamIdx + 1} of {streams.length}: <span className="font-medium text-slate-600">{currentStream.name}</span>
-                  </span>
+                {/* Stream progress dots + running MRR */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
+                    {streams.map((s, i) => {
+                      const done = s.driverDone || s.items.length > 0;
+                      return (
+                        <button key={s.id} onClick={() => setStreamIdx(i)}
+                          title={s.name}
+                          className={`h-2 rounded-full transition-all flex-shrink-0 ${i === streamIdx ? "w-6" : "w-2"} ${done ? "bg-emerald-500" : i === streamIdx ? "bg-cyan-600" : "bg-slate-200"}`} />
+                      );
+                    })}
+                    <span className="text-xs text-slate-400 truncate">
+                      Stream {streamIdx + 1} of {streams.length}: <span className="font-medium text-slate-600">{currentStream.name}</span>
+                    </span>
+                  </div>
+                  {streams.some((s) => streamMRR(s) > 0) && (
+                    <span className="text-xs font-bold text-emerald-600 flex-shrink-0 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-full">
+                      {fmt(streams.reduce((a, s) => a + streamMRR(s), 0))}/mo total
+                    </span>
+                  )}
                 </div>
 
                 {/* Stream header */}
@@ -2302,9 +2449,7 @@ function ApplyPageInner() {
                         setStreamIdx(streamIdx - 1);
                         setDriverMode("chat");
                       } else {
-                        // Going back to review — clear driver messages for this stream so it restarts if re-entered
-                        updateStream({ ...currentStream, driverMessages: [], items: [], driverDone: false });
-                        go(1);
+                        go(1); // go back to Confirm Structure — data is preserved
                       }
                     }}
                     className="flex items-center gap-2 px-5 py-3.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
@@ -2380,6 +2525,7 @@ function ApplyPageInner() {
 
                 <ForecastView
                   streams={streams}
+                  onUpdateStream={updateStream}
                   horizonYears={forecastHorizon}     setHorizonYears={setForecastHorizon}
                   startYear={forecastStartYear}      setStartYear={setForecastStartYear}
                   startMonth={forecastStartMonth}    setStartMonth={setForecastStartMonth}
@@ -2390,78 +2536,88 @@ function ApplyPageInner() {
                     className="flex items-center justify-center gap-2 py-3.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
                     <ArrowLeft className="w-4 h-4" /> Adjust Numbers
                   </button>
-                  <button onClick={async () => {
-                    // Build projection using the user's chosen horizon + start date
-                    const startDate = new Date(forecastStartYear, forecastStartMonth, 1);
-                    const projection = projectRevenue(streams, forecastHorizon * 12, startDate);
-
-                    // Derive dashboard metrics from the projection
-                    const monthlyBaseline   = projection[0]?.total ?? 0;
-                    const year1Revenue      = projection.slice(0, 12).reduce((a, m) => a + m.total, 0);
-                    const totalRevenue      = projection.reduce((a, m) => a + m.total, 0);
-                    const lastMonths        = projection.slice(-12);
-                    const finalYearRevenue  = lastMonths.reduce((a, m) => a + m.total, 0);
-
-                    // Keep localStorage for any legacy readers
-                    localStorage.setItem("mvx_revenue_model", JSON.stringify({
-                      streams, projection, applicationId: appId,
-                    }));
-
-                    // Persist everything to Supabase using the session's appId
-                    if (appId && userId) {
+                  <button
+                    disabled={isSavingForecast}
+                    onClick={async () => {
+                      setIsSavingForecast(true);
                       try {
-                        const sb = createClient();
+                        // Build projection using the user's chosen horizon + start date
+                        const startDate = new Date(forecastStartYear, forecastStartMonth, 1);
+                        const projection = projectRevenue(streams, forecastHorizon * 12, startDate);
 
-                        // 1. Final stream + item save (with correct DB IDs)
-                        const savedStreams = await saveStreams(sb, appId, userId,
-                          streams.map((s, i) => ({
-                            id: isDbId(s.id) ? s.id : undefined,
-                            name: s.name, type: s.type, confidence: s.confidence,
-                            monthly_growth_pct: s.monthlyGrowthPct,
-                            sub_new_per_month: s.subNewPerMonth,
-                            sub_churn_pct: s.subChurnPct,
-                            rental_occupancy_pct: s.rentalOccupancyPct,
-                            driver_done: s.driverDone,
-                            position: i,
-                          }))
-                        );
-                        for (let i = 0; i < savedStreams.length; i++) {
-                          const local = streams[i]; const db = savedStreams[i];
-                          if (local?.items?.length && db) {
-                            await saveStreamItems(sb, db.id, userId, local.items.map((it, pos) => ({
-                              name: it.name, category: it.category,
-                              volume: it.volume, price: it.price,
-                              unit: it.unit, note: it.note, position: pos,
-                            })));
+                        // Derive dashboard metrics from the projection
+                        const monthlyBaseline   = projection[0]?.total ?? 0;
+                        const year1Revenue      = projection.slice(0, 12).reduce((a, m) => a + m.total, 0);
+                        const totalRevenue      = projection.reduce((a, m) => a + m.total, 0);
+                        const finalYearRevenue  = projection.slice(-12).reduce((a, m) => a + m.total, 0);
+
+                        // Keep localStorage for any legacy readers
+                        localStorage.setItem("mvx_revenue_model", JSON.stringify({
+                          streams, projection, applicationId: appId,
+                        }));
+
+                        // Persist everything to Supabase using the session's appId
+                        if (appId && userId) {
+                          const sb = createClient();
+
+                          // 1. Final stream + item save (with correct DB IDs)
+                          const savedStreams = await saveStreams(sb, appId, userId,
+                            streams.map((s, i) => ({
+                              id: isDbId(s.id) ? s.id : undefined,
+                              name: s.name, type: s.type, confidence: s.confidence,
+                              monthly_growth_pct: s.monthlyGrowthPct,
+                              sub_new_per_month: s.subNewPerMonth,
+                              sub_churn_pct: s.subChurnPct,
+                              rental_occupancy_pct: s.rentalOccupancyPct,
+                              driver_done: s.driverDone,
+                              position: i,
+                            }))
+                          );
+                          for (let i = 0; i < savedStreams.length; i++) {
+                            const local = streams[i]; const db = savedStreams[i];
+                            if (local?.items?.length && db) {
+                              await saveStreamItems(sb, db.id, userId, local.items.map((it, pos) => ({
+                                name: it.name, category: it.category,
+                                volume: it.volume, price: it.price,
+                                unit: it.unit, note: it.note, position: pos,
+                              })));
+                            }
                           }
+
+                          // 2. Forecast config
+                          const fConfig = await saveForecastConfig(sb, appId, userId, {
+                            startMonth:   forecastStartMonth,
+                            startYear:    forecastStartYear,
+                            horizonYears: forecastHorizon,
+                          });
+
+                          // 3. Projection snapshot (powers dashboard metrics)
+                          await saveProjectionSnapshot(sb, appId, userId, fConfig.id, {
+                            monthlyBaseline, year1Revenue, totalRevenue, finalYearRevenue,
+                          }, projection);
+
+                          // 4. Mark forecast complete
+                          await updateApplicationFlags(sb, appId, {
+                            forecast_done: true, drivers_done: true, wizard_step: 3,
+                          });
                         }
 
-                        // 2. Forecast config
-                        const fConfig = await saveForecastConfig(sb, appId, userId, {
-                          startMonth:   forecastStartMonth,
-                          startYear:    forecastStartYear,
-                          horizonYears: forecastHorizon,
-                        });
-
-                        // 3. Projection snapshot (powers dashboard metrics)
-                        await saveProjectionSnapshot(sb, appId, userId, fConfig.id, {
-                          monthlyBaseline, year1Revenue, totalRevenue, finalYearRevenue,
-                        }, projection);
-
-                        // 4. Mark forecast complete
-                        await updateApplicationFlags(sb, appId, {
-                          forecast_done: true, drivers_done: true, wizard_step: 3,
-                        });
+                        router.push("/dashboard");
                       } catch (e) {
                         console.error("[apply] forecast save error:", e);
+                        setIsSavingForecast(false); // let user retry
                       }
-                    }
-
-                    router.push("/dashboard");
-                  }}
-                    className="flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20"
+                    }}
+                    className="flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-60"
                     style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
-                    Save &amp; Continue Application <ArrowRight className="w-4 h-4" />
+                    {isSavingForecast ? (
+                      <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg> Saving…</>
+                    ) : (
+                      <>Save &amp; Continue Application <ArrowRight className="w-4 h-4" /></>
+                    )}
                   </button>
                 </div>
               </motion.div>
