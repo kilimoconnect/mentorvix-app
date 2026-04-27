@@ -129,6 +129,21 @@ type SeasonalityPreset = "none" | "q4_peak" | "q1_slow" | "summer_peak" | "end_o
 
 interface ChatMessage { role: "user" | "assistant"; content: string; }
 interface StreamItem  { id: string; name: string; category: string; volume: number; price: number; unit: string; note?: string; }
+
+/** Per-category or per-item growth/seasonality/event override. null = inherit from stream. */
+interface GrowthOverride {
+  id:                    string;
+  scope:                 "category" | "item";
+  targetId:              string;                      // category name OR item.id
+  targetName:            string;
+  volumeGrowthPct:       number | null;               // null → stream default
+  annualPriceGrowthPct:  number | null;               // null → stream default
+  seasonalityPreset:     SeasonalityPreset | null;
+  seasonalityMultipliers: number[] | null;            // 12-element array or null
+  launchMonth:           number | null;               // 0-based; null = always active
+  sunsetMonth:           number | null;               // 0-based; null = never ends
+}
+
 interface RevenueStream {
   id: string; name: string; type: StreamType; confidence: Confidence;
   items: StreamItem[];
@@ -147,6 +162,8 @@ interface RevenueStream {
   // Expansion event
   expansionMonth:         number | null;     // 0-based month index when expansion kicks in
   expansionMultiplier:    number;            // e.g. 1.5 = 50% uplift from that month on
+  // Advanced per-category / per-item overrides
+  overrides: GrowthOverride[];
   driverMessages: ChatMessage[];
   driverDone: boolean;
 }
@@ -277,6 +294,7 @@ function makeStream(name: string, type: StreamType, confidence: Confidence): Rev
     seasonalityMultipliers: Array(12).fill(1) as number[],
     expansionMonth:         null,
     expansionMultiplier:    1.5,
+    overrides: [],
     driverMessages: [], driverDone: false,
   };
 }
@@ -330,18 +348,28 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
         streamRev += rev;
       };
 
-      // Shared growth factors — volume and price compound independently
-      const volFactor   = Math.pow(1 + (s.volumeGrowthPct      ?? 0) / 100,  i);
-      const priceFactor = Math.pow(1 + (s.annualPriceGrowthPct ?? 0) / 1200, i); // annual → per-month
+      // Calendar month for seasonality lookup
+      const calMonth = (startDate.getMonth() + i) % 12;
 
-      // Seasonality: which calendar month this projection month falls on
-      const calMonth       = (startDate.getMonth() + i) % 12;
-      const seasonalFactor = (s.seasonalityMultipliers?.[calMonth] ?? 1);
-      // Expansion event: flat revenue multiplier active from expansionMonth onward
+      // Stream-level expansion factor (applies to all items, stream-wide)
       const expansionFactor = (s.expansionMonth !== null && s.expansionMonth !== undefined && i >= s.expansionMonth)
         ? (s.expansionMultiplier ?? 1)
         : 1;
-      const extraFactor = seasonalFactor * expansionFactor;
+
+      // Per-item override resolver: item override > category override > stream default
+      const getItemParams = (itemId: string, category: string) => {
+        const ovrs = s.overrides ?? [];
+        const itemOvr = ovrs.find((o) => o.scope === "item"     && o.targetId === itemId);
+        const catOvr  = ovrs.find((o) => o.scope === "category" && o.targetId === category);
+        const ovr = itemOvr ?? catOvr ?? null;
+        return {
+          volPct:      ovr?.volumeGrowthPct      ?? s.volumeGrowthPct      ?? 0,
+          pricePct:    ovr?.annualPriceGrowthPct ?? s.annualPriceGrowthPct ?? 0,
+          seasonMults: ovr?.seasonalityMultipliers ?? s.seasonalityMultipliers ?? (Array(12).fill(1) as number[]),
+          launchMonth: ovr?.launchMonth ?? null,
+          sunsetMonth: ovr?.sunsetMonth ?? null,
+        };
+      };
 
       if (s.type === "subscription") {
         // Churn model: subscribers_t = subscribers_{t-1} + new - churn
@@ -351,21 +379,49 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
         }
         const initial = Math.max(1, s.items.reduce((a, it) => a + it.volume, 0));
         const subFactor = subTotals[s.id] / initial;
-        // Subscription: volume growth through churn model; price uplift applied separately
-        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * it.price * subFactor * priceFactor * extraFactor)));
+        s.items.forEach((it) => {
+          const p = getItemParams(it.id, it.category);
+          if (p.launchMonth !== null && i < p.launchMonth) return;
+          if (p.sunsetMonth !== null && i > p.sunsetMonth) return;
+          const pF = Math.pow(1 + p.pricePct / 1200, i);
+          const sF = p.seasonMults[calMonth] ?? 1;
+          addItem(it.name, it.category, Math.round(it.volume * it.price * subFactor * pF * sF * expansionFactor));
+        });
 
       } else if (s.type === "rental") {
-        // Revenue = units × rate × occupancy% × volume growth × price growth
         const occ = (s.rentalOccupancyPct ?? 100) / 100;
-        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * volFactor * it.price * priceFactor * occ * extraFactor)));
+        s.items.forEach((it) => {
+          const p = getItemParams(it.id, it.category);
+          if (p.launchMonth !== null && i < p.launchMonth) return;
+          if (p.sunsetMonth !== null && i > p.sunsetMonth) return;
+          const vF = Math.pow(1 + p.volPct   / 100,  i);
+          const pF = Math.pow(1 + p.pricePct / 1200, i);
+          const sF = p.seasonMults[calMonth] ?? 1;
+          addItem(it.name, it.category, Math.round(it.volume * vF * it.price * pF * occ * sF * expansionFactor));
+        });
 
       } else if (s.type === "marketplace") {
-        // Revenue = GMV × commission% — GMV grows with volume, commission rate may increase with price
-        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * volFactor * (it.price / 100) * priceFactor * extraFactor)));
+        s.items.forEach((it) => {
+          const p = getItemParams(it.id, it.category);
+          if (p.launchMonth !== null && i < p.launchMonth) return;
+          if (p.sunsetMonth !== null && i > p.sunsetMonth) return;
+          const vF = Math.pow(1 + p.volPct   / 100,  i);
+          const pF = Math.pow(1 + p.pricePct / 1200, i);
+          const sF = p.seasonMults[calMonth] ?? 1;
+          addItem(it.name, it.category, Math.round(it.volume * vF * (it.price / 100) * pF * sF * expansionFactor));
+        });
 
       } else {
-        // product, service, contract, custom → (units × volFactor) × (price × priceFactor)
-        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * volFactor * it.price * priceFactor * extraFactor)));
+        // product, service, contract, custom
+        s.items.forEach((it) => {
+          const p = getItemParams(it.id, it.category);
+          if (p.launchMonth !== null && i < p.launchMonth) return;
+          if (p.sunsetMonth !== null && i > p.sunsetMonth) return;
+          const vF = Math.pow(1 + p.volPct   / 100,  i);
+          const pF = Math.pow(1 + p.pricePct / 1200, i);
+          const sF = p.seasonMults[calMonth] ?? 1;
+          addItem(it.name, it.category, Math.round(it.volume * vF * it.price * pF * sF * expansionFactor));
+        });
       }
 
       return { id: s.id, name: s.name, type: s.type, rev: streamRev, byCategory };
@@ -596,8 +652,397 @@ function ItemRow({
   );
 }
 
+/* ═══════════════════════════════════════ OverrideRow ══ */
+function OverrideRow({
+  override: ovr, onUpdate, onDelete, isEditing, onToggleEdit,
+}: {
+  override: GrowthOverride;
+  onUpdate: (o: GrowthOverride) => void;
+  onDelete: () => void;
+  isEditing: boolean;
+  onToggleEdit: () => void;
+}) {
+  const months12 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const summary = [
+    ovr.volumeGrowthPct      !== null ? `Vol ${ovr.volumeGrowthPct}%/mo`       : null,
+    ovr.annualPriceGrowthPct !== null ? `Price ${ovr.annualPriceGrowthPct}%/yr` : null,
+    ovr.seasonalityPreset               ? SEASONALITY_PRESETS[ovr.seasonalityPreset]?.label : null,
+  ].filter(Boolean).join(" · ") || "All defaults — click to configure";
+
+  return (
+    <div className="border border-slate-200 rounded-xl overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2 bg-slate-50 cursor-pointer" onClick={onToggleEdit}>
+        <div className="flex items-center gap-2 min-w-0">
+          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${ovr.scope === "category" ? "bg-cyan-50 text-cyan-700" : "bg-violet-50 text-violet-700"}`}>
+            {ovr.scope === "category" ? "Category" : "Item"}
+          </span>
+          <span className="text-xs font-semibold text-slate-700 truncate">{ovr.targetName}</span>
+          <span className="text-[10px] text-slate-400 truncate hidden sm:block">{summary}</span>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          {isEditing ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
+          <button onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            className="p-1 rounded hover:bg-red-50 transition-colors ml-1">
+            <Trash2 className="w-3 h-3 text-slate-300 hover:text-red-400" />
+          </button>
+        </div>
+      </div>
+
+      {isEditing && (
+        <div className="px-4 py-3 space-y-3 border-t border-slate-100 bg-white">
+          {/* Vol + Price */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider block mb-1">Vol Growth / mo</label>
+              <div className="flex items-center gap-1.5">
+                <input type="number" min={-10} max={30} step={0.1} placeholder="stream"
+                  value={ovr.volumeGrowthPct ?? ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const n = parseFloat(val);
+                    const v = val === "" || isNaN(n) ? null : n;
+                    const r: GrowthOverride = { ...ovr, volumeGrowthPct: v };
+                    onUpdate(r);
+                  }}
+                  className="w-16 text-xs font-bold text-slate-800 border border-slate-200 rounded-lg px-2 py-1.5 text-center focus:outline-none focus:border-cyan-400 placeholder:text-slate-300 placeholder:font-normal" />
+                <span className="text-[10px] text-slate-400">% (blank = stream)</span>
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider block mb-1">Price Increase / yr</label>
+              <div className="flex items-center gap-1.5">
+                <input type="number" min={-10} max={50} step={0.5} placeholder="stream"
+                  value={ovr.annualPriceGrowthPct ?? ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const n = parseFloat(val);
+                    const v = val === "" || isNaN(n) ? null : n;
+                    const r: GrowthOverride = { ...ovr, annualPriceGrowthPct: v };
+                    onUpdate(r);
+                  }}
+                  className="w-16 text-xs font-bold text-slate-800 border border-slate-200 rounded-lg px-2 py-1.5 text-center focus:outline-none focus:border-cyan-400 placeholder:text-slate-300 placeholder:font-normal" />
+                <span className="text-[10px] text-slate-400">% (blank = stream)</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Seasonality */}
+          <div>
+            <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider block mb-1">Seasonality Pattern</label>
+            <select
+              value={ovr.seasonalityPreset ?? ""}
+              onChange={(e) => {
+                const val = e.target.value;
+                if (!val) {
+                  onUpdate({ ...ovr, seasonalityPreset: null, seasonalityMultipliers: null });
+                } else {
+                  const preset = val as SeasonalityPreset;
+                  onUpdate({ ...ovr, seasonalityPreset: preset, seasonalityMultipliers: [...SEASONALITY_PRESETS[preset].months] });
+                }
+              }}
+              className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:border-cyan-400 w-full max-w-xs">
+              <option value="">— use stream default —</option>
+              {(Object.keys(SEASONALITY_PRESETS) as SeasonalityPreset[]).map((p) => (
+                <option key={p} value={p}>{SEASONALITY_PRESETS[p].label} — {SEASONALITY_PRESETS[p].desc}</option>
+              ))}
+            </select>
+
+            {ovr.seasonalityPreset === "custom" && (
+              <div className="space-y-1.5 mt-2.5 p-3 bg-slate-50 rounded-xl">
+                {(ovr.seasonalityMultipliers ?? Array(12).fill(1) as number[]).map((v, mi) => (
+                  <div key={mi} className="flex items-center gap-2">
+                    <span className="text-[9px] text-slate-400 w-7 text-right shrink-0">{months12[mi]}</span>
+                    <input type="range" min={0} max={3} step={0.05} value={v}
+                      onChange={(e) => {
+                        const mults = [...(ovr.seasonalityMultipliers ?? Array(12).fill(1) as number[])];
+                        mults[mi] = parseFloat(e.target.value);
+                        onUpdate({ ...ovr, seasonalityMultipliers: mults });
+                      }}
+                      className="flex-1 h-1 appearance-none cursor-pointer rounded-full"
+                      style={{ accentColor: "#0e7490" }} />
+                    <span className="text-[9px] font-bold text-slate-600 w-8 text-right shrink-0">{v.toFixed(2)}×</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Launch / Sunset */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider block mb-1">Launch Month</label>
+              <div className="flex items-center gap-1.5">
+                <input type="number" min={1} max={240} placeholder="always"
+                  value={ovr.launchMonth !== null ? ovr.launchMonth + 1 : ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const n = parseInt(val, 10);
+                    onUpdate({ ...ovr, launchMonth: val === "" || isNaN(n) ? null : Math.max(0, n - 1) });
+                  }}
+                  className="w-16 text-xs font-bold text-slate-800 border border-slate-200 rounded-lg px-2 py-1.5 text-center focus:outline-none focus:border-cyan-400 placeholder:text-slate-300 placeholder:font-normal" />
+                <span className="text-[10px] text-slate-400">of projection</span>
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider block mb-1">Sunset Month</label>
+              <div className="flex items-center gap-1.5">
+                <input type="number" min={1} max={240} placeholder="never"
+                  value={ovr.sunsetMonth !== null ? ovr.sunsetMonth + 1 : ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    const n = parseInt(val, 10);
+                    onUpdate({ ...ovr, sunsetMonth: val === "" || isNaN(n) ? null : Math.max(0, n - 1) });
+                  }}
+                  className="w-16 text-xs font-bold text-slate-800 border border-slate-200 rounded-lg px-2 py-1.5 text-center focus:outline-none focus:border-cyan-400 placeholder:text-slate-300 placeholder:font-normal" />
+                <span className="text-[10px] text-slate-400">of projection</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════ AdvancedGrowthModal ══ */
+function AdvancedGrowthModal({
+  stream, onUpdate, onClose,
+}: {
+  stream: RevenueStream;
+  onUpdate: (s: RevenueStream) => void;
+  onClose: () => void;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const months12 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const categories = [...new Set(stream.items.map((i) => i.category))];
+
+  const addOverride = (scope: "category" | "item", targetId: string, targetName: string) => {
+    const ovr: GrowthOverride = {
+      id: uid(), scope, targetId, targetName,
+      volumeGrowthPct: null, annualPriceGrowthPct: null,
+      seasonalityPreset: null, seasonalityMultipliers: null,
+      launchMonth: null, sunsetMonth: null,
+    };
+    onUpdate({ ...stream, overrides: [...(stream.overrides ?? []), ovr] });
+    setEditingId(ovr.id);
+  };
+
+  const updateOverride = (updated: GrowthOverride) =>
+    onUpdate({ ...stream, overrides: (stream.overrides ?? []).map((o) => (o.id === updated.id ? updated : o)) });
+
+  const deleteOverride = (id: string) =>
+    onUpdate({ ...stream, overrides: (stream.overrides ?? []).filter((o) => o.id !== id) });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto">
+      {/* Backdrop */}
+      <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={onClose} />
+
+      {/* Panel */}
+      <div className="relative w-full max-w-3xl mx-4 my-8 bg-white rounded-2xl shadow-2xl flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <div>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Advanced Growth &amp; Seasonality</p>
+            <h2 className="text-sm font-bold text-slate-800 mt-0.5">{stream.name}</h2>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-xl hover:bg-slate-100 transition-colors">
+            <X className="w-4 h-4 text-slate-500" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-8">
+          {/* ── Stream-Level Seasonality ── */}
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Stream Seasonality</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">Monthly revenue pattern for this entire stream. Override per category or item below.</p>
+              </div>
+              <select
+                value={stream.seasonalityPreset ?? "none"}
+                onChange={(e) => {
+                  const preset = e.target.value as SeasonalityPreset;
+                  onUpdate({ ...stream, seasonalityPreset: preset, seasonalityMultipliers: [...SEASONALITY_PRESETS[preset].months] });
+                }}
+                className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:border-cyan-400">
+                {(Object.keys(SEASONALITY_PRESETS) as SeasonalityPreset[]).map((p) => (
+                  <option key={p} value={p}>{SEASONALITY_PRESETS[p].label}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Mini bar chart */}
+            {(stream.seasonalityPreset ?? "none") !== "none" && (
+              <div>
+                <div className="flex items-end gap-px" style={{ height: 52 }}>
+                  {stream.seasonalityMultipliers.map((v, mi) => {
+                    const maxV = Math.max(...stream.seasonalityMultipliers, 1);
+                    const barH = Math.max((v / maxV) * 100, 5);
+                    return (
+                      <div key={mi} className="flex-1 flex flex-col justify-end" style={{ height: 52 }}
+                        title={`${months12[mi]}: ${v.toFixed(2)}×`}>
+                        <div className="w-full rounded-t-sm transition-all"
+                          style={{ height: `${barH}%`, background: v >= 1 ? "#0e7490" : "#cbd5e1", opacity: 0.85 }} />
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex gap-px mt-1">
+                  {["J","F","M","A","M","J","J","A","S","O","N","D"].map((m, mi) => (
+                    <div key={mi} className="flex-1 text-center">
+                      <span className="text-[7px] text-slate-300 font-medium">{m}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(stream.seasonalityPreset ?? "none") === "custom" && (
+              <div className="space-y-1.5 p-3 bg-slate-50 rounded-xl">
+                {stream.seasonalityMultipliers.map((v, mi) => (
+                  <div key={mi} className="flex items-center gap-2">
+                    <span className="text-[9px] text-slate-400 w-7 text-right shrink-0">{months12[mi]}</span>
+                    <input type="range" min={0} max={3} step={0.05} value={v}
+                      onChange={(e) => {
+                        const mults = [...stream.seasonalityMultipliers];
+                        mults[mi] = parseFloat(e.target.value);
+                        onUpdate({ ...stream, seasonalityMultipliers: mults });
+                      }}
+                      className="flex-1 h-1 appearance-none cursor-pointer rounded-full"
+                      style={{ accentColor: "#0e7490" }} />
+                    <span className="text-[9px] font-bold text-slate-600 w-8 text-right shrink-0">{v.toFixed(2)}×</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          {/* ── Per-Category / Per-Item Overrides ── */}
+          <section className="space-y-3">
+            <div>
+              <p className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Growth &amp; Seasonality Overrides</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">Override growth rates, pricing, or seasonality for specific categories or items. Blank fields inherit stream defaults.</p>
+            </div>
+
+            {(stream.overrides ?? []).length > 0 && (
+              <div className="space-y-2">
+                {(stream.overrides ?? []).map((ovr) => (
+                  <OverrideRow
+                    key={ovr.id}
+                    override={ovr}
+                    onUpdate={updateOverride}
+                    onDelete={() => deleteOverride(ovr.id)}
+                    isEditing={editingId === ovr.id}
+                    onToggleEdit={() => setEditingId(editingId === ovr.id ? null : ovr.id)}
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Add override buttons */}
+            <div className="flex flex-wrap gap-2">
+              {categories.map((cat) => {
+                if ((stream.overrides ?? []).some((o) => o.scope === "category" && o.targetId === cat)) return null;
+                return (
+                  <button key={`cat-${cat}`}
+                    onClick={() => addOverride("category", cat, cat)}
+                    className="flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1.5 border border-dashed border-cyan-300 text-cyan-600 rounded-lg hover:bg-cyan-50 transition-colors">
+                    <Plus className="w-3 h-3" /> {cat} <span className="text-cyan-400 font-normal">category</span>
+                  </button>
+                );
+              })}
+              {stream.items.map((item) => {
+                if ((stream.overrides ?? []).some((o) => o.scope === "item" && o.targetId === item.id)) return null;
+                return (
+                  <button key={`item-${item.id}`}
+                    onClick={() => addOverride("item", item.id, item.name)}
+                    className="flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1.5 border border-dashed border-violet-300 text-violet-600 rounded-lg hover:bg-violet-50 transition-colors">
+                    <Plus className="w-3 h-3" /> {item.name}
+                  </button>
+                );
+              })}
+              {categories.length === 0 && stream.items.length === 0 && (
+                <p className="text-[10px] text-slate-400 italic">Add items to the stream first to configure overrides.</p>
+              )}
+            </div>
+          </section>
+
+          {/* ── Rule Summary Grid ── */}
+          {(stream.overrides ?? []).length > 0 && (
+            <section className="space-y-2">
+              <p className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Rule Summary</p>
+              <div className="overflow-x-auto rounded-xl border border-slate-100">
+                <table className="w-full">
+                  <thead>
+                    <tr className="bg-slate-50 text-left">
+                      <th className="px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase">Scope</th>
+                      <th className="px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase">Target</th>
+                      <th className="px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase text-right">Vol Growth</th>
+                      <th className="px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase text-right">Price</th>
+                      <th className="px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase">Seasonality</th>
+                      <th className="px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase">Events</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(stream.overrides ?? []).map((ovr) => (
+                      <tr key={ovr.id} className="border-t border-slate-100 text-xs">
+                        <td className="px-3 py-2">
+                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${ovr.scope === "category" ? "bg-cyan-50 text-cyan-700" : "bg-violet-50 text-violet-700"}`}>
+                            {ovr.scope === "category" ? "Cat" : "Item"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 font-medium text-slate-700 max-w-[120px] truncate">{ovr.targetName}</td>
+                        <td className="px-3 py-2 text-right text-slate-600">
+                          {ovr.volumeGrowthPct !== null
+                            ? <span className="font-bold" style={{ color: "#0e7490" }}>{ovr.volumeGrowthPct}%/mo</span>
+                            : <span className="text-slate-300 italic text-[10px]">stream</span>}
+                        </td>
+                        <td className="px-3 py-2 text-right text-slate-600">
+                          {ovr.annualPriceGrowthPct !== null
+                            ? <span className="font-bold" style={{ color: "#0e7490" }}>{ovr.annualPriceGrowthPct}%/yr</span>
+                            : <span className="text-slate-300 italic text-[10px]">stream</span>}
+                        </td>
+                        <td className="px-3 py-2 text-slate-600">
+                          {ovr.seasonalityPreset
+                            ? SEASONALITY_PRESETS[ovr.seasonalityPreset]?.label
+                            : <span className="text-slate-300 italic text-[10px]">stream</span>}
+                        </td>
+                        <td className="px-3 py-2 text-slate-600 text-[10px]">
+                          {ovr.launchMonth !== null || ovr.sunsetMonth !== null ? (
+                            <span>
+                              {ovr.launchMonth !== null && `Launch m${ovr.launchMonth + 1}`}
+                              {ovr.launchMonth !== null && ovr.sunsetMonth !== null && " · "}
+                              {ovr.sunsetMonth !== null && `End m${ovr.sunsetMonth + 1}`}
+                            </span>
+                          ) : <span className="text-slate-300 italic">always</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end">
+          <button onClick={onClose}
+            className="px-6 py-2 text-sm font-semibold text-white rounded-xl transition-all hover:opacity-90"
+            style={{ background: "#0e7490" }}>
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════ ItemTable ══ */
 function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueStream; onUpdate: (s: RevenueStream) => void; fmt: (n: number) => string; currencySymbol: string }) {
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
   const addItem = () => {
     const item: StreamItem = { id: uid(), name: "New item", category: "General", volume: 0, price: 0, unit: "unit" };
     onUpdate({ ...stream, items: [...stream.items, item] });
@@ -612,6 +1057,14 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
   const cols  = COL_LABELS[stream.type];
 
   return (
+    <>
+    {showAdvanced && (
+      <AdvancedGrowthModal
+        stream={stream}
+        onUpdate={onUpdate}
+        onClose={() => setShowAdvanced(false)}
+      />
+    )}
     <div className="space-y-3">
       {/* ── Growth Logic card ── */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
@@ -690,89 +1143,26 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
           </span>
         </div>
 
-        {/* ── Seasonality ── */}
-        <div className="border-t border-slate-100 pt-3 space-y-2.5">
-          <div className="flex items-center gap-1.5">
+        {/* ── Seasonality (compact) ── */}
+        <div className="border-t border-slate-100 pt-3 space-y-1">
+          <div className="flex items-center justify-between">
             <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Seasonality</p>
-            <div className="group relative inline-block">
-              <Info className="w-3 h-3 text-slate-300 cursor-help" />
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-52 text-[10px] text-slate-600 bg-white border border-slate-100 rounded-lg px-2.5 py-2 shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none z-20 leading-relaxed">
-                Monthly multipliers adjust revenue to reflect predictable seasonal peaks and valleys without changing your annual total.
-              </div>
-            </div>
+            <select
+              value={stream.seasonalityPreset ?? "none"}
+              onChange={(e) => {
+                const preset = e.target.value as SeasonalityPreset;
+                onUpdate({ ...stream, seasonalityPreset: preset, seasonalityMultipliers: [...SEASONALITY_PRESETS[preset].months] });
+              }}
+              className="text-[10px] border border-slate-200 rounded-lg px-2 py-1 text-slate-700 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/20">
+              {(Object.keys(SEASONALITY_PRESETS) as SeasonalityPreset[]).map((p) => (
+                <option key={p} value={p}>{SEASONALITY_PRESETS[p].label}</option>
+              ))}
+            </select>
           </div>
-
-          {/* Preset buttons */}
-          <div className="flex flex-wrap gap-1.5">
-            {(Object.keys(SEASONALITY_PRESETS) as SeasonalityPreset[]).map((preset) => (
-              <button key={preset}
-                onClick={() => {
-                  const p = SEASONALITY_PRESETS[preset];
-                  onUpdate({ ...stream, seasonalityPreset: preset, seasonalityMultipliers: [...p.months] });
-                }}
-                className={`text-[10px] font-semibold px-2.5 py-1 rounded-full border transition-all ${
-                  (stream.seasonalityPreset ?? "none") === preset
-                    ? "bg-cyan-600 text-white border-cyan-600 shadow-sm"
-                    : "bg-white text-slate-500 border-slate-200 hover:border-cyan-300 hover:text-cyan-700"
-                }`}>
-                {SEASONALITY_PRESETS[preset].label}
-              </button>
-            ))}
-          </div>
-
-          {/* Description */}
           {(stream.seasonalityPreset ?? "none") !== "none" && (
             <p className="text-[10px] text-slate-400 italic">
               {SEASONALITY_PRESETS[stream.seasonalityPreset ?? "none"]?.desc}
             </p>
-          )}
-
-          {/* Mini bar chart — 12 months */}
-          {(stream.seasonalityPreset ?? "none") !== "none" && (
-            <div>
-              <div className="flex items-end gap-px" style={{ height: 36 }}>
-                {stream.seasonalityMultipliers.map((v, mi) => {
-                  const maxV = Math.max(...stream.seasonalityMultipliers, 1);
-                  const barH = Math.max((v / maxV) * 100, 6);
-                  const above = v >= 1;
-                  return (
-                    <div key={mi} className="flex-1 flex flex-col justify-end" style={{ height: 36 }} title={`${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][mi]}: ${v.toFixed(2)}×`}>
-                      <div className="w-full rounded-t-sm transition-all"
-                        style={{ height: `${barH}%`, background: above ? "#0e7490" : "#cbd5e1", opacity: 0.85 }} />
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="flex gap-px mt-0.5">
-                {["J","F","M","A","M","J","J","A","S","O","N","D"].map((m, mi) => (
-                  <div key={mi} className="flex-1 text-center">
-                    <span className="text-[7px] text-slate-300 font-medium">{m}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Custom: per-month sliders */}
-          {(stream.seasonalityPreset ?? "none") === "custom" && (
-            <div className="space-y-1.5 pt-1">
-              {stream.seasonalityMultipliers.map((v, mi) => (
-                <div key={mi} className="flex items-center gap-2">
-                  <span className="text-[9px] text-slate-400 w-6 text-right shrink-0">
-                    {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][mi]}
-                  </span>
-                  <input type="range" min={0} max={3} step={0.05} value={v}
-                    onChange={(e) => {
-                      const mults = [...stream.seasonalityMultipliers];
-                      mults[mi] = parseFloat(e.target.value);
-                      onUpdate({ ...stream, seasonalityMultipliers: mults });
-                    }}
-                    className="flex-1 h-1 appearance-none cursor-pointer rounded-full"
-                    style={{ accentColor: "#0e7490" }} />
-                  <span className="text-[9px] font-bold text-slate-600 w-8 text-right shrink-0">{v.toFixed(2)}×</span>
-                </div>
-              ))}
-            </div>
           )}
         </div>
 
@@ -826,6 +1216,23 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
               </p>
             </>
           )}
+        </div>
+
+        {/* Advanced Controls CTA */}
+        <div className="border-t border-slate-100 pt-3 flex items-center justify-between">
+          <div>
+            <p className="text-[10px] text-slate-400">
+              {(stream.overrides ?? []).length > 0
+                ? `${(stream.overrides ?? []).length} override${(stream.overrides ?? []).length !== 1 ? "s" : ""} configured`
+                : "Override growth, pricing, or seasonality by category or item"}
+            </p>
+          </div>
+          <button
+            onClick={() => setShowAdvanced(true)}
+            className="flex items-center gap-1.5 text-[10px] font-bold text-cyan-600 hover:text-cyan-700 border border-cyan-200 hover:border-cyan-300 bg-cyan-50 hover:bg-cyan-100 px-3 py-1.5 rounded-lg transition-all">
+            Advanced Controls
+            <ChevronRight className="w-3 h-3" />
+          </button>
         </div>
       </div>
 
@@ -892,6 +1299,7 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
         <Plus className="w-3.5 h-3.5" /> Add item manually
       </button>
     </div>
+    </>
   );
 }
 
@@ -2197,6 +2605,7 @@ function ApplyPageInner() {
         seasonalityMultipliers: Array(12).fill(1) as number[],
         expansionMonth:         null,
         expansionMultiplier:    1.5,
+        overrides:              [],
         driverDone:          s.driver_done,
         items: (state.itemsByStream[s.id] ?? []).map((it) => ({
           id:       it.id,
