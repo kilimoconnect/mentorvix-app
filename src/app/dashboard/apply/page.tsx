@@ -1374,7 +1374,7 @@ function ApplyPageInner() {
   const [appId,       setAppId]       = useState<string | null>(null);
   const [userId,      setUserId]      = useState<string | null>(null);
   const [isRestoring, setIsRestoring] = useState(true);
-  const isSavingRef  = useRef(false);   // guard against save → setState → save loops
+  // isSavingRef removed — saveStreams is a full-replace upsert (idempotent), so concurrent saves are safe
   const intakeSaveTimer  = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const streamSaveTimer  = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
@@ -1594,17 +1594,12 @@ function ApplyPageInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages.length, streams.length, appId, userId]);
 
-  // ── Auto-save: streams + items + driver messages (debounced 1.2 s) ──────────
-  // NOTE: isSavingRef.current is checked INSIDE the timeout, not here.
-  // Checking it at effect level would swallow edits made while a save is in
-  // progress — the effect fires, returns early, sets no new timer, and when the
-  // save finishes without calling setStreams the effect never re-runs.
+  // ── Auto-save: streams + items + driver messages (debounced 800 ms) ───────────
+  // saveStreams is a full-replace upsert — concurrent calls are safe, no lock needed.
   useEffect(() => {
     if (!appId || !userId || streams.length === 0 || isRestoring) return;
     clearTimeout(streamSaveTimer.current);
     streamSaveTimer.current = setTimeout(async () => {
-      if (isSavingRef.current) return; // a concurrent save is already running
-      isSavingRef.current = true;
       try {
         const sb = createClient();
         // Save streams — strip local IDs so DB generates UUIDs for new ones
@@ -1657,10 +1652,8 @@ function ApplyPageInner() {
         }
       } catch (e) {
         console.error("[apply] streams save error", e);
-      } finally {
-        isSavingRef.current = false;
       }
-    }, 1200);
+    }, 800);
     return () => clearTimeout(streamSaveTimer.current);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streams, appId, userId]);
