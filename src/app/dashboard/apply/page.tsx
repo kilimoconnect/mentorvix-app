@@ -125,6 +125,7 @@ type StreamType = "product" | "service" | "subscription" | "rental" | "marketpla
 type Confidence = "high" | "medium" | "low";
 type Provider   = "openai" | "gemini";
 type DriverMode = "chat" | "import" | "manual";
+type SeasonalityPreset = "none" | "q4_peak" | "q1_slow" | "summer_peak" | "end_of_year" | "construction" | "custom";
 
 interface ChatMessage { role: "user" | "assistant"; content: string; }
 interface StreamItem  { id: string; name: string; category: string; volume: number; price: number; unit: string; note?: string; }
@@ -140,6 +141,12 @@ interface RevenueStream {
   subNewPerMonth:     number;   // subscription: new subscribers per month
   subChurnPct:        number;   // subscription: monthly churn %
   rentalOccupancyPct: number;   // rental: % of units occupied
+  // Seasonality
+  seasonalityPreset:      SeasonalityPreset;
+  seasonalityMultipliers: number[];          // 12 per-month relative factors (avg ≈ 1)
+  // Expansion event
+  expansionMonth:         number | null;     // 0-based month index when expansion kicks in
+  expansionMultiplier:    number;            // e.g. 1.5 = 50% uplift from that month on
   driverMessages: ChatMessage[];
   driverDone: boolean;
 }
@@ -174,6 +181,19 @@ const GROWTH_PRESETS: Record<GrowthScenario, {
   conservative: { label: "Conservative", desc: "Low growth, stable pricing",  volPct: 0.5, pricePct: 3.0, confidence: "high"   },
   base:         { label: "Base",         desc: "Realistic execution",          volPct: 1.5, pricePct: 5.0, confidence: "medium" },
   growth:       { label: "Growth Case",  desc: "Strong performance scenario",  volPct: 3.0, pricePct: 8.0, confidence: "low"    },
+};
+
+/* ═══════════════════════════════ seasonality presets ══ */
+// Each months[] array contains 12 relative multipliers that sum to exactly 12
+// (so the annual average multiplier is 1.0 — no inflation/deflation of the total).
+const SEASONALITY_PRESETS: Record<SeasonalityPreset, { label: string; desc: string; months: number[] }> = {
+  none:        { label: "None",          desc: "Flat revenue — no seasonal pattern applied",        months: Array(12).fill(1) },
+  q4_peak:     { label: "Q4 Retail",     desc: "Nov–Dec surge, Jan–Feb slow (retail / e-commerce)", months: [0.82, 0.80, 0.90, 0.92, 0.95, 0.98, 0.95, 0.92, 1.00, 1.05, 1.20, 1.51] },
+  q1_slow:     { label: "Q1 Slow",       desc: "Post-holiday demand dip in Q1",                    months: [0.75, 0.78, 0.95, 1.05, 1.10, 1.12, 1.12, 1.08, 1.02, 1.02, 1.00, 1.01] },
+  summer_peak: { label: "Summer Peak",   desc: "Jun–Aug high season (tourism / outdoor)",          months: [0.80, 0.82, 0.90, 1.00, 1.08, 1.20, 1.28, 1.22, 1.10, 0.98, 0.90, 0.72] },
+  end_of_year: { label: "Year-End Corp", desc: "Q4 corporate budget flush (B2B / consulting)",     months: [0.88, 0.88, 0.92, 0.95, 1.00, 1.00, 0.92, 0.95, 1.05, 1.10, 1.18, 1.17] },
+  construction:{ label: "Dry Season",    desc: "Dry-season peak (construction / farming)",         months: [1.15, 1.18, 1.20, 1.10, 1.05, 0.85, 0.80, 0.82, 0.90, 1.00, 1.05, 0.90] },
+  custom:      { label: "Custom",        desc: "Define your own monthly pattern",                  months: Array(12).fill(1) },
 };
 
 function effectiveMonthlyGrowth(volPct: number, annualPricePct: number): number {
@@ -253,6 +273,10 @@ function makeStream(name: string, type: StreamType, confidence: Confidence): Rev
     annualPriceGrowthPct: base.pricePct,
     monthlyGrowthPct:     effectiveMonthlyGrowth(base.volPct, base.pricePct),
     subNewPerMonth: 0, subChurnPct: 0, rentalOccupancyPct: 100,
+    seasonalityPreset:      "none",
+    seasonalityMultipliers: Array(12).fill(1) as number[],
+    expansionMonth:         null,
+    expansionMultiplier:    1.5,
     driverMessages: [], driverDone: false,
   };
 }
@@ -310,6 +334,15 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
       const volFactor   = Math.pow(1 + (s.volumeGrowthPct      ?? 0) / 100,  i);
       const priceFactor = Math.pow(1 + (s.annualPriceGrowthPct ?? 0) / 1200, i); // annual → per-month
 
+      // Seasonality: which calendar month this projection month falls on
+      const calMonth       = (startDate.getMonth() + i) % 12;
+      const seasonalFactor = (s.seasonalityMultipliers?.[calMonth] ?? 1);
+      // Expansion event: flat revenue multiplier active from expansionMonth onward
+      const expansionFactor = (s.expansionMonth !== null && s.expansionMonth !== undefined && i >= s.expansionMonth)
+        ? (s.expansionMultiplier ?? 1)
+        : 1;
+      const extraFactor = seasonalFactor * expansionFactor;
+
       if (s.type === "subscription") {
         // Churn model: subscribers_t = subscribers_{t-1} + new - churn
         if (i > 0) {
@@ -319,20 +352,20 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
         const initial = Math.max(1, s.items.reduce((a, it) => a + it.volume, 0));
         const subFactor = subTotals[s.id] / initial;
         // Subscription: volume growth through churn model; price uplift applied separately
-        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * it.price * subFactor * priceFactor)));
+        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * it.price * subFactor * priceFactor * extraFactor)));
 
       } else if (s.type === "rental") {
         // Revenue = units × rate × occupancy% × volume growth × price growth
         const occ = (s.rentalOccupancyPct ?? 100) / 100;
-        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * volFactor * it.price * priceFactor * occ)));
+        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * volFactor * it.price * priceFactor * occ * extraFactor)));
 
       } else if (s.type === "marketplace") {
         // Revenue = GMV × commission% — GMV grows with volume, commission rate may increase with price
-        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * volFactor * (it.price / 100) * priceFactor)));
+        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * volFactor * (it.price / 100) * priceFactor * extraFactor)));
 
       } else {
         // product, service, contract, custom → (units × volFactor) × (price × priceFactor)
-        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * volFactor * it.price * priceFactor)));
+        s.items.forEach((it) => addItem(it.name, it.category, Math.round(it.volume * volFactor * it.price * priceFactor * extraFactor)));
       }
 
       return { id: s.id, name: s.name, type: s.type, rev: streamRev, byCategory };
@@ -580,10 +613,13 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
 
   return (
     <div className="space-y-3">
-      {/* ── Growth Assumptions card ── */}
+      {/* ── Growth Logic card ── */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <p className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Growth Assumptions</p>
+          <div>
+            <p className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Growth Logic</p>
+            <p className="text-[10px] text-slate-400 mt-0.5">Rates compound monthly and scale revenue across the projection.</p>
+          </div>
           {/* Scenario selector */}
           <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
             {(["conservative", "base", "growth"] as GrowthScenario[]).map((sc) => (
@@ -645,13 +681,151 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
         <div className="flex items-center justify-between pt-2 border-t border-slate-100">
           <div>
             <span className="text-[10px] text-slate-400">Effective rate: </span>
-            <span className="text-[10px] font-bold text-slate-700" style={{ color: "#0e7490" }}>
+            <span className="text-[10px] font-bold" style={{ color: "#0e7490" }}>
               +{stream.monthlyGrowthPct.toFixed(2)}% / month
             </span>
           </div>
           <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${CONF_STYLE[GROWTH_PRESETS[stream.scenario]?.confidence ?? "medium"]}`}>
             {GROWTH_PRESETS[stream.scenario]?.confidence === "high" ? "High" : GROWTH_PRESETS[stream.scenario]?.confidence === "low" ? "Low" : "Medium"} confidence
           </span>
+        </div>
+
+        {/* ── Seasonality ── */}
+        <div className="border-t border-slate-100 pt-3 space-y-2.5">
+          <div className="flex items-center gap-1.5">
+            <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Seasonality</p>
+            <div className="group relative inline-block">
+              <Info className="w-3 h-3 text-slate-300 cursor-help" />
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-52 text-[10px] text-slate-600 bg-white border border-slate-100 rounded-lg px-2.5 py-2 shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none z-20 leading-relaxed">
+                Monthly multipliers adjust revenue to reflect predictable seasonal peaks and valleys without changing your annual total.
+              </div>
+            </div>
+          </div>
+
+          {/* Preset buttons */}
+          <div className="flex flex-wrap gap-1.5">
+            {(Object.keys(SEASONALITY_PRESETS) as SeasonalityPreset[]).map((preset) => (
+              <button key={preset}
+                onClick={() => {
+                  const p = SEASONALITY_PRESETS[preset];
+                  onUpdate({ ...stream, seasonalityPreset: preset, seasonalityMultipliers: [...p.months] });
+                }}
+                className={`text-[10px] font-semibold px-2.5 py-1 rounded-full border transition-all ${
+                  (stream.seasonalityPreset ?? "none") === preset
+                    ? "bg-cyan-600 text-white border-cyan-600 shadow-sm"
+                    : "bg-white text-slate-500 border-slate-200 hover:border-cyan-300 hover:text-cyan-700"
+                }`}>
+                {SEASONALITY_PRESETS[preset].label}
+              </button>
+            ))}
+          </div>
+
+          {/* Description */}
+          {(stream.seasonalityPreset ?? "none") !== "none" && (
+            <p className="text-[10px] text-slate-400 italic">
+              {SEASONALITY_PRESETS[stream.seasonalityPreset ?? "none"]?.desc}
+            </p>
+          )}
+
+          {/* Mini bar chart — 12 months */}
+          {(stream.seasonalityPreset ?? "none") !== "none" && (
+            <div>
+              <div className="flex items-end gap-px" style={{ height: 36 }}>
+                {stream.seasonalityMultipliers.map((v, mi) => {
+                  const maxV = Math.max(...stream.seasonalityMultipliers, 1);
+                  const barH = Math.max((v / maxV) * 100, 6);
+                  const above = v >= 1;
+                  return (
+                    <div key={mi} className="flex-1 flex flex-col justify-end" style={{ height: 36 }} title={`${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][mi]}: ${v.toFixed(2)}×`}>
+                      <div className="w-full rounded-t-sm transition-all"
+                        style={{ height: `${barH}%`, background: above ? "#0e7490" : "#cbd5e1", opacity: 0.85 }} />
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex gap-px mt-0.5">
+                {["J","F","M","A","M","J","J","A","S","O","N","D"].map((m, mi) => (
+                  <div key={mi} className="flex-1 text-center">
+                    <span className="text-[7px] text-slate-300 font-medium">{m}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Custom: per-month sliders */}
+          {(stream.seasonalityPreset ?? "none") === "custom" && (
+            <div className="space-y-1.5 pt-1">
+              {stream.seasonalityMultipliers.map((v, mi) => (
+                <div key={mi} className="flex items-center gap-2">
+                  <span className="text-[9px] text-slate-400 w-6 text-right shrink-0">
+                    {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][mi]}
+                  </span>
+                  <input type="range" min={0.1} max={3} step={0.05} value={v}
+                    onChange={(e) => {
+                      const mults = [...stream.seasonalityMultipliers];
+                      mults[mi] = parseFloat(e.target.value);
+                      onUpdate({ ...stream, seasonalityMultipliers: mults });
+                    }}
+                    className="flex-1 h-1 appearance-none cursor-pointer rounded-full"
+                    style={{ accentColor: "#0e7490" }} />
+                  <span className="text-[9px] font-bold text-slate-600 w-8 text-right shrink-0">{v.toFixed(2)}×</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── Expansion Event ── */}
+        <div className="border-t border-slate-100 pt-3 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Expansion Event</p>
+              <div className="group relative inline-block">
+                <Info className="w-3 h-3 text-slate-300 cursor-help" />
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-52 text-[10px] text-slate-600 bg-white border border-slate-100 rounded-lg px-2.5 py-2 shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none z-20 leading-relaxed">
+                  Model a future capacity increase, new location, or product launch that boosts revenue from a specific month.
+                </div>
+              </div>
+            </div>
+            {/* Toggle */}
+            <button
+              onClick={() => onUpdate({ ...stream, expansionMonth: stream.expansionMonth !== null ? null : 12 })}
+              className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${stream.expansionMonth !== null ? "bg-cyan-600" : "bg-slate-200"}`}>
+              <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${stream.expansionMonth !== null ? "translate-x-4" : "translate-x-0.5"}`} />
+            </button>
+          </div>
+
+          {stream.expansionMonth !== null && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-slate-500 block mb-1">Starting month</label>
+                  <div className="flex items-center gap-1.5">
+                    <input type="number" min={1} max={120}
+                      value={(stream.expansionMonth ?? 12) + 1}
+                      onChange={(e) => onUpdate({ ...stream, expansionMonth: Math.max(0, Number(e.target.value) - 1) })}
+                      className="w-16 text-xs font-bold text-slate-800 border border-slate-200 rounded-lg px-2 py-1.5 text-center focus:outline-none focus:border-cyan-400" />
+                    <span className="text-[10px] text-slate-400">of projection</span>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-[10px] text-slate-500 block mb-1">Revenue boost</label>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[10px] text-slate-400">+</span>
+                    <input type="number" min={5} max={900} step={5}
+                      value={Math.round(((stream.expansionMultiplier ?? 1.5) - 1) * 100)}
+                      onChange={(e) => onUpdate({ ...stream, expansionMultiplier: 1 + Math.max(0.05, Number(e.target.value)) / 100 })}
+                      className="w-16 text-xs font-bold text-slate-800 border border-slate-200 rounded-lg px-2 py-1.5 text-center focus:outline-none focus:border-cyan-400" />
+                    <span className="text-[10px] text-slate-400">%</span>
+                  </div>
+                </div>
+              </div>
+              <p className="text-[10px] text-emerald-600">
+                Revenue jumps to <span className="font-bold">{Math.round((stream.expansionMultiplier ?? 1.5) * 100)}%</span> of its trend from month {(stream.expansionMonth ?? 12) + 1} onward.
+              </p>
+            </>
+          )}
         </div>
       </div>
 
@@ -1082,6 +1256,7 @@ function ForecastView({
   startYear,
   startMonth,
   currency,
+  onEditDrivers,
 }: {
   streams:          RevenueStream[];
   onUpdateStream:   (s: RevenueStream) => void;
@@ -1090,12 +1265,12 @@ function ForecastView({
   startYear:        number;
   startMonth:       number;
   currency:         string | null;
+  onEditDrivers?:   () => void;
 }) {
   const fmt = makeFmt(currency);
-  const [view,            setView]            = useState<"annual" | "monthly" | "sensitivity">("annual");
-  const [selectedYear,    setSelectedYear]    = useState(1);
-  const [showAssumptions, setShowAssumptions] = useState(false);
-  const [expandedStreams,  setExpandedStreams]  = useState<Set<string>>(new Set());
+  const [view,           setView]           = useState<"annual" | "monthly" | "sensitivity">("annual");
+  const [selectedYear,   setSelectedYear]   = useState(1);
+  const [expandedStreams, setExpandedStreams] = useState<Set<string>>(new Set());
 
   const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
@@ -1381,104 +1556,68 @@ function ForecastView({
         );
       })()}
 
-      {/* ── Assumptions ── */}
-      <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
-        <button
-          onClick={() => setShowAssumptions((v) => !v)}
-          className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-slate-50 transition-colors">
-          <div className="flex items-center gap-3 flex-wrap min-w-0">
-            <TrendingUp className="w-4 h-4 text-slate-400 shrink-0" />
-            <span className="text-xs font-bold text-slate-700 shrink-0">Assumptions</span>
-            {!showAssumptions && streams.length > 0 && (
-              <div className="flex items-center gap-3 flex-wrap">
-                <span className="text-[10px] text-slate-400">
-                  Vol: <span className="font-semibold text-slate-600">+{streams[0].volumeGrowthPct}%/mo</span>
-                </span>
-                <span className="text-[10px] text-slate-400">
-                  Price: <span className="font-semibold text-slate-600">+{streams[0].annualPriceGrowthPct}%/yr</span>
-                </span>
-                <span className="text-[10px] text-slate-400">
-                  Start: <span className="font-semibold text-slate-600">{MONTH_NAMES[startMonth]} {startYear}</span>
-                </span>
-                <span className="text-[10px] text-slate-400">
-                  Method: <span className="font-semibold text-slate-600">User Input</span>
-                </span>
-              </div>
+      {/* ── Assumptions Strip (read-only summary) ── */}
+      {(() => {
+        const allSame = streams.length > 0 && streams.every(
+          (s) => (s.seasonalityPreset ?? "none") === (streams[0].seasonalityPreset ?? "none")
+        );
+        const seasonLabel = streams.length === 0
+          ? "None"
+          : allSame
+            ? (SEASONALITY_PRESETS[streams[0].seasonalityPreset ?? "none"]?.label ?? "None")
+            : "Mixed";
+        const anyExpansion = streams.some((s) => s.expansionMonth !== null);
+        // Average vol/price across streams (or first stream if only one)
+        const avgVol   = streams.length ? streams.reduce((a, s) => a + (s.volumeGrowthPct ?? 0), 0) / streams.length : 0;
+        const avgPrice = streams.length ? streams.reduce((a, s) => a + (s.annualPriceGrowthPct ?? 0), 0) / streams.length : 0;
+        return (
+          <div className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                dominantScenario === "conservative"
+                  ? "bg-amber-100 text-amber-700"
+                  : dominantScenario === "growth"
+                    ? "bg-emerald-100 text-emerald-700"
+                    : "bg-cyan-100 text-cyan-700"
+              }`}>{GROWTH_PRESETS[dominantScenario].label} Case</span>
+
+              <span className="text-[10px] text-slate-400 hidden sm:inline">|</span>
+              <span className="text-[10px] text-slate-500">
+                Vol <span className="font-semibold text-slate-700">+{avgVol.toFixed(2)}%/mo</span>
+              </span>
+              <span className="text-[10px] text-slate-500">
+                Price <span className="font-semibold text-slate-700">+{avgPrice.toFixed(1)}%/yr</span>
+              </span>
+              <span className="text-[10px] text-slate-500">
+                Seasonality <span className="font-semibold text-slate-700">{seasonLabel}</span>
+              </span>
+              {anyExpansion && (
+                <span className="text-[10px] text-emerald-600 font-semibold">+ Expansion</span>
+              )}
+              <span className="text-[10px] text-slate-400 hidden sm:inline">|</span>
+              <span className="text-[10px] text-slate-500">
+                Start <span className="font-semibold text-slate-700">{MONTH_NAMES[startMonth]} {startYear}</span>
+              </span>
+              {cagr !== null && (
+                <>
+                  <span className="text-[10px] text-slate-400 hidden sm:inline">|</span>
+                  <span className="text-[10px] text-slate-500">
+                    CAGR <span className={`font-semibold ${cagr >= 0 ? "text-emerald-600" : "text-red-500"}`}>
+                      {cagr >= 0 ? "+" : ""}{cagr.toFixed(1)}%
+                    </span>
+                  </span>
+                </>
+              )}
+            </div>
+            {onEditDrivers && (
+              <button onClick={onEditDrivers}
+                className="flex items-center gap-1.5 text-xs font-semibold text-cyan-700 bg-white border border-cyan-200 rounded-lg px-3 py-1.5 hover:bg-cyan-50 transition-colors shrink-0">
+                <Edit3 className="w-3 h-3" /> Edit Drivers
+              </button>
             )}
           </div>
-          {showAssumptions ? <ChevronUp className="w-4 h-4 text-slate-400 shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />}
-        </button>
-        {showAssumptions && (
-          <div className="px-5 pb-5 space-y-4 border-t border-slate-100">
-            {streams.map((s, si) => {
-              const Meta = STREAM_META[s.type];
-              const Icon = Meta.icon;
-              const mrr  = streamMRR(s);
-              return (
-                <div key={s.id} className="pt-4 first:pt-4">
-                  <div className="flex items-center gap-2 mb-3">
-                    <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: Meta.bg }}>
-                      <Icon className="w-3 h-3" style={{ color: Meta.color }} />
-                    </div>
-                    <span className="text-xs font-semibold text-slate-800">{s.name}</span>
-                    {mrr > 0 && <span className="text-xs text-emerald-600 font-medium ml-auto">{fmt(mrr)}/mo baseline</span>}
-                  </div>
-
-                  {s.type === "subscription" ? (
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-[10px] text-slate-400 block mb-1">New subscribers / month</label>
-                        <input type="number" min={0} value={s.subNewPerMonth}
-                          onChange={(e) => onUpdateStream({ ...s, subNewPerMonth: Number(e.target.value) })}
-                          className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white focus:border-cyan-400 focus:outline-none" />
-                      </div>
-                      <div>
-                        <label className="text-[10px] text-slate-400 block mb-1">Monthly churn %</label>
-                        <input type="number" min={0} max={100} step={0.1} value={s.subChurnPct}
-                          onChange={(e) => onUpdateStream({ ...s, subChurnPct: Number(e.target.value) })}
-                          className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white focus:border-cyan-400 focus:outline-none" />
-                      </div>
-                      {(s.subNewPerMonth > 0 || s.subChurnPct > 0) && (
-                        <p className="col-span-2 text-[10px] text-emerald-600">
-                          Steady-state: <span className="font-bold">
-                            {s.subChurnPct > 0 ? Math.round(s.subNewPerMonth / (s.subChurnPct / 100)).toLocaleString() : "∞"} subscribers
-                          </span>
-                        </p>
-                      )}
-                    </div>
-                  ) : s.type === "rental" ? (
-                    <div className="flex items-center gap-3">
-                      <span className="text-[10px] text-slate-500 flex-shrink-0">Occupancy %</span>
-                      <input type="range" min={0} max={100} step={1} value={s.rentalOccupancyPct}
-                        onChange={(e) => onUpdateStream({ ...s, rentalOccupancyPct: Number(e.target.value) })}
-                        className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer" style={{ accentColor: "#b45309" }} />
-                      <span className="text-xs font-bold w-10 text-right text-amber-700 flex-shrink-0">{s.rentalOccupancyPct}%</span>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-3">
-                        <span className="text-[10px] text-slate-500 w-28 shrink-0">Volume growth</span>
-                        <input type="range" min={0} max={20} step={0.5} value={s.volumeGrowthPct}
-                          onChange={(e) => { const v = parseFloat(e.target.value) || 0; onUpdateStream({ ...s, volumeGrowthPct: v, monthlyGrowthPct: effectiveMonthlyGrowth(v, s.annualPriceGrowthPct ?? 0) }); }}
-                          className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer" style={{ accentColor: "#0e7490" }} />
-                        <span className="text-xs font-bold w-14 text-right shrink-0 text-cyan-700">+{s.volumeGrowthPct}%/mo</span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className="text-[10px] text-slate-500 w-28 shrink-0">Annual price rise</span>
-                        <input type="range" min={0} max={30} step={0.5} value={s.annualPriceGrowthPct}
-                          onChange={(e) => { const v = parseFloat(e.target.value) || 0; onUpdateStream({ ...s, annualPriceGrowthPct: v, monthlyGrowthPct: effectiveMonthlyGrowth(s.volumeGrowthPct ?? 0, v) }); }}
-                          className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer" style={{ accentColor: "#7c3aed" }} />
-                        <span className="text-xs font-bold w-14 text-right shrink-0 text-violet-700">+{s.annualPriceGrowthPct}%/yr</span>
-                      </div>
-                    </div>
-                  )}
-                  {si < streams.length - 1 && <div className="mt-4 border-t border-slate-100" />}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+        );
+      })()}
 
       {/* ══ ANNUAL VIEW — multi-year P&L style ══ */}
       {view === "annual" && (
@@ -2054,6 +2193,10 @@ function ApplyPageInner() {
         subNewPerMonth:      Number(s.sub_new_per_month),
         subChurnPct:         Number(s.sub_churn_pct),
         rentalOccupancyPct:  Number(s.rental_occupancy_pct),
+        seasonalityPreset:      "none",
+        seasonalityMultipliers: Array(12).fill(1) as number[],
+        expansionMonth:         null,
+        expansionMultiplier:    1.5,
         driverDone:          s.driver_done,
         items: (state.itemsByStream[s.id] ?? []).map((it) => ({
           id:       it.id,
@@ -3532,7 +3675,7 @@ function ApplyPageInner() {
                                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
                                 </svg> Saving…</>
-                              : <><BarChart3 className="w-4 h-4" /> Build Forecast</>
+                              : <>Generate Revenue Projection <ArrowRight className="w-4 h-4" /></>
                             }
                           </button>
                         )}
@@ -3676,6 +3819,7 @@ function ApplyPageInner() {
                   startYear={forecastStartYear}
                   startMonth={forecastStartMonth}
                   currency={currency}
+                  onEditDrivers={() => go(2)}
                 />
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
