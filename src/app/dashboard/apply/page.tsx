@@ -1940,14 +1940,14 @@ function ApplyPageInner() {
                         value={appName === "New Application" ? "" : appName}
                         onChange={(e) => setAppName(e.target.value.trim() ? e.target.value : "New Application")}
                         onKeyDown={(e) => { if (e.key === "Enter" && appName !== "New Application") setNameDone(true); }}
-                        placeholder="e.g. Hilty Limited — Main Operations"
+                        placeholder="e.g. Schneider GmbH — Main Operations"
                         className="w-full text-base font-medium text-slate-800 border border-slate-200 rounded-xl px-4 py-3.5 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all placeholder:text-slate-300 placeholder:font-normal"
                       />
                       <p className="text-[11px] text-slate-400 leading-relaxed">
                         Try:{" "}
-                        <span className="italic text-slate-500">"Bunju Paint Retail Division"</span>
+                        <span className="italic text-slate-500">"Bauer & Sons — Munich Retail Division"</span>
                         {" "}or{" "}
-                        <span className="italic text-slate-500">"Cooking Oil Expansion 2026"</span>
+                        <span className="italic text-slate-500">"Leclerc Logistics — Lyon Expansion 2026"</span>
                       </p>
                     </div>
 
