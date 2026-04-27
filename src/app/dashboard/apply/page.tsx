@@ -882,11 +882,11 @@ function RevenueMix({ streams, months }: { streams: RevenueStream[]; months: Pro
 /* ═══════════════════════════════════════ ForecastView ══ */
 function ForecastView({ streams }: { streams: RevenueStream[] }) {
   const now = new Date();
-  const [startYear,     setStartYear]     = useState(now.getFullYear());
-  const [startMonth,    setStartMonth]    = useState(now.getMonth());
-  const [horizonYears,  setHorizonYears]  = useState(3);
-  const [expandedYear,  setExpandedYear]  = useState<number | null>(now.getFullYear());
-  const [expandedStream, setExpandedStream] = useState<string | null>(null);
+  const [startYear,    setStartYear]    = useState(now.getFullYear());
+  const [startMonth,   setStartMonth]   = useState(now.getMonth());
+  const [horizonYears, setHorizonYears] = useState(3);
+  const [view,         setView]         = useState<"annual" | "monthly">("annual");
+  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
 
   const startDate  = new Date(startYear, startMonth, 1);
   const totalMths  = horizonYears * 12;
@@ -896,212 +896,358 @@ function ForecastView({ streams }: { streams: RevenueStream[] }) {
   const totalMRR   = streams.reduce((a, s) => a + streamMRR(s), 0);
 
   const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const QTR = ["Q1","Q1","Q1","Q2","Q2","Q2","Q3","Q3","Q3","Q4","Q4","Q4"];
+
+  // ── Cell helpers ──────────────────────────────────────────────────────────
+  const TH = ({ children, cls = "" }: { children: React.ReactNode; cls?: string }) => (
+    <th className={`px-3 py-2 text-right text-[11px] font-bold whitespace-nowrap ${cls}`}>{children}</th>
+  );
+  const TD = ({ children, cls = "", style }: { children: React.ReactNode; cls?: string; style?: React.CSSProperties }) => (
+    <td className={`px-3 py-2 text-right text-[11px] tabular-nums whitespace-nowrap ${cls}`} style={style}>{children}</td>
+  );
+  const LabelCell = ({ children, indent = false }: { children: React.ReactNode; indent?: boolean }) => (
+    <td className={`px-3 py-2 text-[11px] font-medium whitespace-nowrap sticky left-0 bg-inherit ${indent ? "pl-7 text-slate-500 font-normal" : "text-slate-800 font-semibold"}`}>
+      {children}
+    </td>
+  );
+
+  // ── Stream total for a year ───────────────────────────────────────────────
+  const streamYearTotal = (sid: string, yr: ReturnType<typeof groupByYear>[0]) =>
+    yr.months.reduce((a, m) => a + (m.byStream.find((b) => b.id === sid)?.rev ?? 0), 0);
+
+  // ── Stream total for a month ──────────────────────────────────────────────
+  const streamMonthRev = (sid: string, mRow: ReturnType<typeof projectRevenue>[0]) =>
+    mRow.byStream.find((b) => b.id === sid)?.rev ?? 0;
+
+  // ── Quarter totals for monthly view ──────────────────────────────────────
+  const selectedYearData = years.find((y) => y.year === selectedYear) ?? years[0];
+
+  // Group months into quarters
+  const quarters = selectedYearData
+    ? [0,1,2,3].map((qi) => ({
+        label: `Q${qi + 1}`,
+        months: selectedYearData.months.filter((_, i) => Math.floor(i / 3) === qi),
+      })).filter((q) => q.months.length > 0)
+    : [];
 
   return (
-    <div className="space-y-5">
-      {/* Config row */}
-      <div className="bg-white rounded-2xl border border-slate-100 p-4 flex flex-wrap gap-4 items-center">
-        <div className="flex items-center gap-2">
-          <Calendar className="w-4 h-4 text-slate-400" />
-          <span className="text-xs font-semibold text-slate-600">Start:</span>
-          <select value={startMonth} onChange={(e) => setStartMonth(Number(e.target.value))}
-            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:border-cyan-500 focus:outline-none bg-white">
-            {MONTH_NAMES.map((m, i) => <option key={i} value={i}>{m}</option>)}
-          </select>
-          <select value={startYear} onChange={(e) => setStartYear(Number(e.target.value))}
-            className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:border-cyan-500 focus:outline-none bg-white">
-            {Array.from({ length: 10 }, (_, i) => now.getFullYear() + i).map((y) => (
-              <option key={y} value={y}>{y}</option>
+    <div className="space-y-4">
+
+      {/* ── Config bar ── */}
+      <div className="bg-white rounded-2xl border border-slate-100 px-4 py-3 flex flex-wrap gap-3 items-center justify-between">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-1.5">
+            <Calendar className="w-3.5 h-3.5 text-slate-400" />
+            <span className="text-xs font-semibold text-slate-500">Start</span>
+            <select value={startMonth} onChange={(e) => setStartMonth(Number(e.target.value))}
+              className="text-xs border border-slate-200 rounded-md px-2 py-1 text-slate-700 focus:border-cyan-500 focus:outline-none bg-white">
+              {MONTH_NAMES.map((m, i) => <option key={i} value={i}>{m}</option>)}
+            </select>
+            <select value={startYear} onChange={(e) => setStartYear(Number(e.target.value))}
+              className="text-xs border border-slate-200 rounded-md px-2 py-1 text-slate-700 focus:border-cyan-500 focus:outline-none bg-white">
+              {Array.from({ length: 10 }, (_, i) => now.getFullYear() + i).map((y) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-xs font-semibold text-slate-500 mr-0.5">Horizon</span>
+            {HORIZONS.map(({ label, years: y }) => (
+              <button key={y} onClick={() => setHorizonYears(y)}
+                className={`text-xs font-semibold px-2 py-1 rounded-md border transition-all ${
+                  horizonYears === y ? "text-white border-transparent" : "border-slate-200 text-slate-500 hover:border-slate-300"
+                }`} style={horizonYears === y ? { background: "#0e7490" } : {}}>
+                {label}
+              </button>
             ))}
-          </select>
+          </div>
         </div>
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs font-semibold text-slate-600">Horizon:</span>
-          {HORIZONS.map(({ label, years: y }) => (
-            <button key={y} onClick={() => setHorizonYears(y)}
-              className={`text-xs font-semibold px-2.5 py-1.5 rounded-lg border transition-all ${
-                horizonYears === y ? "text-white border-cyan-600" : "border-slate-200 text-slate-500 hover:border-slate-300"
-              }`}
-              style={horizonYears === y ? { background: "#0e7490" } : {}}>
-              {label}
-            </button>
+        {/* View toggle */}
+        <div className="flex bg-slate-100 rounded-lg p-0.5">
+          {(["annual", "monthly"] as const).map((v) => (
+            <button key={v} onClick={() => setView(v)}
+              className={`text-xs font-semibold px-3 py-1.5 rounded-md transition-all capitalize ${
+                view === v ? "bg-white text-slate-800 shadow-sm" : "text-slate-500"
+              }`}>{v}</button>
           ))}
         </div>
       </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      {/* ── KPI summary row ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {[
-          { label: "Monthly baseline",  val: fmt(totalMRR),                         sub: "Current MRR estimate"          },
-          { label: "Total projection",  val: fmt(grandTotal),                        sub: `Over ${horizonYears} yr${horizonYears > 1 ? "s" : ""}` },
-          { label: "Year 1 revenue",    val: fmt(years[0]?.total ?? 0),              sub: "First 12 months"               },
-          { label: `Year ${horizonYears}`, val: fmt(years[years.length - 1]?.total ?? 0), sub: "Final year"              },
+          { label: "Monthly baseline",        val: fmt(totalMRR),                              sub: "MRR estimate" },
+          { label: `${horizonYears}-yr total`, val: fmt(grandTotal),                            sub: "Cumulative revenue" },
+          { label: "Year 1 revenue",           val: fmt(years[0]?.total ?? 0),                  sub: "First 12 months" },
+          { label: `Year ${horizonYears}`,     val: fmt(years[years.length - 1]?.total ?? 0),   sub: "Final year" },
         ].map(({ label, val, sub }) => (
-          <div key={label} className="bg-white rounded-2xl border border-slate-100 p-4">
-            <p className="text-xs text-slate-400 mb-1">{label}</p>
-            <p className="text-base font-bold text-slate-900">{val}</p>
-            <p className="text-xs text-slate-400 mt-0.5">{sub}</p>
+          <div key={label} className="bg-white rounded-xl border border-slate-100 px-4 py-3">
+            <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">{label}</p>
+            <p className="text-sm font-bold text-slate-900">{val}</p>
+            <p className="text-[10px] text-slate-400 mt-0.5">{sub}</p>
           </div>
         ))}
       </div>
 
-      {/* Revenue Mix */}
-      <RevenueMix streams={streams} months={projection} />
-
-      {/* Annual bar chart */}
-      <div className="bg-white rounded-2xl border border-slate-100 p-5">
-        <p className="text-xs font-semibold text-slate-500 mb-4 uppercase tracking-wider">Annual Revenue Overview</p>
-        <div className="flex items-end gap-2 h-32">
-          {years.map((y, i) => {
-            const max = Math.max(...years.map((yy) => yy.total), 1);
-            const pct = (y.total / max) * 100;
-            const prev = years[i - 1];
-            const growth = prev ? ((y.total - prev.total) / prev.total) * 100 : null;
-            return (
-              <div key={y.year} className="flex-1 flex flex-col items-center gap-1">
-                {growth !== null && (
-                  <span className="font-semibold" style={{ color: growth >= 0 ? "#059669" : "#ef4444", fontSize: 9 }}>
-                    {growth >= 0 ? "+" : ""}{growth.toFixed(0)}%
-                  </span>
-                )}
-                <motion.div className="w-full rounded-t-lg cursor-pointer"
-                  style={{ background: "linear-gradient(180deg,#0891b2,#0e7490)" }}
-                  initial={{ height: 0 }} animate={{ height: `${pct}%` }}
-                  transition={{ duration: 0.6, delay: i * 0.06, ease: EASE }}
-                  onClick={() => setExpandedYear(expandedYear === y.year ? null : y.year)} />
-                <div className="text-center">
-                  <p className="font-bold text-slate-700" style={{ fontSize: 10 }}>{y.year}</p>
-                  <p className="text-slate-400" style={{ fontSize: 9 }}>{fmt(y.total)}</p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Year-by-year breakdown */}
-      <div className="space-y-2">
-        {years.map((y, yi) => {
-          const prev   = years[yi - 1];
-          const growth = prev ? ((y.total - prev.total) / prev.total) * 100 : null;
-          const open   = expandedYear === y.year;
-          return (
-            <div key={y.year} className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
-              <button className="w-full flex items-center gap-3 px-5 py-4 hover:bg-slate-50 transition-colors text-left"
-                onClick={() => setExpandedYear(open ? null : y.year)}>
-                <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 text-white text-xs font-bold"
-                  style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
-                  Y{yi + 1}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-slate-800">
-                    {y.year} — {y.months[0].yearMonth} → {y.months[y.months.length - 1].yearMonth}
-                  </p>
-                  <p className="text-xs text-slate-400">{y.months.length} months · {streams.length} stream{streams.length !== 1 ? "s" : ""}</p>
-                </div>
-                <div className="text-right mr-2 flex-shrink-0">
-                  <p className="text-base font-bold" style={{ color: "#0e7490" }}>{fmt(y.total)}</p>
-                  {growth !== null && (
-                    <p className="text-xs font-semibold" style={{ color: growth >= 0 ? "#059669" : "#ef4444" }}>
-                      {growth >= 0 ? "+" : ""}{growth.toFixed(1)}% vs prev year
-                    </p>
-                  )}
-                </div>
-                {open ? <ChevronUp className="w-4 h-4 text-slate-400 flex-shrink-0" /> : <ChevronDown className="w-4 h-4 text-slate-400 flex-shrink-0" />}
-              </button>
-
-              <AnimatePresence>
-                {open && (
-                  <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }}
-                    exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.3, ease: EASE }} className="overflow-hidden">
-                    <div className="border-t border-slate-100">
-
-                      {/* Monthly table */}
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-xs">
-                          <thead>
-                            <tr className="bg-slate-50">
-                              <th className="px-4 py-2.5 text-left font-semibold text-slate-500">Month</th>
-                              {streams.map((s) => (
-                                <th key={s.id} className="px-3 py-2.5 text-right font-semibold text-slate-500">{s.name}</th>
-                              ))}
-                              <th className="px-4 py-2.5 text-right font-semibold" style={{ color: "#0e7490" }}>Total</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {y.months.map((m) => (
-                              <tr key={m.yearMonth} className="border-t border-slate-50 hover:bg-slate-50 transition-colors">
-                                <td className="px-4 py-2 font-medium text-slate-600">{m.yearMonth}</td>
-                                {m.byStream.map((bs) => (
-                                  <td key={bs.id} className="px-3 py-2 text-right text-slate-600">{fmt(bs.rev)}</td>
-                                ))}
-                                <td className="px-4 py-2 text-right font-bold" style={{ color: "#0e7490" }}>{fmt(m.total)}</td>
-                              </tr>
-                            ))}
-                            <tr className="border-t-2 border-slate-200 bg-slate-50 font-bold">
-                              <td className="px-4 py-3 text-slate-700">Year Total</td>
-                              {streams.map((s) => {
-                                const tot = y.months.reduce((a, m) => a + (m.byStream.find((b) => b.id === s.id)?.rev ?? 0), 0);
-                                return <td key={s.id} className="px-3 py-3 text-right text-slate-700">{fmt(tot)}</td>;
-                              })}
-                              <td className="px-4 py-3 text-right" style={{ color: "#0e7490" }}>{fmt(y.total)}</td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-
-                      {/* Per-stream category breakdown */}
-                      <div className="p-4 border-t border-slate-100 space-y-2">
-                        <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-3">Category Breakdown</p>
-                        {streams.map((s, si) => {
-                          const sOpen  = expandedStream === `${y.year}-${s.id}`;
-                          const sTotal = y.months.reduce((a, m) => a + (m.byStream.find((b) => b.id === s.id)?.rev ?? 0), 0);
-                          const cats   = Object.entries(
-                            y.months.reduce((acc, m) => {
-                              const bs = m.byStream.find((b) => b.id === s.id);
-                              if (bs) Object.entries(bs.byCategory).forEach(([cat, val]) => {
-                                acc[cat] = (acc[cat] ?? 0) + val.rev;
-                              });
-                              return acc;
-                            }, {} as Record<string, number>)
-                          );
-                          const streamColor = MIX_COLORS[si % MIX_COLORS.length];
-                          return (
-                            <div key={s.id} className="rounded-xl border border-slate-100 overflow-hidden">
-                              <button className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 transition-colors text-left"
-                                onClick={() => setExpandedStream(sOpen ? null : `${y.year}-${s.id}`)}>
-                                <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: streamColor }} />
-                                <span className="text-xs font-semibold text-slate-700 flex-1">{s.name}</span>
-                                <span className="text-xs font-bold" style={{ color: streamColor }}>{fmt(sTotal)}</span>
-                                <span className="text-xs text-slate-300 ml-1">
-                                  {sTotal > 0 && grandTotal > 0 ? `${Math.round((sTotal / (grandTotal / horizonYears)) * 100)}%` : ""}
-                                </span>
-                                {sOpen ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400" />}
-                              </button>
-                              {sOpen && (
-                                <div className="border-t border-slate-50 px-4 pb-3 pt-1 space-y-1.5">
-                                  {cats.map(([cat, rev]) => (
-                                    <div key={cat} className="flex items-center justify-between">
-                                      <span className="text-xs text-slate-500">{cat}</span>
-                                      <span className="text-xs font-semibold text-slate-700">{fmt(rev)}</span>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
+      {/* ══ ANNUAL VIEW — multi-year P&L style ══ */}
+      {view === "annual" && (
+        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+          <div className="px-4 pt-4 pb-2 border-b border-slate-100 flex items-center justify-between">
+            <div>
+              <p className="text-xs font-bold text-slate-800 uppercase tracking-wider">Revenue Statement</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">Annual projection · {streams.length} stream{streams.length !== 1 ? "s" : ""}</p>
             </div>
-          );
-        })}
-      </div>
+            <span className="text-[10px] text-slate-400 font-medium">Amounts in {fmt(1).replace("1", "").trim() || "$"}</span>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse">
+              {/* Header */}
+              <thead>
+                <tr style={{ background: "#042f3d" }}>
+                  <th className="px-3 py-3 text-left text-[11px] font-bold text-white sticky left-0 min-w-[180px]" style={{ background: "#042f3d" }}>
+                    Revenue Stream
+                  </th>
+                  {years.map((y, i) => (
+                    <TH key={y.year} cls="text-white">
+                      FY {y.year}{horizonYears > 1 ? <span className="block text-[9px] font-normal opacity-60">Year {i + 1}</span> : null}
+                    </TH>
+                  ))}
+                  <TH cls="text-cyan-300 border-l border-white/10">Grand Total</TH>
+                  {years.length > 1 && <TH cls="text-slate-300">CAGR</TH>}
+                </tr>
+              </thead>
 
-      {/* Confidence note */}
+              <tbody>
+                {/* Section header */}
+                <tr style={{ background: "#f0f9ff" }}>
+                  <td colSpan={years.length + 3} className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-cyan-700">
+                    Revenue
+                  </td>
+                </tr>
+
+                {/* One row per stream */}
+                {streams.map((s, si) => {
+                  const streamColor = MIX_COLORS[si % MIX_COLORS.length];
+                  const yearTotals  = years.map((y) => streamYearTotal(s.id, y));
+                  const streamGrand = yearTotals.reduce((a, v) => a + v, 0);
+                  const cagr = years.length > 1 && yearTotals[0] > 0
+                    ? ((Math.pow(yearTotals[yearTotals.length - 1] / yearTotals[0], 1 / (years.length - 1)) - 1) * 100)
+                    : null;
+                  return (
+                    <tr key={s.id} className={si % 2 === 0 ? "bg-white" : "bg-slate-50/50"}>
+                      <td className="px-3 py-2.5 text-[11px] sticky left-0 bg-inherit">
+                        <div className="flex items-center gap-2">
+                          <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: streamColor }} />
+                          <span className="font-medium text-slate-800">{s.name}</span>
+                        </div>
+                      </td>
+                      {yearTotals.map((v, i) => <TD key={i}>{fmt(v)}</TD>)}
+                      <TD cls="font-semibold border-l border-slate-100">{fmt(streamGrand)}</TD>
+                      {years.length > 1 && (
+                        <TD cls={cagr !== null ? (cagr >= 0 ? "text-emerald-600" : "text-red-500") : ""}>
+                          {cagr !== null ? `${cagr >= 0 ? "+" : ""}${cagr.toFixed(1)}%` : "—"}
+                        </TD>
+                      )}
+                    </tr>
+                  );
+                })}
+
+                {/* Subtotal row */}
+                <tr className="border-t-2 border-slate-200" style={{ background: "#f0f9ff" }}>
+                  <td className="px-3 py-3 text-[11px] font-bold text-slate-900 sticky left-0" style={{ background: "#f0f9ff" }}>
+                    Total Revenue
+                  </td>
+                  {years.map((y, i) => (
+                    <TD key={i} cls="font-bold text-slate-900">{fmt(y.total)}</TD>
+                  ))}
+                  <TD cls="font-bold border-l border-slate-200" style={{ color: "#0e7490" }}>{fmt(grandTotal)}</TD>
+                  {years.length > 1 && (
+                    <TD cls={years[0]?.total > 0 ? (years[years.length-1]?.total >= years[0]?.total ? "text-emerald-600 font-semibold" : "text-red-500 font-semibold") : ""}>
+                      {years.length > 1 && years[0]?.total > 0
+                        ? `${((Math.pow(years[years.length-1].total / years[0].total, 1/(years.length-1)) - 1)*100).toFixed(1)}%`
+                        : "—"}
+                    </TD>
+                  )}
+                </tr>
+
+                {/* YoY growth row */}
+                {years.length > 1 && (
+                  <tr className="border-t border-slate-100 bg-white">
+                    <td className="px-3 py-2 text-[10px] text-slate-400 italic sticky left-0 bg-white">YoY Growth</td>
+                    {years.map((y, i) => {
+                      const prev = years[i - 1];
+                      const g = prev ? ((y.total - prev.total) / prev.total) * 100 : null;
+                      return (
+                        <TD key={i} cls={`text-[10px] italic ${g !== null ? (g >= 0 ? "text-emerald-600" : "text-red-500") : "text-slate-400"}`}>
+                          {g !== null ? `${g >= 0 ? "+" : ""}${g.toFixed(1)}%` : "—"}
+                        </TD>
+                      );
+                    })}
+                    <TD cls="border-l border-slate-100 text-[10px] text-slate-400">—</TD>
+                    {years.length > 1 && <TD cls="text-[10px] text-slate-400">—</TD>}
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ══ MONTHLY VIEW — P&L by month with quarterly subtotals ══ */}
+      {view === "monthly" && (
+        <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+          {/* Year selector tabs */}
+          <div className="flex items-center gap-0.5 px-4 pt-3 pb-0 border-b border-slate-100">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mr-2">Year</span>
+            {years.map((y) => (
+              <button key={y.year} onClick={() => setSelectedYear(y.year)}
+                className={`text-xs font-semibold px-3 py-1.5 rounded-t-lg border-x border-t transition-all ${
+                  selectedYear === y.year
+                    ? "bg-white text-slate-800 border-slate-200"
+                    : "text-slate-400 border-transparent hover:text-slate-600"
+                }`}>
+                FY {y.year}
+              </button>
+            ))}
+          </div>
+
+          {selectedYearData && (
+            <>
+              <div className="px-4 py-2 flex items-center justify-between bg-slate-50/50">
+                <p className="text-[10px] text-slate-400">
+                  Monthly breakdown · {selectedYearData.months.length} months · {streams.length} revenue stream{streams.length !== 1 ? "s" : ""}
+                </p>
+                <p className="text-[10px] font-semibold text-slate-600">Year total: <span style={{ color: "#0e7490" }}>{fmt(selectedYearData.total)}</span></p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="border-collapse" style={{ minWidth: "max-content", width: "100%" }}>
+                  <thead>
+                    {/* Quarter header row */}
+                    <tr style={{ background: "#0e7490" }}>
+                      <th className="px-3 py-2 text-left text-[10px] font-bold text-white sticky left-0 min-w-[180px]" style={{ background: "#0e7490" }}>
+                        Revenue Stream
+                      </th>
+                      {quarters.map((q) => (
+                        <th key={q.label} colSpan={q.months.length + 1}
+                          className="px-3 py-2 text-center text-[10px] font-bold text-cyan-200 border-l border-white/20">
+                          {q.label}
+                        </th>
+                      ))}
+                      <th className="px-3 py-2 text-right text-[10px] font-bold text-cyan-200 border-l border-white/20">
+                        FY {selectedYear}
+                      </th>
+                    </tr>
+                    {/* Month header row */}
+                    <tr style={{ background: "#042f3d" }}>
+                      <th className="px-3 py-2 text-left text-[10px] text-slate-400 sticky left-0" style={{ background: "#042f3d" }} />
+                      {quarters.map((q) => (
+                        <>
+                          {q.months.map((m) => {
+                            const d = new Date(m.yearMonth + "-01");
+                            return (
+                              <th key={m.yearMonth} className="px-3 py-1.5 text-right text-[10px] font-semibold text-slate-300 border-l border-white/10 whitespace-nowrap">
+                                {MONTH_NAMES[d.getMonth()]}
+                              </th>
+                            );
+                          })}
+                          <th key={`${q.label}-tot`} className="px-3 py-1.5 text-right text-[10px] font-bold text-cyan-400 border-l border-white/20">
+                            {q.label} Total
+                          </th>
+                        </>
+                      ))}
+                      <th className="px-3 py-1.5 text-right text-[10px] font-bold text-cyan-400 border-l border-white/20">Total</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {/* Section header */}
+                    <tr style={{ background: "#f0f9ff" }}>
+                      <td colSpan={99} className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-cyan-700">Revenue</td>
+                    </tr>
+
+                    {/* Stream rows */}
+                    {streams.map((s, si) => {
+                      const streamColor = MIX_COLORS[si % MIX_COLORS.length];
+                      const yearTotal   = streamYearTotal(s.id, selectedYearData);
+                      return (
+                        <tr key={s.id} className={si % 2 === 0 ? "bg-white" : "bg-slate-50/50"}>
+                          <td className="px-3 py-2 text-[11px] sticky left-0 bg-inherit">
+                            <div className="flex items-center gap-2">
+                              <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: streamColor }} />
+                              <span className="font-medium text-slate-800">{s.name}</span>
+                            </div>
+                          </td>
+                          {quarters.map((q) => (
+                            <>
+                              {q.months.map((m) => (
+                                <TD key={m.yearMonth} cls="border-l border-slate-50/80">
+                                  {fmt(streamMonthRev(s.id, m))}
+                                </TD>
+                              ))}
+                              <TD key={`${q.label}-tot`} cls="font-semibold border-l border-slate-200 bg-slate-50/80">
+                                {fmt(q.months.reduce((a, m) => a + streamMonthRev(s.id, m), 0))}
+                              </TD>
+                            </>
+                          ))}
+                          <TD cls="font-bold border-l border-slate-200">{fmt(yearTotal)}</TD>
+                        </tr>
+                      );
+                    })}
+
+                    {/* Total Revenue row */}
+                    <tr className="border-t-2 border-slate-300" style={{ background: "#f0f9ff" }}>
+                      <td className="px-3 py-3 text-[11px] font-bold text-slate-900 sticky left-0" style={{ background: "#f0f9ff" }}>
+                        Total Revenue
+                      </td>
+                      {quarters.map((q) => (
+                        <>
+                          {q.months.map((m) => (
+                            <TD key={m.yearMonth} cls="font-bold text-slate-900 border-l border-slate-100">
+                              {fmt(m.total)}
+                            </TD>
+                          ))}
+                          <TD key={`${q.label}-tot`} cls="font-bold border-l border-slate-200 bg-slate-100" style={{ color: "#0e7490" }}>
+                            {fmt(q.months.reduce((a, m) => a + m.total, 0))}
+                          </TD>
+                        </>
+                      ))}
+                      <TD cls="font-bold border-l border-slate-200 text-base" style={{ color: "#0e7490" }}>
+                        {fmt(selectedYearData.total)}
+                      </TD>
+                    </tr>
+
+                    {/* MoM growth row */}
+                    <tr className="border-t border-slate-100 bg-white">
+                      <td className="px-3 py-2 text-[10px] text-slate-400 italic sticky left-0 bg-white">MoM Growth</td>
+                      {quarters.map((q) => {
+                        const allMths = quarters.flatMap((qq) => qq.months);
+                        return (
+                          <>
+                            {q.months.map((m, mi) => {
+                              const globalIdx = allMths.findIndex((x) => x.yearMonth === m.yearMonth);
+                              const prev = allMths[globalIdx - 1];
+                              const g = prev ? ((m.total - prev.total) / Math.max(prev.total, 1)) * 100 : null;
+                              return (
+                                <TD key={m.yearMonth} cls={`text-[10px] italic border-l border-slate-50/80 ${g !== null ? (g >= 0 ? "text-emerald-600" : "text-red-500") : "text-slate-400"}`}>
+                                  {g !== null ? `${g >= 0 ? "+" : ""}${g.toFixed(1)}%` : "—"}
+                                </TD>
+                              );
+                            })}
+                            <TD key={`${q.label}-g`} cls="border-l border-slate-200 text-[10px] text-slate-400">—</TD>
+                          </>
+                        );
+                      })}
+                      <TD cls="border-l border-slate-200 text-[10px] text-slate-400">—</TD>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── Confidence note ── */}
       <div className="flex items-start gap-3 rounded-xl px-4 py-3 bg-amber-50 border border-amber-100">
         <Info className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
         <p className="text-xs text-amber-700">
@@ -1110,30 +1256,25 @@ function ForecastView({ streams }: { streams: RevenueStream[] }) {
         </p>
       </div>
 
-      {/* Feed into Financial Statements CTA */}
-      <div className="rounded-2xl p-6 text-white" style={{ background: "linear-gradient(135deg,#0a1628,#0f2a4a)" }}>
-        <div className="flex items-start gap-4 mb-5">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-            style={{ background: "rgba(14,116,144,0.25)" }}>
-            <BarChart3 className="w-5 h-5 text-cyan-400" />
+      {/* ── Financial statements CTA ── */}
+      <div className="rounded-2xl p-5 text-white" style={{ background: "linear-gradient(135deg,#0a1628,#0f2a4a)" }}>
+        <div className="flex items-start gap-3 mb-4">
+          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0" style={{ background: "rgba(14,116,144,0.3)" }}>
+            <BarChart3 className="w-4 h-4 text-cyan-400" />
           </div>
           <div>
-            <p className="font-bold text-white mb-1">Ready to build your Financial Statements</p>
-            <p className="text-sm text-slate-400">
-              Your revenue model feeds directly into P&amp;L, Cash Flow Statement, Balance Sheet, and Loan Readiness score.
-            </p>
+            <p className="text-sm font-bold text-white">Ready to build your Financial Statements</p>
+            <p className="text-xs text-slate-400 mt-0.5">Your revenue model feeds into P&amp;L, Cash Flow, Balance Sheet, and Loan Readiness score.</p>
           </div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {["P&L Statement", "Cash Flow", "Balance Sheet", "Loan Readiness"].map((label) => (
-            <div key={label}
-              className="py-2.5 px-3 rounded-xl text-xs font-semibold text-slate-300 border border-white/10 text-center cursor-default"
-              title="Coming soon">
+            <div key={label} className="py-2 px-3 rounded-lg text-xs font-semibold text-slate-300 border border-white/10 text-center" title="Coming soon">
               {label}
             </div>
           ))}
         </div>
-        <p className="text-xs text-slate-500 mt-3 text-center">Financial modelling — coming next · Save your progress to continue</p>
+        <p className="text-[10px] text-slate-500 mt-3 text-center">Financial modelling — coming next · Save your progress to continue</p>
       </div>
     </div>
   );
