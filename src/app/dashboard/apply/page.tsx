@@ -2512,8 +2512,8 @@ function ApplyPageInner() {
         </div>
       </div>
 
-      <div className="flex-1 flex items-start sm:items-center justify-center px-4 py-6 sm:py-10 overflow-hidden">
-        <div className="w-full max-w-3xl">
+      <div className="flex-1 overflow-y-auto px-4 py-6 sm:py-10">
+        <div className="w-full max-w-6xl mx-auto">
           <AnimatePresence mode="wait" custom={dir}>
 
             {/* ══ SCREEN A: Create your revenue model ══ */}
