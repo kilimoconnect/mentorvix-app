@@ -1877,7 +1877,7 @@ function ApplyPageInner() {
         </Link>
         <div className="flex-1 flex items-center justify-center">
           <div className="flex items-center gap-2">
-            {["Situation", "Business Mapping", "Confirm Structure", "Revenue Data", "Forecast"].map((label, i) => (
+            {["Setup", "Context", "Revenue Streams", "Inputs", "Forecast"].map((label, i) => (
               <div key={i} className="flex items-center gap-1.5">
                 <div className={`flex items-center gap-1.5 text-xs font-medium ${displayStep >= i ? "text-cyan-700" : "text-slate-400"}`}>
                   <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold"
@@ -1901,77 +1901,130 @@ function ApplyPageInner() {
         <div className="w-full max-w-2xl">
           <AnimatePresence mode="wait" custom={dir}>
 
-            {/* ══ SCREEN A: Name your project ══ */}
+            {/* ══ SCREEN A: Create your revenue model ══ */}
             {!situationDone && !nameDone && (
-              <motion.div key="name-project" custom={1} variants={slide} initial="enter" animate="center" exit="exit"
-                className="space-y-8">
+              <motion.div key="name-project" custom={1} variants={slide} initial="enter" animate="center" exit="exit">
 
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: "#0e7490" }}>
-                    Step 1 of 5
+                {/* Header */}
+                <div className="mb-6">
+                  <p className="text-[11px] font-bold uppercase tracking-widest mb-2" style={{ color: "#0891b2" }}>
+                    Revenue Projection Setup &nbsp;·&nbsp; Step 1 of 5
                   </p>
-                  <h2 className="text-2xl font-bold text-slate-900">Name your project</h2>
-                  <p className="text-sm text-slate-500 mt-1">
-                    Give this revenue model a name so you can find it easily on your dashboard.
-                  </p>
-                </div>
-
-                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 space-y-2">
-                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                    Project Name
-                  </label>
-                  <input
-                    autoFocus
-                    type="text"
-                    value={appName === "New Application" ? "" : appName}
-                    onChange={(e) => setAppName(e.target.value.trim() ? e.target.value : "New Application")}
-                    onKeyDown={(e) => { if (e.key === "Enter" && appName !== "New Application") setNameDone(true); }}
-                    placeholder="e.g. Acme Foods · Revenue Model 2026"
-                    className="w-full text-base font-medium text-slate-800 border border-slate-200 rounded-xl px-4 py-3.5 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all placeholder:text-slate-300 placeholder:font-normal"
-                  />
-                  <p className="text-xs text-slate-400">
-                    Optional · you can rename it any time from the header
+                  <h2 className="text-2xl sm:text-[1.75rem] font-bold text-slate-900 leading-tight">
+                    Create your revenue model
+                  </h2>
+                  <p className="text-sm text-slate-500 mt-2 leading-relaxed">
+                    Choose a clear business, branch, or opportunity name — it appears on all reports and exports.
                   </p>
                 </div>
 
-                <div className="flex gap-3">
-                  <Link href="/dashboard"
-                    className="flex items-center gap-2 px-5 py-4 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
-                    <ArrowLeft className="w-4 h-4" /> Back
-                  </Link>
-                  <motion.button
-                    whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                    disabled={isSaving}
-                    onClick={async () => {
-                      if (appId) {
-                        setIsSaving(true); setSaveError(null);
-                        try {
-                          const sb = createClient();
-                          const finalName = appName !== "New Application" ? appName : null;
-                          await updateApplicationFlags(sb, appId, {
-                            ...(finalName ? { name: finalName } : {}),
-                            wizard_step: 0,
-                          });
-                        } catch (e) {
-                          setSaveError(e instanceof Error ? e.message : (e as {message?: string}).message ?? "Save failed");
-                          setIsSaving(false);
-                          return;
-                        }
-                        setIsSaving(false);
-                      }
-                      setNameDone(true);
-                    }}
-                    className="flex-1 flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-60"
-                    style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
-                    {isSaving ? (
-                      <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                      </svg> Saving…</>
-                    ) : <>Continue <ArrowRight className="w-4 h-4" /></>}
-                  </motion.button>
-                </div>
-                {saveError && <p className="text-xs text-red-500 text-center">{saveError}</p>}
+                {/* Two-column workspace */}
+                <div className="grid grid-cols-1 sm:grid-cols-[1fr_200px] gap-4">
+
+                  {/* ── Left: main form ── */}
+                  <div className="space-y-4">
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-[0_2px_16px_rgba(0,0,0,0.07)] p-5 space-y-3">
+                      <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider">
+                        Business / Model Name
+                      </label>
+                      <input
+                        autoFocus
+                        type="text"
+                        value={appName === "New Application" ? "" : appName}
+                        onChange={(e) => setAppName(e.target.value.trim() ? e.target.value : "New Application")}
+                        onKeyDown={(e) => { if (e.key === "Enter" && appName !== "New Application") setNameDone(true); }}
+                        placeholder="e.g. Hilty Limited — Main Operations"
+                        className="w-full text-base font-medium text-slate-800 border border-slate-200 rounded-xl px-4 py-3.5 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all placeholder:text-slate-300 placeholder:font-normal"
+                      />
+                      <p className="text-[11px] text-slate-400 leading-relaxed">
+                        Try:{" "}
+                        <span className="italic text-slate-500">"Bunju Paint Retail Division"</span>
+                        {" "}or{" "}
+                        <span className="italic text-slate-500">"Cooking Oil Expansion 2026"</span>
+                      </p>
+                    </div>
+
+                    <div className="flex gap-3">
+                      <Link href="/dashboard"
+                        className="flex items-center gap-2 px-5 py-3.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+                        <ArrowLeft className="w-4 h-4" /> Back
+                      </Link>
+                      <motion.button
+                        whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                        disabled={isSaving}
+                        onClick={async () => {
+                          if (appId) {
+                            setIsSaving(true); setSaveError(null);
+                            try {
+                              const sb = createClient();
+                              const finalName = appName !== "New Application" ? appName : null;
+                              await updateApplicationFlags(sb, appId, {
+                                ...(finalName ? { name: finalName } : {}),
+                                wizard_step: 0,
+                              });
+                            } catch (e) {
+                              setSaveError(e instanceof Error ? e.message : (e as {message?: string}).message ?? "Save failed");
+                              setIsSaving(false);
+                              return;
+                            }
+                            setIsSaving(false);
+                          }
+                          setNameDone(true);
+                        }}
+                        className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-60"
+                        style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
+                        {isSaving ? (
+                          <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                          </svg> Saving…</>
+                        ) : <>Continue to Funding Context <ArrowRight className="w-4 h-4" /></>}
+                      </motion.button>
+                    </div>
+
+                    {saveError && <p className="text-xs text-red-500">{saveError}</p>}
+
+                    <p className="text-[11px] text-slate-400 text-center">
+                      Your draft saves automatically as you progress.
+                    </p>
+                  </div>
+
+                  {/* ── Right: Model Status panel ── */}
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-[0_2px_16px_rgba(0,0,0,0.07)] p-4 h-fit">
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">
+                      Model Status
+                    </p>
+                    <div className="space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-500">Status</span>
+                        <span className="text-[11px] font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
+                          Draft
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-500">Scenario</span>
+                        <span className="text-xs font-medium text-slate-700">Base</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-slate-500">Currency</span>
+                        <span className="text-xs font-medium text-slate-400 italic">Pending</span>
+                      </div>
+                      <div className="border-t border-slate-100 pt-2 flex items-center justify-between">
+                        <span className="text-xs text-slate-500">Autosave</span>
+                        <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                          On
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-4 pt-3 border-t border-slate-100">
+                      <p className="text-[10px] text-slate-400 leading-relaxed">
+                        A professional revenue model helps investors and partners evaluate your opportunity with confidence.
+                      </p>
+                    </div>
+                  </div>
+
+                </div>{/* /two-column */}
               </motion.div>
             )}
 
