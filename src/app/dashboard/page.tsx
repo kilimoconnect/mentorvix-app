@@ -309,7 +309,7 @@ export default function DashboardPage() {
       app.estimated_mrr > 0 ? `${fmtCurrency(Number(app.estimated_mrr))}/mo MRR` : null,
     ].filter(Boolean).join(" · ") || "In progress";
     const date = new Date(app.updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-    return { id: app.id, name, date, progress, status, sc, sb, missing: "", href: "/dashboard/apply", sub };
+    return { id: app.id, name, date, progress, status, sc, sb, missing: "", href: `/dashboard/apply?id=${app.id}`, sub };
   });
 
   // What-if simulator baseline

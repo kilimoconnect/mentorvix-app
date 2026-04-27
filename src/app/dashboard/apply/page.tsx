@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
@@ -1336,6 +1336,8 @@ function ForecastView({
 /* ═══════════════════════════════════════ ApplyPage ══ */
 export default function ApplyPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const targetAppId = searchParams.get("id"); // optional — open a specific application
   const [step, setStep] = useState(0);
   const [dir,  setDir]  = useState(1);
 
@@ -1503,7 +1505,7 @@ export default function ApplyPage() {
     return app.wizard_step > 0;
   }
 
-  // ── On mount: get/create application, restore if progress exists ─────────────
+  // ── On mount: load a specific application (from ?id=) or the latest draft ────
   useEffect(() => {
     (async () => {
       setIsRestoring(true);
@@ -1512,13 +1514,32 @@ export default function ApplyPage() {
         const { data: { user } } = await sb.auth.getUser();
         if (!user) { setIsRestoring(false); return; }
         setUserId(user.id);
-        const app = await getOrCreateApplication(sb, user.id);
+
+        let app: DbApplication;
+        if (targetAppId) {
+          // Load the specific application the dashboard card linked to
+          const { data, error } = await sb
+            .from("applications")
+            .select("*")
+            .eq("id", targetAppId)
+            .eq("user_id", user.id) // security: only own apps
+            .single();
+          if (error || !data) {
+            // Fallback: load/create the latest draft
+            app = await getOrCreateApplication(sb, user.id);
+          } else {
+            app = data as DbApplication;
+          }
+        } else {
+          app = await getOrCreateApplication(sb, user.id);
+        }
+
         setAppId(app.id);
-        // Restore if there is any saved progress
+
+        // Always restore saved progress (isRestoring guards auto-saves above)
         if (app.wizard_step > 0 || app.intake_done) {
           const state = await loadApplicationState(sb, app.id);
           const needsReset = restoreFromDb(app, state);
-          // If streams were missing, reset wizard_step so next visit starts fresh
           if (needsReset) {
             await updateApplicationFlags(sb, app.id, { wizard_step: 0 });
           }
@@ -1534,28 +1555,30 @@ export default function ApplyPage() {
 
   // ── Auto-save: situation ────────────────────────────────────────────────────
   useEffect(() => {
-    if (!appId || !situation) return;
+    if (!appId || !situation || isRestoring) return;
     const sb = createClient();
     updateApplicationFlags(sb, appId, { situation }).catch(console.error);
-  }, [situation, appId]);
+  }, [situation, appId, isRestoring]);
 
   // ── Auto-save: wizard step ──────────────────────────────────────────────────
+  // IMPORTANT: guard with isRestoring so the initial mount (step=0, appId just
+  // set) does NOT overwrite the saved wizard_step before restoreFromDb runs.
   useEffect(() => {
-    if (!appId) return;
+    if (!appId || isRestoring) return;
     const sb = createClient();
     updateApplicationFlags(sb, appId, { wizard_step: step }).catch(console.error);
-  }, [step, appId]);
+  }, [step, appId, isRestoring]);
 
   // ── Auto-save: project name ─────────────────────────────────────────────────
   useEffect(() => {
-    if (!appId || appName === "New Application") return;
+    if (!appId || appName === "New Application" || isRestoring) return;
     const sb = createClient();
     updateApplicationFlags(sb, appId, { name: appName }).catch(console.error);
-  }, [appName, appId]);
+  }, [appName, appId, isRestoring]);
 
   // ── Auto-save: intake messages (debounced 800 ms) ───────────────────────────
   useEffect(() => {
-    if (!appId || !userId || messages.length === 0) return;
+    if (!appId || !userId || messages.length === 0 || isRestoring) return;
     clearTimeout(intakeSaveTimer.current);
     const isComplete = streams.length > 0;
     intakeSaveTimer.current = setTimeout(async () => {
@@ -1577,7 +1600,7 @@ export default function ApplyPage() {
   // progress — the effect fires, returns early, sets no new timer, and when the
   // save finishes without calling setStreams the effect never re-runs.
   useEffect(() => {
-    if (!appId || !userId || streams.length === 0) return;
+    if (!appId || !userId || streams.length === 0 || isRestoring) return;
     clearTimeout(streamSaveTimer.current);
     streamSaveTimer.current = setTimeout(async () => {
       if (isSavingRef.current) return; // a concurrent save is already running
