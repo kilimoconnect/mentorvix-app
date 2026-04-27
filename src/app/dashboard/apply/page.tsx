@@ -1343,6 +1343,7 @@ function ApplyPageInner() {
 
   // Situation detection (pre-gate)
   const [situation,     setSituation]     = useState<SituationId | null>(null);
+  const [nameDone,      setNameDone]      = useState(false);  // passed the "name your project" screen
   const [situationDone, setSituationDone] = useState(false);
 
   // Progress bar position: 0=situation, 1=mapping, 2=confirm, 3=data, 4=forecast
@@ -1451,7 +1452,10 @@ function ApplyPageInner() {
   // Returns true if wizard_step needs to be reset in DB (streams missing)
   function restoreFromDb(app: DbApplication, state: ApplicationState): boolean {
     if (app.name) setAppName(app.name);
-    if (app.situation) setSituation(app.situation as SituationId);
+    if (app.situation) {
+      setSituation(app.situation as SituationId);
+      setNameDone(true); // they've already passed the "name your project" screen
+    }
 
     const intake = state.intakeConversation;
     if (intake?.messages?.length) {
@@ -1827,43 +1831,68 @@ function ApplyPageInner() {
         <div className="w-full max-w-2xl">
           <AnimatePresence mode="wait" custom={dir}>
 
-            {/* ══ SITUATION SELECTION ══ */}
-            {!situationDone && (
-              <motion.div key="situation" initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -16 }} transition={{ duration: 0.38, ease: EASE }}
+            {/* ══ SCREEN A: Name your project ══ */}
+            {!situationDone && !nameDone && (
+              <motion.div key="name-project" custom={1} variants={slide} initial="enter" animate="center" exit="exit"
+                className="space-y-8">
+
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: "#0e7490" }}>
+                    Step 1 of 5
+                  </p>
+                  <h2 className="text-2xl font-bold text-slate-900">Name your project</h2>
+                  <p className="text-sm text-slate-500 mt-1">
+                    Give this revenue model a name so you can find it easily on your dashboard.
+                  </p>
+                </div>
+
+                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5 space-y-2">
+                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">
+                    Project Name
+                  </label>
+                  <input
+                    autoFocus
+                    type="text"
+                    value={appName === "New Application" ? "" : appName}
+                    onChange={(e) => setAppName(e.target.value.trim() ? e.target.value : "New Application")}
+                    onKeyDown={(e) => { if (e.key === "Enter" && appName !== "New Application") setNameDone(true); }}
+                    placeholder="e.g. Acme Foods · Revenue Model 2026"
+                    className="w-full text-base font-medium text-slate-800 border border-slate-200 rounded-xl px-4 py-3.5 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all placeholder:text-slate-300 placeholder:font-normal"
+                  />
+                  <p className="text-xs text-slate-400">
+                    Optional · you can rename it any time from the header
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  <Link href="/dashboard"
+                    className="flex items-center gap-2 px-5 py-4 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+                    <ArrowLeft className="w-4 h-4" /> Back
+                  </Link>
+                  <motion.button
+                    whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
+                    onClick={() => setNameDone(true)}
+                    className="flex-1 flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20"
+                    style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
+                    Continue <ArrowRight className="w-4 h-4" />
+                  </motion.button>
+                </div>
+              </motion.div>
+            )}
+
+            {/* ══ SCREEN B: Business situation ══ */}
+            {!situationDone && nameDone && (
+              <motion.div key="situation" custom={1} variants={slide} initial="enter" animate="center" exit="exit"
                 className="space-y-6">
 
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wider mb-1" style={{ color: "#0e7490" }}>
                     Step 1 of 5
                   </p>
-                  <h2 className="text-2xl font-bold text-slate-900">Let&apos;s set up your project</h2>
+                  <h2 className="text-2xl font-bold text-slate-900">What is your current situation?</h2>
                   <p className="text-sm text-slate-500 mt-1">
-                    Give it a name, then tell us your situation so we can tailor the right financial model.
+                    Select the one that best describes why you need funding.
                   </p>
-                </div>
-
-                {/* Project name */}
-                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm p-4 space-y-1.5">
-                  <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">
-                    Project Name
-                  </label>
-                  <input
-                    type="text"
-                    value={appName === "New Application" ? "" : appName}
-                    onChange={(e) => setAppName(e.target.value.trim() ? e.target.value : "New Application")}
-                    placeholder="e.g. Acme Foods · Revenue Model 2026"
-                    className="w-full text-sm font-medium text-slate-800 border border-slate-200 rounded-xl px-4 py-3 focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all placeholder:text-slate-300 placeholder:font-normal"
-                  />
-                  <p className="text-xs text-slate-400">
-                    Optional · you can change this any time from the header above
-                  </p>
-                </div>
-
-                {/* Situation heading */}
-                <div>
-                  <p className="text-sm font-semibold text-slate-700">What is your current situation?</p>
-                  <p className="text-xs text-slate-400 mt-0.5">Select the one that best describes why you need funding.</p>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1900,10 +1929,10 @@ function ApplyPageInner() {
                 </div>
 
                 <div className="flex gap-3">
-                  <Link href="/dashboard"
+                  <button onClick={() => setNameDone(false)}
                     className="flex items-center gap-2 px-5 py-4 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
                     <ArrowLeft className="w-4 h-4" /> Back
-                  </Link>
+                  </button>
                   <motion.button
                     whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
                     disabled={!situation}
@@ -1921,7 +1950,7 @@ function ApplyPageInner() {
               <motion.div key="intake" custom={dir} variants={slide} initial="enter" animate="center" exit="exit"
                 className="flex flex-col" style={{ height: "calc(100vh - 180px)", maxHeight: 620 }}>
                 <button
-                  onClick={() => { setSituationDone(false); setMessages([]); setStreams([]); }}
+                  onClick={() => { setSituationDone(false); setNameDone(true); setMessages([]); setStreams([]); }}
                   className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 transition-colors mb-3 self-start">
                   <ArrowLeft className="w-3 h-3" /> Change situation
                 </button>
