@@ -299,7 +299,7 @@ function parseItems(text: string): StreamItem[] | null {
   try {
     let jsonPart = text.slice(idx + "[ITEMS_DETECTED]".length).trim();
     // Strip any trailing detection tags so JSON.parse doesn't choke on them
-    const nextTag = jsonPart.search(/\[FORECAST_YEARS\]/);
+    const nextTag = jsonPart.search(/\[FORECAST_YEARS\]|\[FORECAST_START\]/);
     if (nextTag !== -1) jsonPart = jsonPart.slice(0, nextTag).trim();
     const arr = JSON.parse(jsonPart) as
       { name: string; category?: string; volume?: number; price?: number; unit?: string; note?: string }[];
@@ -316,6 +316,19 @@ function parseForecastYears(text: string): number | null {
   const after = text.slice(idx + "[FORECAST_YEARS]".length).trim();
   const n = parseInt(after.split(/[\s\n,]/)[0], 10);
   return !isNaN(n) && n >= 1 && n <= 50 ? n : null;
+}
+
+/** Parses [FORECAST_START] YYYY-MM → { year, month } (month is 0-indexed) */
+function parseForecastStart(text: string): { year: number; month: number } | null {
+  const idx = text.indexOf("[FORECAST_START]");
+  if (idx === -1) return null;
+  const after = text.slice(idx + "[FORECAST_START]".length).trim();
+  const m = after.match(/(\d{4})[^\d]?(\d{1,2})/);
+  if (!m) return null;
+  const year = parseInt(m[1], 10);
+  const month = parseInt(m[2], 10) - 1; // to 0-indexed
+  if (isNaN(year) || isNaN(month) || month < 0 || month > 11) return null;
+  return { year, month };
 }
 
 function parseStreams(text: string): RevenueStream[] | null {
@@ -568,12 +581,13 @@ function ItemTable({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s: 
 }
 
 /* ═══════════════════════════════════════ DriverChat ══ */
-function DriverChat({ stream, onUpdate, situation, isFirstStream, onForecastYears, intakeContext }: {
+function DriverChat({ stream, onUpdate, situation, isFirstStream, onForecastYears, onForecastStart, intakeContext }: {
   stream: RevenueStream;
   onUpdate: (s: RevenueStream) => void;
   situation: string | null;
   isFirstStream?: boolean;
   onForecastYears?: (years: number) => void;
+  onForecastStart?: (year: number, month: number) => void;
   intakeContext?: string;
 }) {
   const [input,       setInput]       = useState("");
@@ -613,6 +627,8 @@ function DriverChat({ stream, onUpdate, situation, isFirstStream, onForecastYear
         // Capture forecast horizon if provided (first stream only)
         const fy = parseForecastYears(text);
         if (fy && onForecastYears) onForecastYears(fy);
+        const fs = parseForecastStart(text);
+        if (fs && onForecastStart) onForecastStart(fs.year, fs.month);
         const cleanText = text.slice(0, text.indexOf("[ITEMS_DETECTED]")).trim() ||
           `I've collected all the data for ${stream.name}. Review and edit the items below.`;
         const newMsgs = [...history, { role: "assistant" as const, content: cleanText }];
@@ -907,16 +923,23 @@ function RevenueMix({ streams, months }: { streams: RevenueStream[]; months: Pro
 }
 
 /* ═══════════════════════════════════════ ForecastView ══ */
-function ForecastView({ streams, defaultHorizon = 5 }: { streams: RevenueStream[]; defaultHorizon?: number }) {
+function ForecastView({
+  streams,
+  horizonYears, setHorizonYears,
+  startYear,    setStartYear,
+  startMonth,   setStartMonth,
+}: {
+  streams:          RevenueStream[];
+  horizonYears:     number;
+  setHorizonYears:  (n: number) => void;
+  startYear:        number;
+  setStartYear:     (n: number) => void;
+  startMonth:       number;
+  setStartMonth:    (n: number) => void;
+}) {
   const now = new Date();
-  const [startYear,    setStartYear]    = useState(now.getFullYear());
-  const [startMonth,   setStartMonth]   = useState(now.getMonth());
-  const [horizonYears, setHorizonYears] = useState(defaultHorizon);
   const [view,         setView]         = useState<"annual" | "monthly">("annual");
-  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
-
-  // Sync if the parent updates defaultHorizon after data collection
-  useEffect(() => { setHorizonYears(defaultHorizon); }, [defaultHorizon]);
+  const [selectedYear, setSelectedYear] = useState(startYear);
 
   const startDate  = new Date(startYear, startMonth, 1);
   const totalMths  = horizonYears * 12;
@@ -1335,7 +1358,12 @@ export default function ApplyPage() {
   const [streams,      setStreams]      = useState<RevenueStream[]>([]);
   const [streamIdx,    setStreamIdx]    = useState(0);
   const [driverMode,   setDriverMode]   = useState<DriverMode>("chat");
-  const [forecastYears, setForecastYears] = useState(5);
+
+  // Forecast config — lifted so Phase 4 detection can set them directly
+  const now0 = new Date();
+  const [forecastHorizon,    setForecastHorizon]    = useState(5);
+  const [forecastStartYear,  setForecastStartYear]  = useState(now0.getFullYear());
+  const [forecastStartMonth, setForecastStartMonth] = useState(now0.getMonth());
 
   // ── DB persistence state ────────────────────────────────────────────────────
   const [appId,       setAppId]       = useState<string | null>(null);
@@ -1447,7 +1475,9 @@ export default function ApplyPage() {
     }
 
     if (state.forecastConfig) {
-      setForecastYears(state.forecastConfig.horizon_years);
+      setForecastHorizon(state.forecastConfig.horizon_years);
+      setForecastStartYear(state.forecastConfig.start_year);
+      setForecastStartMonth(state.forecastConfig.start_month);
     }
 
     // Jump to the furthest step the user reached
@@ -2030,7 +2060,8 @@ export default function ApplyPage() {
                   onUpdate={updateStream}
                   situation={situation}
                   isFirstStream={streamIdx === 0}
-                  onForecastYears={setForecastYears}
+                  onForecastYears={setForecastHorizon}
+                  onForecastStart={(y, m) => { setForecastStartYear(y); setForecastStartMonth(m); }}
                   intakeContext={messages.map((m) => `${m.role === "user" ? "Client" : "AI"}: ${m.content}`).join("\n")}
                 />}
                 {driverMode === "import" && <ImportPane   stream={currentStream} onUpdate={updateStream} />}
@@ -2105,7 +2136,12 @@ export default function ApplyPage() {
                   </p>
                 </div>
 
-                <ForecastView streams={streams} defaultHorizon={forecastYears} />
+                <ForecastView
+                  streams={streams}
+                  horizonYears={forecastHorizon}     setHorizonYears={setForecastHorizon}
+                  startYear={forecastStartYear}      setStartYear={setForecastStartYear}
+                  startMonth={forecastStartMonth}    setStartMonth={setForecastStartMonth}
+                />
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                   <button onClick={() => go(2)}

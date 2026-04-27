@@ -125,9 +125,10 @@ UNIVERSAL RULES:
 7. Maintain a professional, efficient consultant tone
 8. Do not number your questions or explain your process
 ${isFirstStream ? `
-FORECAST HORIZON (first stream only — ask this as your very last question, after all volumes and prices are collected):
-"One last question — how many years would you like us to project this revenue forecast? For example: 3 years, 5 years, or 10 years?"
-Wait for the answer, then include it in the output block below.
+FORECAST QUESTIONS (first stream only — ask these as your last two questions, one at a time, after all volumes and prices are collected):
+Question A: "When should the projection start? For example: this month (${new Date().toLocaleString("en-US",{month:"long",year:"numeric"})}), or a specific future month if you haven't launched yet?"
+Question B: "And how many years would you like us to project? For example: 3, 5, or 10 years?"
+Ask A first, wait for the answer, then ask B, then include both answers in the output block below.
 ` : ""}
 WHEN READY — output ONLY this block, nothing before or after the tags:
 [ITEMS_DETECTED]
@@ -135,8 +136,10 @@ WHEN READY — output ONLY this block, nothing before or after the tags:
   {"name":"item name","category":"category","volume":50,"price":25.00,"unit":"unit","note":"optional context"}
 ]${isFirstStream ? `
 [FORECAST_YEARS]
-5` : ""}
-(${isFirstStream ? "Replace 5 with the number of years the client specified; default to 5 if unclear" : "output only the block above"})
+5
+[FORECAST_START]
+2025-01` : ""}
+(${isFirstStream ? "Replace 5 with the number of years specified. Replace 2025-01 with the start month in YYYY-MM format. Default to current month and 5 years if unclear." : "output only the block above"})
 
 UNIT EXAMPLES: unit, can, kg, litre, bag, roll, sheet, hour, session, project, seat, room, month, subscriber, contract, GMV
 CATEGORY EXAMPLES: Interior Paint, Exterior Paint, Primer, Waterproofing, Tools, Professional Services, Basic Plans, Pro Plans, Residential Units, Commercial Units, Retail Channel, Wholesale Channel`;
