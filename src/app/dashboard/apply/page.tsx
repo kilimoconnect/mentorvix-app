@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
@@ -1334,7 +1334,7 @@ function ForecastView({
 }
 
 /* ═══════════════════════════════════════ ApplyPage ══ */
-export default function ApplyPage() {
+function ApplyPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const targetAppId = searchParams.get("id"); // optional — open a specific application
@@ -2398,5 +2398,24 @@ export default function ApplyPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// useSearchParams() requires a Suspense boundary in Next.js App Router
+export default function ApplyPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-10 h-10 rounded-2xl flex items-center justify-center"
+            style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
+            <div className="w-5 h-5 rounded-full border-2 border-white border-t-transparent animate-spin" />
+          </div>
+          <p className="text-sm text-slate-500 font-medium">Loading…</p>
+        </div>
+      </div>
+    }>
+      <ApplyPageInner />
+    </Suspense>
   );
 }
