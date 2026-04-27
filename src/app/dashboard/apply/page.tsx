@@ -1614,11 +1614,23 @@ function ApplyPageInner() {
         setForecastStartMonth(state.forecastConfig.start_month);
       }
 
-      // Always land on Confirm Structure (step 1) when returning with saved streams.
-      // This gives the user a clean entry point to review their stream list before
-      // proceeding, regardless of where they were when they last left.
+      // ── Determine which step to restore based on wizard_step ───────────────
+      // wizard_step semantics (matches displayStep in the progress bar):
+      //   0,1 = user was on Situation/Mapping/Confirm Structure (not yet committed)
+      //   2   = user clicked "Collect Revenue Data" → restore to Revenue Data (step=2)
+      //   3+  = user clicked "Generate Forecast"    → restore to Forecast     (step=3)
+      const ws = app.wizard_step ?? 0;
+      const targetStep = ws >= 2 ? Math.min(ws, 3) : 1;
       setDir(1);
-      setStep(1);
+      setStep(targetStep);
+
+      // For Revenue Data step: resume at the first stream still needing data
+      if (targetStep === 2) {
+        const firstPending = restored.findIndex((s) => !s.driverDone && s.items.length === 0);
+        setStreamIdx(firstPending >= 0 ? firstPending : 0);
+        setDriverMode("chat");
+      }
+
       return false; // no DB reset needed
     }
 
@@ -2041,7 +2053,9 @@ function ApplyPageInner() {
                         setIsSaving(true); setSaveError(null);
                         try {
                           const sb = createClient();
-                          await updateApplicationFlags(sb, appId, { situation, wizard_step: 0 });
+                          // wizard_step:1 = user is entering Business Mapping
+                          // This opens the restore gate (wizard_step > 0) for mid-chat logout
+                          await updateApplicationFlags(sb, appId, { situation, wizard_step: 1 });
                         } catch (e) {
                           setSaveError(e instanceof Error ? e.message : (e as {message?: string}).message ?? "Save failed");
                           setIsSaving(false);
