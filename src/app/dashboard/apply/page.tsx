@@ -1354,6 +1354,9 @@ export default function ApplyPage() {
   const endRef   = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // Project name — editable, auto-generated from detected streams, saved to DB
+  const [appName, setAppName] = useState("New Application");
+
   // Streams
   const [streams,      setStreams]      = useState<RevenueStream[]>([]);
   const [streamIdx,    setStreamIdx]    = useState(0);
@@ -1441,6 +1444,7 @@ export default function ApplyPage() {
 
   // ── Restore a saved application state into local state ──────────────────────
   function restoreFromDb(app: DbApplication, state: ApplicationState) {
+    if (app.name) setAppName(app.name);
     if (app.situation) setSituation(app.situation as SituationId);
 
     const intake = state.intakeConversation;
@@ -1526,6 +1530,13 @@ export default function ApplyPage() {
     const sb = createClient();
     updateApplicationFlags(sb, appId, { wizard_step: step }).catch(console.error);
   }, [step, appId]);
+
+  // ── Auto-save: project name ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (!appId || appName === "New Application") return;
+    const sb = createClient();
+    updateApplicationFlags(sb, appId, { name: appName }).catch(console.error);
+  }, [appName, appId]);
 
   // ── Auto-save: intake messages (debounced 800 ms) ───────────────────────────
   useEffect(() => {
@@ -1634,6 +1645,46 @@ export default function ApplyPage() {
           `Great — I've identified ${detected.length} income source${detected.length !== 1 ? "s" : ""}. Let me show you what I found.`;
         setMessages((prev) => [...prev, { role: "assistant", content: clean }]);
         setStreams(detected);
+
+        // ── Immediately persist streams + name to DB (fire-and-forget) ──────────
+        // The debounced auto-save might not fire before the user leaves the page.
+        // This guarantees streams are in DB right when they're detected.
+        if (appId && userId) {
+          (async () => {
+            try {
+              const sb = createClient();
+              const savedStreams = await saveStreams(sb, appId, userId,
+                detected.map((s, i) => ({
+                  name: s.name, type: s.type, confidence: s.confidence,
+                  monthly_growth_pct: s.monthlyGrowthPct,
+                  sub_new_per_month: s.subNewPerMonth,
+                  sub_churn_pct: s.subChurnPct,
+                  rental_occupancy_pct: s.rentalOccupancyPct,
+                  driver_done: s.driverDone,
+                  position: i,
+                }))
+              );
+              // Map local IDs → DB UUIDs
+              const idMap: Record<string, string> = {};
+              detected.forEach((s, i) => {
+                const db = savedStreams[i];
+                if (db && s.id !== db.id) idMap[s.id] = db.id;
+              });
+              if (Object.keys(idMap).length > 0) {
+                setStreams((prev) => prev.map((s) => ({ ...s, id: idMap[s.id] ?? s.id })));
+              }
+              // Auto-name: "StreamA & StreamB +N more"
+              const parts = detected.map((s) => s.name).slice(0, 2);
+              const extra = detected.length > 2 ? ` +${detected.length - 2} more` : "";
+              const autoName = parts.join(" & ") + extra;
+              setAppName(autoName);
+              await updateApplicationFlags(sb, appId, { intake_done: true, name: autoName });
+            } catch (e) {
+              console.error("[apply] immediate stream save:", e);
+            }
+          })();
+        }
+
         setTimeout(() => go(1), 900);
       } else {
         setMessages((prev) => [...prev, { role: "assistant", content: text }]);
@@ -1641,7 +1692,7 @@ export default function ApplyPage() {
     } catch (e) { setChatError(e instanceof Error ? e.message : "Connection error"); }
     finally { setAiTyping(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [situation]);
+  }, [situation, appId, userId]);
 
   const sendIntake = () => {
     const text = input.trim();
@@ -1689,7 +1740,7 @@ export default function ApplyPage() {
 
       {/* Header */}
       <div className="bg-white border-b border-slate-100 px-4 sm:px-6 py-4 flex items-center gap-4 flex-shrink-0">
-        <Link href="/dashboard" className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 transition-colors">
+        <Link href="/dashboard" className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700 transition-colors flex-shrink-0">
           <ArrowLeft className="w-4 h-4" /> Dashboard
         </Link>
         <div className="flex-1 flex items-center justify-center">
@@ -1708,6 +1759,12 @@ export default function ApplyPage() {
             ))}
           </div>
         </div>
+        {/* Editable project name — shown once streams are detected */}
+        {streams.length > 0 && (
+          <div className="flex-shrink-0 hidden sm:block">
+            <EditableName value={appName} onChange={setAppName} />
+          </div>
+        )}
       </div>
 
       <div className="flex-1 flex items-start sm:items-center justify-center px-4 py-6 sm:py-10 overflow-hidden">
@@ -2109,7 +2166,41 @@ export default function ApplyPage() {
                       Next: {streams[streamIdx + 1]?.name} <ArrowRight className="w-4 h-4" />
                     </button>
                   ) : (
-                    <button onClick={() => go(3)} disabled={!allStreamsReady}
+                    <button
+                      disabled={!allStreamsReady}
+                      onClick={async () => {
+                        // Force-save all streams + items before entering forecast
+                        // (debounced auto-save might not have fired yet)
+                        if (appId && userId) {
+                          try {
+                            const sb = createClient();
+                            const savedStreams = await saveStreams(sb, appId, userId,
+                              streams.map((s, i) => ({
+                                id: isDbId(s.id) ? s.id : undefined,
+                                name: s.name, type: s.type, confidence: s.confidence,
+                                monthly_growth_pct: s.monthlyGrowthPct,
+                                sub_new_per_month: s.subNewPerMonth,
+                                sub_churn_pct: s.subChurnPct,
+                                rental_occupancy_pct: s.rentalOccupancyPct,
+                                driver_done: s.driverDone,
+                                position: i,
+                              }))
+                            );
+                            for (let i = 0; i < savedStreams.length; i++) {
+                              const local = streams[i]; const db = savedStreams[i];
+                              if (!local || !db) continue;
+                              if (local.items.length > 0) {
+                                await saveStreamItems(sb, db.id, userId, local.items.map((it, pos) => ({
+                                  name: it.name, category: it.category, volume: it.volume, price: it.price,
+                                  unit: it.unit, note: it.note, position: pos,
+                                })));
+                              }
+                            }
+                            await updateApplicationFlags(sb, appId, { drivers_done: true });
+                          } catch (e) { console.error("[apply] pre-forecast save:", e); }
+                        }
+                        go(3);
+                      }}
                       className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-40"
                       style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
                       <BarChart3 className="w-4 h-4" /> Generate Revenue Forecast
