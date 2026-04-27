@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence, useMotionValue, useSpring, useInView } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
+import { getUserApplications, type ApplicationSummary } from "@/lib/supabase/revenue";
 import {
   LayoutDashboard, FilePlus2, FolderOpen, BarChart3, Landmark,
   Settings, CreditCard, HelpCircle, Bell, ChevronRight,
@@ -121,38 +122,43 @@ export default function DashboardPage() {
   const [businessName, setBusinessName] = useState("...");
   const [userInitial,  setUserInitial]  = useState("?");
 
-  /* ── real data from localStorage ── */
-  const [revenueModel, setRevenueModel] = useState<RevenueModel | null>(null);
+  /* ── applications from Supabase ── */
+  const [applications,  setApplications]  = useState<ApplicationSummary[]>([]);
+  const [appsLoading,   setAppsLoading]   = useState(true);
+
+  /* ── legacy localStorage (assessment only, kept for backward compat) ── */
   const [assessment,   setAssessment]   = useState<Assessment | null>(null);
 
   /* ── delete confirmation ── */
-  const [clearModelConfirm, setClearModelConfirm] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   /* ── what-if simulator ── */
   const [simRevenuePct,  setSimRevenuePct]  = useState(0);
   const [simCollateral, setSimCollateral] = useState(false);
 
-  /* ── load user + data ── */
+  /* ── load user + applications from Supabase ── */
   useEffect(() => {
-    // Auth
-    createClient().auth.getUser().then(({ data: { user } }) => {
-      if (!user) return;
+    (async () => {
+      const sb = createClient();
+      const { data: { user } } = await sb.auth.getUser();
+      if (!user) { setAppsLoading(false); return; }
       const m = user.user_metadata;
       const name = m?.full_name || user.email?.split("@")[0] || "User";
       setUserName(name);
       setBusinessName(m?.business_name || "Your Business");
       setUserInitial(name.charAt(0).toUpperCase());
-    });
-    // Revenue model
-    try {
-      const raw = localStorage.getItem("mvx_revenue_model");
-      if (raw) setRevenueModel(JSON.parse(raw) as RevenueModel);
-    } catch { /* ignore */ }
-    // Assessment
-    try {
-      const raw = localStorage.getItem("mvx_assessment");
-      if (raw) setAssessment(JSON.parse(raw) as Assessment);
-    } catch { /* ignore */ }
+      // Fetch all applications from Supabase
+      try {
+        const apps = await getUserApplications(sb, user.id);
+        setApplications(apps);
+      } catch (e) { console.error("[dashboard] load apps:", e); }
+      setAppsLoading(false);
+      // Legacy: assessment from localStorage
+      try {
+        const raw = localStorage.getItem("mvx_assessment");
+        if (raw) setAssessment(JSON.parse(raw) as Assessment);
+      } catch { /* ignore */ }
+    })();
   }, []);
 
   const handleSignOut = async () => {
@@ -160,38 +166,27 @@ export default function DashboardPage() {
     router.push("/login");
   };
 
-  const deleteRevenueModel = async () => {
-    // Delete from Supabase if we have an application ID saved
+  const deleteApplication = async (id: string) => {
     try {
-      const raw = localStorage.getItem("mvx_revenue_model");
-      if (raw) {
-        const parsed = JSON.parse(raw) as { applicationId?: string };
-        if (parsed.applicationId) {
-          await createClient()
-            .from("applications")
-            .delete()
-            .eq("id", parsed.applicationId);
-        }
-      }
-    } catch { /* non-blocking — always clear local data */ }
-    localStorage.removeItem("mvx_revenue_model");
-    setRevenueModel(null);
-    setClearModelConfirm(false);
+      await createClient().from("applications").delete().eq("id", id);
+      setApplications((prev) => prev.filter((a) => a.id !== id));
+    } catch (e) { console.error("[dashboard] delete app:", e); }
+    setDeleteConfirmId(null);
   };
 
-  /* ── derived metrics ── */
-  const hasRevenue    = !!revenueModel && revenueModel.streams.length > 0;
+  /* ── derived metrics (from Supabase application summaries) ── */
+  // Most recent application with any revenue data
+  const latestApp    = applications.find((a) => a.stream_count > 0) ?? applications[0] ?? null;
+  const hasRevenue   = !!latestApp && latestApp.stream_count > 0;
   const hasAssessment = !!assessment;
 
-  const mrr          = hasRevenue ? computeMRR(revenueModel!.streams) : null;
-  const year1Rev     = hasRevenue ? computeYear1(revenueModel!.projection ?? []) : null;
-  const streamCount  = hasRevenue ? revenueModel!.streams.length : 0;
-  const itemCount    = hasRevenue
-    ? revenueModel!.streams.reduce((a, s) => a + (s.items ?? []).length, 0)
-    : 0;
+  const mrr         = latestApp ? Number(latestApp.estimated_mrr) || null : null;
+  const year1Rev    = latestApp ? Number(latestApp.year1_revenue)  || null : null;
+  const streamCount = latestApp?.stream_count ?? 0;
+  const itemCount   = latestApp?.item_count   ?? 0;
 
-  // Prefer revenue model MRR; fall back to assessment monthly avg
-  const displayRevenue = mrr ?? assessment?.revenueAvg ?? null;
+  // Prefer Supabase MRR; fall back to assessment monthly avg
+  const displayRevenue  = (mrr && mrr > 0) ? mrr : assessment?.revenueAvg ?? null;
   const displayExpenses = assessment?.expenses ?? null;
   const displayCashFlow = displayRevenue !== null && displayExpenses !== null
     ? displayRevenue - displayExpenses : null;
@@ -280,36 +275,42 @@ export default function DashboardPage() {
     return list.slice(0, 3);
   }, [hasRevenue, hasAssessment, assessment])();
 
-  // Recent projects — from actual data
-  const recentProjects = (() => {
-    const list: {
-      name: string; date: string; progress: number; status: string;
-      sc: string; sb: string; missing: string; href: string; sub: string;
-      canDelete?: boolean;
-    }[] = [];
-    if (hasRevenue) list.push({
-      name: `Revenue Model — ${streamCount} stream${streamCount !== 1 ? "s" : ""}`,
-      date: "Saved",
-      progress: 100,
-      status: "Complete",
-      sc: "#059669", sb: "#f0fdf4",
-      missing: "",
-      href: "/dashboard/apply",
-      sub: itemCount > 0 ? `${itemCount} items · ${fmtCurrency(mrr!)}/mo MRR` : "No items yet",
-      canDelete: true,
-    });
-    if (list.length === 0) list.push({
-      name: "Working Capital Loan Pack",
-      date: "Not started",
-      progress: 0,
-      status: "Draft",
-      sc: "#94a3b8", sb: "#f1f5f9",
-      missing: "Revenue model",
-      href: "/dashboard/apply",
-      sub: "Complete your profile to get started",
-    });
-    return list;
-  })();
+  // Recent projects — built from Supabase applications
+  const SITUATION_LABELS: Record<string, string> = {
+    existing: "Existing Business", new_business: "New Business",
+    expansion: "Expansion", working_capital: "Working Capital",
+    asset_purchase: "Asset Purchase", turnaround: "Turnaround",
+  };
+  const recentProjects = applications.map((app) => {
+    const step    = app.wizard_step ?? 0;
+    const progress = app.forecast_done ? 100
+      : app.drivers_done ? 85
+      : app.intake_done  ? step >= 2 ? 60 : 40
+      : step > 0         ? 20 : 5;
+    const status   = app.forecast_done ? "Forecast Ready"
+      : app.drivers_done              ? "Data Complete"
+      : app.intake_done               ? "Mapping Done"
+      : "In Progress";
+    const sc = app.forecast_done ? "#059669"
+      : app.drivers_done         ? "#0e7490"
+      : app.intake_done          ? "#7c3aed"
+      : "#94a3b8";
+    const sb = app.forecast_done ? "#f0fdf4"
+      : app.drivers_done         ? "#f0f9ff"
+      : app.intake_done          ? "#faf5ff"
+      : "#f1f5f9";
+    const sitLabel = app.situation ? SITUATION_LABELS[app.situation] ?? app.situation : null;
+    const name = app.name
+      || (app.stream_count > 0 ? `Revenue Model · ${app.stream_count} stream${app.stream_count !== 1 ? "s" : ""}` : "New Application")
+      || "Application";
+    const sub = [
+      sitLabel,
+      app.item_count > 0 ? `${app.item_count} items` : null,
+      app.estimated_mrr > 0 ? `${fmtCurrency(Number(app.estimated_mrr))}/mo MRR` : null,
+    ].filter(Boolean).join(" · ") || "In progress";
+    const date = new Date(app.updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    return { id: app.id, name, date, progress, status, sc, sb, missing: "", href: "/dashboard/apply", sub };
+  });
 
   // What-if simulator baseline
   const simBase = fundingMin && fundingMax
@@ -826,27 +827,25 @@ export default function DashboardPage() {
                   )}
                 </div>
 
-                {/* Revenue streams breakdown */}
-                {hasRevenue && revenueModel && (
+                {/* Revenue streams summary */}
+                {hasRevenue && latestApp && (
                   <div className="mt-4 pt-4 border-t border-slate-50 space-y-2">
                     <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Revenue Streams</p>
-                    {revenueModel.streams.map((s) => {
-                      const streamMRR = (s.items ?? []).reduce((sum, it) => {
-                        if (s.type === "marketplace") return sum + it.volume * (it.price / 100);
-                        if (s.type === "rental")      return sum + it.volume * it.price * ((s.rentalOccupancyPct ?? 100) / 100);
-                        return sum + it.volume * it.price;
-                      }, 0);
-                      const StreamIcon = STREAM_TYPE_ICONS[s.type] ?? Zap;
-                      const pct = mrr && mrr > 0 ? Math.round((streamMRR / mrr) * 100) : 0;
-                      return (
-                        <div key={s.id} className="flex items-center gap-2">
-                          <StreamIcon className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
-                          <span className="text-xs text-slate-600 flex-1 truncate">{s.name}</span>
-                          <span className="text-xs font-semibold text-slate-700">{fmtCurrency(streamMRR)}/mo</span>
-                          <span className="text-xs text-slate-400 w-8 text-right">{pct}%</span>
-                        </div>
-                      );
-                    })}
+                    <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-50">
+                      <BarChart3 className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                      <span className="text-xs text-slate-600 flex-1">{streamCount} stream{streamCount !== 1 ? "s" : ""} · {itemCount} items</span>
+                      <span className="text-xs font-semibold text-slate-700">{fmtCurrency(Number(latestApp.estimated_mrr))}/mo</span>
+                    </div>
+                    {year1Rev && (
+                      <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-50">
+                        <TrendingUp className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
+                        <span className="text-xs text-slate-600 flex-1">Year 1 forecast</span>
+                        <span className="text-xs font-semibold text-slate-700">{fmtCurrency(year1Rev)}</span>
+                      </div>
+                    )}
+                    <Link href="/dashboard/apply" className="flex items-center gap-1 text-xs font-semibold mt-1" style={{ color: "#0e7490" }}>
+                      View full model <ChevronRight className="w-3 h-3" />
+                    </Link>
                   </div>
                 )}
 
@@ -897,54 +896,73 @@ export default function DashboardPage() {
                 <Link href="/dashboard/documents" className="text-xs font-semibold hover:underline" style={{ color: "#0e7490" }}>View all</Link>
               </div>
               <div className="space-y-3">
-                {recentProjects.map(({ name, date, progress, status, sc, sb, missing, href, sub, canDelete }, i) => (
-                  <motion.div key={name}
-                    initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.55 + i * 0.08 }}
-                    whileHover={{ x: 2 }}
-                    className="flex items-center gap-3 p-3 sm:p-4 rounded-xl border border-slate-100 hover:border-slate-200 cursor-pointer group transition-all">
-                    <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "#f0f9ff" }}>
-                      <FileText className="w-4 h-4" style={{ color: "#0e7490" }} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex flex-wrap items-start justify-between gap-1 mb-1.5">
-                        <p className="text-sm font-semibold text-slate-800 truncate max-w-[60%]">{name}</p>
-                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
-                          style={{ color: sc, background: sb }}>{status}</span>
+                {appsLoading ? (
+                  /* Loading skeleton */
+                  [0,1].map((i) => (
+                    <div key={i} className="flex items-center gap-3 p-3 sm:p-4 rounded-xl border border-slate-100 animate-pulse">
+                      <div className="w-9 h-9 rounded-lg bg-slate-100 flex-shrink-0" />
+                      <div className="flex-1 space-y-2">
+                        <div className="h-3 bg-slate-100 rounded w-40" />
+                        <div className="h-2 bg-slate-100 rounded w-24" />
+                        <div className="h-1.5 bg-slate-100 rounded w-full" />
                       </div>
-                      {sub && <p className="text-xs text-slate-500 mb-1">{sub}</p>}
-                      <div className="flex items-center gap-2 mb-1">
-                        <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                          <motion.div className="h-full rounded-full"
-                            style={{ background: progress === 100 ? "#059669" : "#0e7490" }}
-                            initial={{ width: 0 }} animate={{ width: `${progress}%` }}
-                            transition={{ duration: 0.9, delay: 0.65 + i * 0.1, ease: EASE }} />
+                    </div>
+                  ))
+                ) : recentProjects.length === 0 ? (
+                  <div className="text-center py-8">
+                    <FileText className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+                    <p className="text-sm text-slate-400">No saved projects yet</p>
+                    <Link href="/dashboard/apply" className="text-xs font-semibold mt-1 block" style={{ color: "#0e7490" }}>
+                      Start your first revenue model →
+                    </Link>
+                  </div>
+                ) : (
+                  recentProjects.map(({ id, name, date, progress, status, sc, sb, sub, href }, i) => (
+                    <motion.div key={id}
+                      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.55 + i * 0.08 }}
+                      whileHover={{ x: 2 }}
+                      className="flex items-center gap-3 p-3 sm:p-4 rounded-xl border border-slate-100 hover:border-slate-200 cursor-pointer group transition-all">
+                      <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: "#f0f9ff" }}>
+                        <FileText className="w-4 h-4" style={{ color: "#0e7490" }} />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex flex-wrap items-start justify-between gap-1 mb-1.5">
+                          <p className="text-sm font-semibold text-slate-800 truncate max-w-[60%]">{name}</p>
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
+                            style={{ color: sc, background: sb }}>{status}</span>
                         </div>
-                        <span className="text-xs font-semibold text-slate-500">{progress}%</span>
+                        {sub && <p className="text-xs text-slate-500 mb-1">{sub}</p>}
+                        <div className="flex items-center gap-2 mb-1">
+                          <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                            <motion.div className="h-full rounded-full"
+                              style={{ background: progress >= 85 ? "#059669" : "#0e7490" }}
+                              initial={{ width: 0 }} animate={{ width: `${progress}%` }}
+                              transition={{ duration: 0.9, delay: 0.65 + i * 0.1, ease: EASE }} />
+                          </div>
+                          <span className="text-xs font-semibold text-slate-500">{progress}%</span>
+                        </div>
+                        <p className="text-xs text-slate-400">{date}</p>
                       </div>
-                      {missing && <p className="text-xs text-amber-600">Needs: {missing}</p>}
-                      <p className="text-xs text-slate-400">{date}</p>
-                    </div>
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      {canDelete && (
+                      <div className="flex items-center gap-1 flex-shrink-0">
                         <motion.button
                           whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
-                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setClearModelConfirm(true); }}
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setDeleteConfirmId(id); }}
                           className="p-1.5 rounded-lg text-slate-300 hover:text-red-400 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
-                          title="Delete revenue model">
+                          title="Delete application">
                           <Trash2 className="w-3.5 h-3.5" />
                         </motion.button>
-                      )}
-                      <Link href={href} onClick={(e) => e.stopPropagation()}>
-                        <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-500 transition-colors" />
-                      </Link>
-                    </div>
-                  </motion.div>
-                ))}
+                        <Link href={href} onClick={(e) => e.stopPropagation()}>
+                          <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-slate-500 transition-colors" />
+                        </Link>
+                      </div>
+                    </motion.div>
+                  ))
+                )}
                 <motion.div whileHover={{ borderColor: "#0e7490" }}>
                   <Link href="/dashboard/apply"
                     className="flex items-center justify-center gap-2 w-full py-3 rounded-xl border border-dashed border-slate-200 text-sm font-medium text-slate-400 hover:text-cyan-600 transition-colors">
-                    <FilePlus2 className="w-4 h-4" /> Start a new project
+                    <FilePlus2 className="w-4 h-4" /> {recentProjects.length > 0 ? "Continue working" : "Start a new project"}
                   </Link>
                 </motion.div>
               </div>
@@ -1058,14 +1076,14 @@ export default function DashboardPage() {
         </main>
       </div>
 
-      {/* ── Delete revenue model confirmation modal ── */}
+      {/* ── Delete application confirmation modal ── */}
       <AnimatePresence>
-        {clearModelConfirm && (
+        {deleteConfirmId && (
           <motion.div
             className="fixed inset-0 z-50 flex items-center justify-center p-4"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <motion.div className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-              onClick={() => setClearModelConfirm(false)} />
+              onClick={() => setDeleteConfirmId(null)} />
             <motion.div
               initial={{ scale: 0.92, opacity: 0, y: 12 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
@@ -1078,19 +1096,19 @@ export default function DashboardPage() {
                   <AlertTriangle className="w-5 h-5" style={{ color: "#e11d48" }} />
                 </div>
                 <div>
-                  <p className="text-sm font-bold text-slate-900">Delete Revenue Model?</p>
+                  <p className="text-sm font-bold text-slate-900">Delete this application?</p>
                   <p className="text-xs text-slate-400 mt-0.5">This cannot be undone</p>
                 </div>
               </div>
               <p className="text-sm text-slate-600 mb-5">
-                All revenue streams, items, and projections will be permanently removed from your account — both locally and in the database.
+                All revenue streams, items, conversations, and projections for this application will be permanently deleted from your account.
               </p>
               <div className="flex gap-3">
-                <button onClick={() => setClearModelConfirm(false)}
+                <button onClick={() => setDeleteConfirmId(null)}
                   className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors">
                   Cancel
                 </button>
-                <motion.button whileTap={{ scale: 0.97 }} onClick={deleteRevenueModel}
+                <motion.button whileTap={{ scale: 0.97 }} onClick={() => deleteApplication(deleteConfirmId)}
                   className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-2"
                   style={{ background: "linear-gradient(135deg,#dc2626,#e11d48)" }}>
                   <Trash2 className="w-3.5 h-3.5" /> Delete
