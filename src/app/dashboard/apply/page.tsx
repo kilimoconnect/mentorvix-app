@@ -78,6 +78,36 @@ const SITUATIONS = [
 
 type SituationId = typeof SITUATIONS[number]["id"];
 
+/* Likely revenue model labels shown before AI detects anything */
+const SITUATION_LIKELY_MODELS: Record<string, string[]> = {
+  existing:        ["Product Sales", "Service", "Mixed"],
+  new_business:    ["Subscription", "Retail", "Service"],
+  expansion:       ["Product Sales", "Licensing", "Service"],
+  working_capital: ["Service", "Retail"],
+  asset_purchase:  ["Rental", "Service"],
+  turnaround:      ["Product Sales", "Service"],
+};
+
+/* Analyst notes per situation — shown in collapsible rail */
+const SITUATION_ANALYST_NOTES: Record<string, string> = {
+  existing:        "Existing business likely runs a mixed model — expect Product + Service streams.",
+  new_business:    "New launch — revenue ramp-up from month 1 expected. Build unit economics carefully.",
+  expansion:       "Expansion model: incremental revenue layered on top of existing base operations.",
+  working_capital: "Working capital focus: short-cycle cashflow model — seasonal peaks likely.",
+  asset_purchase:  "Asset-driven: watch for rental or service revenue directly tied to the asset.",
+  turnaround:      "Recovery model: declining revenue baseline — restructuring pathway will be applied.",
+};
+
+/* Situation-specific example answers for the right rail */
+const SITUATION_EXAMPLES: Record<string, string[]> = {
+  existing:        ["We have 3 retail stores selling construction materials", "We offer IT consulting on monthly retainer", "We manufacture and sell packaged food wholesale"],
+  new_business:    ["We're launching a subscription-based meal kit delivery", "We plan to open a gym with membership tiers", "We're building a B2B SaaS platform for SMEs"],
+  expansion:       ["We're opening 2 new branches of our existing pharmacy", "We're adding an e-commerce channel to our retail stores", "We're licensing our brand to distributors in 3 new regions"],
+  working_capital: ["We need inventory funding ahead of the holiday season", "We have a large contract starting next quarter", "We need to bridge a 60-day payment gap from a key client"],
+  asset_purchase:  ["We're buying 5 delivery trucks for our logistics fleet", "We need 2 industrial ovens to expand production", "We're purchasing CNC machinery for our fabrication shop"],
+  turnaround:      ["Our restaurant revenue dropped 40% — need to restructure", "We lost our largest client and need capital to diversify", "We have high debt service eating into operating margins"],
+};
+
 /* ═══════════════════════════════════════ types ══ */
 type StreamType = "product" | "service" | "subscription" | "rental" | "marketplace" | "contract" | "custom";
 type Confidence = "high" | "medium" | "low";
@@ -2257,119 +2287,281 @@ function ApplyPageInner() {
               </motion.div>
             )}
 
-            {/* ══ STEP 0: AI Intake Chat ══ */}
-            {situationDone && step === 0 && (
-              <motion.div key="intake" custom={dir} variants={slide} initial="enter" animate="center" exit="exit"
-                className="flex flex-col" style={{ height: "calc(100vh - 180px)", maxHeight: 620 }}>
-                <button
-                  onClick={() => { setSituationDone(false); setNameDone(true); setMessages([]); setStreams([]); }}
-                  className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-600 transition-colors mb-3 self-start">
-                  <ArrowLeft className="w-3 h-3" /> Change situation
-                </button>
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="w-10 h-10 rounded-2xl flex items-center justify-center"
-                    style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
-                    <BrainCircuit className="w-5 h-5 text-white" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-slate-900">Mentorvix AI · Business Mapping Session</p>
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                      <p className="text-xs text-slate-400">Online</p>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex-1 overflow-y-auto space-y-4 pr-1 pb-2">
-                  {messages.map((m, i) => (
-                    <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.3, ease: EASE }}
-                      className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                      {m.role === "assistant" && (
-                        <div className="w-7 h-7 rounded-xl flex items-center justify-center flex-shrink-0 mr-2 mt-0.5"
+            {/* ══ STEP 0: Revenue Mapping Interview ══ */}
+            {situationDone && step === 0 && (() => {
+              const userMsgCount = messages.filter(m => m.role === "user").length;
+              const mappingProgress = streams.length > 0 ? 85 : Math.min(75, userMsgCount * 15 + 10);
+              const situationMeta = SITUATIONS.find(s => s.id === situation);
+              const likelyModels = SITUATION_LIKELY_MODELS[situation ?? "existing"] ?? [];
+              const analystNote  = SITUATION_ANALYST_NOTES[situation ?? "existing"] ?? "";
+              const examples     = SITUATION_EXAMPLES[situation ?? "existing"] ?? [];
+
+              const sendQuick = (text: string) => {
+                const updated = [...messages, { role: "user" as const, content: text }];
+                setMessages(updated); callIntake(updated);
+              };
+
+              return (
+                <motion.div key="intake" custom={dir} variants={slide} initial="enter" animate="center" exit="exit"
+                  className="flex gap-5" style={{ height: "calc(100vh - 180px)", maxHeight: 640 }}>
+
+                  {/* ── Left: Chat panel ── */}
+                  <div className="flex flex-col flex-1 min-w-0">
+
+                    {/* Session header */}
+                    <div className="mb-3">
+                      <button
+                        onClick={() => { setSituationDone(false); setNameDone(true); setMessages([]); setStreams([]); }}
+                        className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600 transition-colors mb-2.5">
+                        <ArrowLeft className="w-3 h-3" /> Change context
+                      </button>
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0"
                           style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
-                          <BrainCircuit className="w-3.5 h-3.5 text-white" />
+                          <BrainCircuit className="w-5 h-5 text-white" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-slate-900">Revenue Mapping Interview</p>
+                          <p className="text-xs text-slate-400">AI-led revenue model discovery</p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[11px] text-slate-400">
+                        <span className="flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
+                          Autosave active
+                        </span>
+                        <span className="text-slate-200">·</span>
+                        <span>Stage: Revenue Discovery</span>
+                        <span className="text-slate-200">·</span>
+                        <span>Est. 2–4 min</span>
+                      </div>
+                    </div>
+
+                    {/* Messages */}
+                    <div className="flex-1 overflow-y-auto space-y-4 pr-1 pb-2">
+                      {messages.map((m, i) => (
+                        <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3, ease: EASE }}>
+                          <div className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                            {m.role === "assistant" && (
+                              <div className="w-7 h-7 rounded-xl flex items-center justify-center flex-shrink-0 mr-2 mt-0.5"
+                                style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
+                                <BrainCircuit className="w-3.5 h-3.5 text-white" />
+                              </div>
+                            )}
+                            <div className={`max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${
+                              m.role === "user"
+                                ? "text-white rounded-tr-sm"
+                                : "bg-white border border-slate-100 text-slate-800 rounded-tl-sm shadow-sm"
+                            }`} style={m.role === "user" ? { background: "linear-gradient(135deg,#0e7490,#0891b2)" } : {}}>
+                              {m.content}
+                            </div>
+                            {m.role === "assistant" && (
+                              <button onClick={() => speakMessage(m.content, i)}
+                                title={speakingIdx === i ? "Stop" : "Read aloud"}
+                                className={`ml-1.5 mt-1 w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 transition-all self-start ${
+                                  speakingIdx === i ? "text-cyan-600 bg-cyan-50" : "text-slate-300 hover:text-cyan-500 hover:bg-slate-50"
+                                }`}>
+                                <Volume2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Quick replies — shown below the first AI message only */}
+                          {m.role === "assistant" && i === 0 && userMsgCount === 0 && !aiTyping && (
+                            <div className="flex flex-wrap gap-2 mt-3 pl-9">
+                              {["Retail products", "Services / consulting", "Subscription model", "Mixed revenue", "Not sure yet"].map((opt) => (
+                                <button key={opt} onClick={() => sendQuick(opt)}
+                                  className="text-xs px-3 py-1.5 rounded-full border border-slate-200 bg-white hover:border-cyan-400 hover:text-cyan-600 text-slate-500 transition-all">
+                                  {opt}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </motion.div>
+                      ))}
+
+                      {aiTyping && (
+                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-xl flex items-center justify-center"
+                            style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
+                            <BrainCircuit className="w-3.5 h-3.5 text-white" />
+                          </div>
+                          <div className="bg-white border border-slate-100 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
+                            <div className="flex items-center gap-1">
+                              {[0, 1, 2].map((dot) => (
+                                <motion.div key={dot} className="w-1.5 h-1.5 rounded-full bg-slate-300"
+                                  animate={{ y: [0, -4, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: dot * 0.15 }} />
+                              ))}
+                            </div>
+                          </div>
+                        </motion.div>
+                      )}
+
+                      {chatError && (
+                        <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
+                          <span>⚠ {chatError}</span>
+                          <button onClick={() => callIntake(messages)} className="ml-auto font-semibold underline">Retry</button>
                         </div>
                       )}
-                      <div className={`max-w-[80%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${
-                        m.role === "user"
-                          ? "text-white rounded-tr-sm"
-                          : "bg-white border border-slate-100 text-slate-800 rounded-tl-sm shadow-sm"
-                      }`} style={m.role === "user" ? { background: "linear-gradient(135deg,#0e7490,#0891b2)" } : {}}>
-                        {m.content}
-                      </div>
-                      {/* Speaker button — only on AI messages */}
-                      {m.role === "assistant" && (
-                        <button
-                          onClick={() => speakMessage(m.content, i)}
-                          title={speakingIdx === i ? "Stop" : "Read aloud"}
-                          className={`ml-1.5 mt-1 w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 transition-all self-start ${
-                            speakingIdx === i
-                              ? "text-cyan-600 bg-cyan-50"
-                              : "text-slate-300 hover:text-cyan-500 hover:bg-slate-50"
+                      <div ref={endRef} />
+                    </div>
+
+                    {/* Input area */}
+                    <div className="mt-3 flex items-end gap-2">
+                      <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                        onClick={toggleMic} title={micActive ? "Stop & send" : "Speak your answer"}
+                        className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 transition-all ${
+                          micActive
+                            ? "bg-red-500 text-white shadow-lg shadow-red-500/30 animate-pulse"
+                            : "border border-slate-200 text-slate-400 hover:border-cyan-400 hover:text-cyan-600 bg-white"
+                        }`}>
+                        {micActive ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                      </motion.button>
+
+                      <textarea ref={inputRef} rows={2} value={input} onChange={(e) => setInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendIntake(); } }}
+                        disabled={aiTyping}
+                        placeholder={micActive ? "Listening…" : "Describe how the business earns revenue…"}
+                        className={`flex-1 resize-none px-4 py-3 border rounded-2xl text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 transition-all placeholder:text-slate-300 disabled:opacity-60 ${
+                          micActive
+                            ? "border-red-300 focus:border-red-400 focus:ring-red-400/20"
+                            : "border-slate-200 focus:border-cyan-500 focus:ring-cyan-500/20"
+                        }`} />
+
+                      <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={sendIntake}
+                        disabled={!input.trim() || aiTyping}
+                        className="w-11 h-11 rounded-2xl flex items-center justify-center text-white shadow-md disabled:opacity-40 flex-shrink-0"
+                        style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
+                        <Send className="w-4 h-4" />
+                      </motion.button>
+                    </div>
+                    <p className="text-[11px] text-slate-300 text-center mt-2">Shift+Enter for new line · Enter to send</p>
+                  </div>
+
+                  {/* ── Right: Intelligence rail ── */}
+                  <div className="hidden lg:flex flex-col w-56 flex-shrink-0 gap-3 overflow-y-auto pb-2">
+
+                    {/* Revenue Intelligence card */}
+                    <div className="bg-white rounded-2xl border border-slate-200 shadow-[0_2px_16px_rgba(0,0,0,0.07)] p-4">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">
+                        Revenue Intelligence
+                      </p>
+                      <div className="space-y-3.5">
+
+                        {/* Business Context */}
+                        <div>
+                          <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Business Context</p>
+                          <p className="text-xs font-semibold" style={{ color: situationMeta?.color ?? "#64748b" }}>
+                            {situationMeta?.title ?? "—"}
+                          </p>
+                        </div>
+
+                        {/* Detected Streams */}
+                        <div>
+                          <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Detected Streams</p>
+                          <p className="text-xs font-bold text-slate-800">
+                            {streams.length === 0 ? "0 — awaiting inputs" : `${streams.length} identified`}
+                          </p>
+                        </div>
+
+                        {/* Likely Models / Stream Types */}
+                        <div>
+                          <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">
+                            {streams.length > 0 ? "Stream Types" : "Likely Models"}
+                          </p>
+                          <div className="flex flex-wrap gap-1">
+                            {streams.length > 0
+                              ? detectedTypes.map(t => (
+                                  <span key={t} className="text-[10px] font-medium px-1.5 py-0.5 rounded-full"
+                                    style={{ background: STREAM_META[t].bg, color: STREAM_META[t].color }}>
+                                    {STREAM_META[t].label}
+                                  </span>
+                                ))
+                              : likelyModels.map(m => (
+                                  <span key={m} className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">
+                                    {m}
+                                  </span>
+                                ))
+                            }
+                          </div>
+                        </div>
+
+                        {/* Confidence */}
+                        <div className="flex items-center justify-between">
+                          <p className="text-[10px] text-slate-400 uppercase tracking-wider">Confidence</p>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            streams.length >= 3
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-100"
+                              : streams.length >= 1
+                              ? "bg-amber-50 text-amber-700 border-amber-100"
+                              : "bg-red-50 text-red-600 border-red-100"
                           }`}>
-                          <Volume2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </motion.div>
-                  ))}
-                  {aiTyping && (
-                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-xl flex items-center justify-center"
-                        style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
-                        <BrainCircuit className="w-3.5 h-3.5 text-white" />
+                            {streams.length >= 3 ? "High" : streams.length >= 1 ? "Medium" : "Low"}
+                          </span>
+                        </div>
+
+                        {/* Progress bar */}
+                        <div>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <p className="text-[10px] text-slate-400 uppercase tracking-wider">Progress</p>
+                            <p className="text-[10px] font-semibold text-slate-600">{mappingProgress}%</p>
+                          </div>
+                          <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                            <motion.div className="h-full rounded-full"
+                              style={{ background: "linear-gradient(90deg,#0e7490,#0891b2)" }}
+                              animate={{ width: `${mappingProgress}%` }}
+                              transition={{ duration: 0.6, ease: "easeOut" }} />
+                          </div>
+                        </div>
+
+                        {/* Next Goal */}
+                        <div>
+                          <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Next Goal</p>
+                          <p className="text-xs font-medium text-slate-700">
+                            {streams.length === 0
+                              ? "Identify revenue streams"
+                              : streams.length < 2
+                              ? "Map pricing & volume"
+                              : "Confirm all streams found"}
+                          </p>
+                        </div>
+
                       </div>
-                      <div className="bg-white border border-slate-100 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
-                        <div className="flex items-center gap-1">
-                          {[0, 1, 2].map((i) => (
-                            <motion.div key={i} className="w-1.5 h-1.5 rounded-full bg-slate-300"
-                              animate={{ y: [0, -4, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: i * 0.15 }} />
+                    </div>
+
+                    {/* Analyst Notes — collapsible */}
+                    <details className="bg-slate-50 border border-slate-200 rounded-2xl p-3 group">
+                      <summary className="text-[10px] font-bold uppercase tracking-widest text-slate-400 cursor-pointer select-none list-none flex items-center justify-between">
+                        Analyst Notes
+                        <span className="text-slate-300 group-open:rotate-180 transition-transform text-xs">▾</span>
+                      </summary>
+                      <p className="mt-2 text-[11px] text-slate-500 leading-relaxed">{analystNote}</p>
+                    </details>
+
+                    {/* Example answers — context-specific, shown early in conversation */}
+                    {userMsgCount <= 1 && (
+                      <div className="bg-white border border-slate-200 rounded-2xl p-3">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">
+                          Example Answers
+                        </p>
+                        <div className="space-y-2">
+                          {examples.map((ex) => (
+                            <button key={ex} onClick={() => sendQuick(ex)}
+                              className="w-full text-left text-[10px] text-slate-500 hover:text-cyan-700 transition-colors leading-relaxed">
+                              "{ex}"
+                            </button>
                           ))}
                         </div>
                       </div>
-                    </motion.div>
-                  )}
-                  {chatError && (
-                    <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
-                      <span>⚠ {chatError}</span>
-                      <button onClick={() => callIntake(messages)} className="ml-auto font-semibold underline">Retry</button>
-                    </div>
-                  )}
-                  <div ref={endRef} />
-                </div>
-                <div className="mt-3 flex items-end gap-2">
-                  {/* Mic button */}
-                  <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
-                    onClick={toggleMic}
-                    title={micActive ? "Stop & send" : "Speak your answer"}
-                    className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 transition-all ${
-                      micActive
-                        ? "bg-red-500 text-white shadow-lg shadow-red-500/30 animate-pulse"
-                        : "border border-slate-200 text-slate-400 hover:border-cyan-400 hover:text-cyan-600 bg-white"
-                    }`}>
-                    {micActive ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                  </motion.button>
+                    )}
 
-                  <textarea ref={inputRef} rows={2} value={input} onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendIntake(); } }}
-                    disabled={aiTyping}
-                    placeholder={micActive ? "Listening…" : "Type or speak your answer… (Enter to send)"}
-                    className={`flex-1 resize-none px-4 py-3 border rounded-2xl text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 transition-all placeholder:text-slate-300 disabled:opacity-60 ${
-                      micActive
-                        ? "border-red-300 focus:border-red-400 focus:ring-red-400/20"
-                        : "border-slate-200 focus:border-cyan-500 focus:ring-cyan-500/20"
-                    }`} />
+                  </div>{/* /intelligence rail */}
 
-                  {/* Send button */}
-                  <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={sendIntake}
-                    disabled={!input.trim() || aiTyping}
-                    className="w-11 h-11 rounded-2xl flex items-center justify-center text-white shadow-md disabled:opacity-40 flex-shrink-0"
-                    style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
-                    <Send className="w-4 h-4" />
-                  </motion.button>
-                </div>
-                <p className="text-xs text-slate-300 text-center mt-2">Shift+Enter for new line · Enter to send</p>
-              </motion.div>
-            )}
+                </motion.div>
+              );
+            })()}
+
 
             {/* ══ STEP 1: Stream Review ══ */}
             {step === 1 && (
