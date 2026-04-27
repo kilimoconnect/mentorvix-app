@@ -1568,8 +1568,7 @@ function ApplyPageInner() {
   const [needsRedetection, setNeedsRedetection] = useState(false);
 
   // ── Restore a saved application state into local state ──────────────────────
-  // Returns true if wizard_step needs to be reset in DB (streams missing)
-  function restoreFromDb(app: DbApplication, state: ApplicationState): boolean {
+  function restoreFromDb(app: DbApplication, state: ApplicationState): void {
     if (app.name) setAppName(app.name);
     if (app.situation) {
       setSituation(app.situation as SituationId);
@@ -1614,36 +1613,31 @@ function ApplyPageInner() {
         setForecastStartMonth(state.forecastConfig.start_month);
       }
 
-      // ── Determine which step to restore based on wizard_step ───────────────
-      // wizard_step semantics (matches displayStep in the progress bar):
-      //   0,1 = user was on Situation/Mapping/Confirm Structure (not yet committed)
-      //   2   = user clicked "Collect Revenue Data" → restore to Revenue Data (step=2)
-      //   3+  = user clicked "Generate Forecast"    → restore to Forecast     (step=3)
+      // ── Determine which step to restore ────────────────────────────────────
+      // wizard_step in DB is written by the auto-save useEffect as the React
+      // `step` variable value (0=intake,1=confirm,2=revenue,3=forecast).
+      // When streams exist the user must be at least on Confirm Structure (step≥1).
       const ws = app.wizard_step ?? 0;
-      const targetStep = ws >= 2 ? Math.min(ws, 3) : 1;
+      const targetStep = Math.min(Math.max(ws, 1), 3);
       setDir(1);
       setStep(targetStep);
 
-      // For Revenue Data step: resume at the first stream still needing data
+      // For Revenue Data: resume at the first stream that still needs items
       if (targetStep === 2) {
-        const firstPending = restored.findIndex((s) => !s.driverDone && s.items.length === 0);
+        const firstPending = restored.findIndex((s) => !s.driverDone);
         setStreamIdx(firstPending >= 0 ? firstPending : 0);
         setDriverMode("chat");
       }
-
-      return false; // no DB reset needed
+      return;
     }
 
-    // ── No streams in DB ────────────────────────────────────────────────────────
-    // Trigger re-detection if the user has conversation history AND either
-    //   • intake.is_complete = true  (debounced save confirmed detection), OR
-    //   • app.intake_done   = true  (immediate save in callIntake confirmed detection)
-    // We use both because the debounced save might not have fired before the user left.
+    // ── No streams in DB — user is mid-intake chat ──────────────────────────────
+    // Trigger re-detection if the conversation is marked complete but streams are
+    // missing (e.g., the detection save failed and the user refreshed).
     if (intake?.messages?.length && (intake.is_complete || app.intake_done)) {
       setNeedsRedetection(true);
     }
-    // Tell the caller to reset wizard_step in DB so the cycle doesn't repeat
-    return app.wizard_step > 0;
+    // step stays at 0 (intake chat) — situationDone was set above if messages exist
   }
 
   // ── On mount: load a specific application (from ?id=) or the latest draft ────
@@ -1677,13 +1671,11 @@ function ApplyPageInner() {
 
         setAppId(app.id);
 
-        // Always restore saved progress (isRestoring guards auto-saves above)
-        if (app.wizard_step > 0 || app.intake_done) {
+        // Restore if user has gotten past fresh start (selected a situation, or has intake data).
+        // app.situation != null covers mid-chat logouts (situation saved but wizard not complete).
+        if (app.situation != null || app.intake_done) {
           const state = await loadApplicationState(sb, app.id);
-          const needsReset = restoreFromDb(app, state);
-          if (needsReset) {
-            await updateApplicationFlags(sb, app.id, { wizard_step: 0 });
-          }
+          restoreFromDb(app, state);
         }
       } catch (e) {
         console.error("[apply] restore error", e);
@@ -1694,14 +1686,17 @@ function ApplyPageInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ── No debounced auto-saves. All saves are explicit and awaited: ────────────
-  //   • Name/Situation Continue → save name/situation + wizard_step
-  //   • Every intake AI response → saveIntakeConversation immediately
-  //   • [STREAMS_DETECTED] → awaited saveStreams + ID mapping before go(1)
-  //   • Confirm Structure Continue → saveStreams + wizard_step=2
-  //   • [ITEMS_DETECTED] per stream → immediate saveStreamItems + saveDriverConversation
-  //   • Generate Forecast → saveStreams + wizard_step=3
-  //   • Save & Continue → saveForecastConfig + saveProjectionSnapshot + flags
+  // ── Auto-save wizard_step on every navigation ───────────────────────────────
+  // Fires whenever the user moves between steps (or situationDone toggles to true).
+  // isRestoring guard prevents writing back the value we just read from DB.
+  // wizard_step in DB = React step (0=intake,1=confirm,2=revenue,3=forecast)
+  useEffect(() => {
+    if (!appId || !userId || isRestoring || !situationDone) return;
+    updateApplicationFlags(createClient(), appId, { wizard_step: step }).catch(
+      (e) => console.error("[apply] wizard_step save:", e)
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, situationDone]);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, aiTyping]);
   // Fire opening message only after situation is confirmed and no messages yet
@@ -2053,9 +2048,9 @@ function ApplyPageInner() {
                         setIsSaving(true); setSaveError(null);
                         try {
                           const sb = createClient();
-                          // wizard_step:1 = user is entering Business Mapping
-                          // This opens the restore gate (wizard_step > 0) for mid-chat logout
-                          await updateApplicationFlags(sb, appId, { situation, wizard_step: 1 });
+                          // Save the chosen situation so the restore gate (app.situation != null)
+                          // opens on next login — mid-chat progress will be recovered.
+                          await updateApplicationFlags(sb, appId, { situation });
                         } catch (e) {
                           setSaveError(e instanceof Error ? e.message : (e as {message?: string}).message ?? "Save failed");
                           setIsSaving(false);
@@ -2335,7 +2330,8 @@ function ApplyPageInner() {
                         if (Object.keys(idMap).length > 0) {
                           setStreams((prev) => prev.map((s) => ({ ...s, id: idMap[s.id] ?? s.id })));
                         }
-                        await updateApplicationFlags(sb, appId, { intake_done: true, wizard_step: 2 });
+                        await updateApplicationFlags(sb, appId, { intake_done: true });
+                        // wizard_step is saved automatically by the useEffect when go(2) fires
                       }
                       setStreamIdx(0); setDriverMode("chat"); go(2);
                     } catch (e) {
@@ -2500,7 +2496,8 @@ function ApplyPageInner() {
                                 position: i,
                               }))
                             );
-                            await updateApplicationFlags(sb, appId, { drivers_done: true, wizard_step: 3 });
+                            await updateApplicationFlags(sb, appId, { drivers_done: true });
+                            // wizard_step saved automatically by useEffect when go(3) fires
                           }
                           go(3);
                         } catch (e) {
