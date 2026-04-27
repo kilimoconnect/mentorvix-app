@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence, useMotionValue, useSpring, useInView } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { getUserApplications, type ApplicationSummary } from "@/lib/supabase/revenue";
+import { makeFmt } from "@/lib/utils/currency";
 import {
   LayoutDashboard, FilePlus2, FolderOpen, BarChart3, Landmark,
   Settings, CreditCard, HelpCircle, Bell, ChevronRight,
@@ -46,10 +47,9 @@ interface Assessment    {
 }
 
 /* ─── helpers ─── */
-function fmtCurrency(n: number): string {
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000)     return `$${Math.round(n / 1_000)}K`;
-  return `$${Math.round(n).toLocaleString()}`;
+/** Returns a currency formatter scoped to a specific application's currency. */
+function appFmt(app: ApplicationSummary | null | undefined) {
+  return makeFmt(app?.currency ?? null);
 }
 
 function computeMRR(streams: StoredStream[]): number {
@@ -177,6 +177,8 @@ export default function DashboardPage() {
   /* ── derived metrics (from Supabase application summaries) ── */
   // Most recent application with any revenue data
   const latestApp    = applications.find((a) => a.stream_count > 0) ?? applications[0] ?? null;
+  // Currency formatter scoped to the latest app (used for snapshot + what-if)
+  const fmt = appFmt(latestApp);
   const hasRevenue   = !!latestApp && latestApp.stream_count > 0;
   const hasAssessment = !!assessment;
 
@@ -306,7 +308,7 @@ export default function DashboardPage() {
     const sub = [
       sitLabel,
       app.item_count > 0 ? `${app.item_count} items` : null,
-      app.estimated_mrr > 0 ? `${fmtCurrency(Number(app.estimated_mrr))}/mo MRR` : null,
+      app.estimated_mrr > 0 ? `${appFmt(app)(Number(app.estimated_mrr))}/mo MRR` : null,
     ].filter(Boolean).join(" · ") || "In progress";
     const date = new Date(app.updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
     return { id: app.id, name, date, progress, status, sc, sb, missing: "", href: `/dashboard/apply?id=${app.id}`, sub };
@@ -768,7 +770,7 @@ export default function DashboardPage() {
                       <p className="text-xs text-slate-400 mb-2 leading-tight">
                         {hasRevenue ? "Monthly Revenue (MRR)" : "Avg Monthly Revenue"}
                       </p>
-                      <p className="text-lg sm:text-xl font-bold text-slate-900">{fmtCurrency(displayRevenue)}</p>
+                      <p className="text-lg sm:text-xl font-bold text-slate-900">{fmt(displayRevenue)}</p>
                       {hasRevenue && (
                         <div className="flex items-center gap-1 mt-1">
                           <TrendingUp className="w-3.5 h-3.5" style={{ color: "#059669" }} />
@@ -786,7 +788,7 @@ export default function DashboardPage() {
                   {displayExpenses !== null ? (
                     <motion.div whileHover={{ scale: 1.02 }} className="rounded-xl p-3 border border-slate-100">
                       <p className="text-xs text-slate-400 mb-2 leading-tight">Avg Monthly Expenses</p>
-                      <p className="text-lg sm:text-xl font-bold text-slate-900">{fmtCurrency(displayExpenses)}</p>
+                      <p className="text-lg sm:text-xl font-bold text-slate-900">{fmt(displayExpenses)}</p>
                     </motion.div>
                   ) : (
                     <EmptyMetric label="Monthly Expenses" cta="Build revenue model →" href="/dashboard/apply" />
@@ -797,7 +799,7 @@ export default function DashboardPage() {
                     <motion.div whileHover={{ scale: 1.02 }} className="rounded-xl p-3 border border-slate-100">
                       <p className="text-xs text-slate-400 mb-2 leading-tight">Est. Free Cash Flow</p>
                       <p className="text-lg sm:text-xl font-bold text-slate-900">
-                        {displayCashFlow >= 0 ? "" : "-"}{fmtCurrency(Math.abs(displayCashFlow))}
+                        {displayCashFlow >= 0 ? "" : "-"}{fmt(Math.abs(displayCashFlow))}
                       </p>
                       <div className="flex items-center gap-1 mt-1">
                         {displayCashFlow >= 0
@@ -816,7 +818,7 @@ export default function DashboardPage() {
                   {year1Rev !== null ? (
                     <motion.div whileHover={{ scale: 1.02 }} className="rounded-xl p-3 border border-slate-100">
                       <p className="text-xs text-slate-400 mb-2 leading-tight">Year 1 Projection</p>
-                      <p className="text-lg sm:text-xl font-bold text-slate-900">{fmtCurrency(year1Rev)}</p>
+                      <p className="text-lg sm:text-xl font-bold text-slate-900">{fmt(year1Rev)}</p>
                       <div className="flex items-center gap-1 mt-1">
                         <TrendingUp className="w-3.5 h-3.5" style={{ color: "#0e7490" }} />
                         <span className="text-xs font-semibold" style={{ color: "#0e7490" }}>3yr forecast ready</span>
@@ -834,13 +836,13 @@ export default function DashboardPage() {
                     <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-50">
                       <BarChart3 className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                       <span className="text-xs text-slate-600 flex-1">{streamCount} stream{streamCount !== 1 ? "s" : ""} · {itemCount} items</span>
-                      <span className="text-xs font-semibold text-slate-700">{fmtCurrency(Number(latestApp.estimated_mrr))}/mo</span>
+                      <span className="text-xs font-semibold text-slate-700">{fmt(Number(latestApp.estimated_mrr))}/mo</span>
                     </div>
                     {year1Rev && (
                       <div className="flex items-center gap-2 p-2 rounded-lg bg-slate-50">
                         <TrendingUp className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" />
                         <span className="text-xs text-slate-600 flex-1">Year 1 forecast</span>
-                        <span className="text-xs font-semibold text-slate-700">{fmtCurrency(year1Rev)}</span>
+                        <span className="text-xs font-semibold text-slate-700">{fmt(year1Rev)}</span>
                       </div>
                     )}
                     <Link href="/dashboard/apply" className="flex items-center gap-1 text-xs font-semibold mt-1" style={{ color: "#0e7490" }}>
@@ -1020,12 +1022,12 @@ export default function DashboardPage() {
                     initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
                     transition={{ duration: 0.3 }}
                     className="text-xl sm:text-2xl font-bold" style={{ color: "#0e7490" }}>
-                    {fmtCurrency(simLow)} – {fmtCurrency(simHigh)}
+                    {fmt(simLow)} – {fmt(simHigh)}
                   </motion.p>
                   {(simRevenuePct > 0 || simCollateral) && (
                     <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                       className="text-xs font-semibold mt-1" style={{ color: "#059669" }}>
-                      +{fmtCurrency(simLow - simBase.low)} increase from baseline
+                      +{fmt(simLow - simBase.low)} increase from baseline
                     </motion.p>
                   )}
                   <p className="text-xs text-slate-400 mt-2">
