@@ -2563,173 +2563,329 @@ function ApplyPageInner() {
             })()}
 
 
-            {/* ══ STEP 1: Stream Review ══ */}
-            {step === 1 && (
-              <motion.div key="review" custom={dir} variants={slide} initial="enter" animate="center" exit="exit" className="space-y-5">
-                {/* Detection summary */}
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                    <span className="text-xs font-semibold uppercase tracking-wider text-emerald-600">AI Detection Complete</span>
-                  </div>
-                  <h2 className="text-2xl font-bold text-slate-900">
-                    {streams.length} income source{streams.length !== 1 ? "s" : ""} detected
-                  </h2>
-                  <p className="text-slate-500 text-sm mt-1">
-                    {detectedTypes.length} revenue model{detectedTypes.length !== 1 ? "s" : ""}:{" "}
-                    {detectedTypes.map((t) => STREAM_META[t].label).join(" · ")}
-                  </p>
-                </div>
+            {/* ══ STEP 1: Structure Review ══ */}
+            {step === 1 && (() => {
+              const complexity = streams.length >= 4 ? "Complex" : streams.length >= 2 ? "Moderate" : "Standard";
+              const overallConf = streams.every(s => s.confidence === "high") ? "High"
+                : streams.some(s => s.confidence === "high") ? "Medium" : "Low";
+              const totalItems = streams.reduce((a, s) => a + s.items.length, 0);
+              const INPUT_MODE: Record<StreamType, string> = {
+                product:      "Category / SKU",
+                service:      "Client / Project",
+                subscription: "Subscription Tiers",
+                rental:       "Unit / Rate",
+                marketplace:  "GMV / Commission",
+                contract:     "Contract / Deal",
+                custom:       "Custom Inputs",
+              };
+              const DETECTION_BASIS: Record<StreamType, string[]> = {
+                product:      ["Physical goods / inventory implied", "SKU-driven pricing model selected", "Retail or wholesale distribution identified"],
+                service:      ["Skills-based / consulting work identified", "Project or retainer billing model selected", "Client volume and fee rate applicable"],
+                subscription: ["Recurring membership model detected", "Monthly billing and churn rate applicable", "Subscriber growth curve will be modelled"],
+                rental:       ["Asset-based income stream identified", "Occupancy rate and lease terms required", "Unit yield and vacancy factored in"],
+                marketplace:  ["Platform or brokerage model detected", "GMV and commission take-rate applicable", "Transaction volume will drive projections"],
+                contract:     ["Fixed-term supply agreement implied", "Contract value and duration applicable", "Pipeline conversion rate will be modelled"],
+                custom:       ["Custom income stream identified", "Manual driver inputs required", "Stream will be modelled on volume × price basis"],
+              };
 
-                {/* Stream cards */}
-                <div className="space-y-2">
-                  {streams.map((s, i) => {
-                    const Meta = STREAM_META[s.type]; const Icon = Meta.icon;
-                    return (
-                      <motion.div key={s.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: i * 0.07, ease: EASE }}
-                        className="bg-white rounded-2xl border border-slate-100">
-                        <div className="flex items-center gap-3 p-4">
-                          <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
-                            style={{ background: Meta.bg }}>
-                            <Icon className="w-4 h-4" style={{ color: Meta.color }} />
+              return (
+                <motion.div key="review" custom={dir} variants={slide} initial="enter" animate="center" exit="exit">
+                  <div className="grid grid-cols-1 lg:grid-cols-[1fr_216px] gap-5">
+
+                    {/* ── Left column ── */}
+                    <div className="space-y-4">
+
+                      {/* Header */}
+                      <div>
+                        <div className="flex items-center gap-2 mb-2">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                          <span className="text-[11px] font-bold uppercase tracking-widest text-emerald-600">
+                            Revenue Mapping Complete
+                          </span>
+                        </div>
+                        <h2 className="text-2xl sm:text-[1.75rem] font-bold text-slate-900 leading-tight">
+                          {streams.length} Revenue Stream{streams.length !== 1 ? "s" : ""} Confirmed
+                        </h2>
+                        <p className="text-sm text-slate-500 mt-2 leading-relaxed">
+                          Your forecast structure is ready for driver inputs and projection modelling.
+                        </p>
+                      </div>
+
+                      {/* Summary row */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {[
+                          { label: "Detected Streams", value: String(streams.length) },
+                          { label: "Primary Model",    value: detectedTypes.length > 0 ? STREAM_META[detectedTypes[0]].label : "—" },
+                          { label: "Confidence",       value: overallConf },
+                          { label: "Complexity",       value: complexity },
+                        ].map(({ label, value }) => (
+                          <div key={label} className="bg-white border border-slate-100 rounded-xl px-3 py-2.5">
+                            <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">{label}</p>
+                            <p className="text-xs font-bold text-slate-800">{value}</p>
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <EditableName value={s.name} onChange={(name) => updateStream({ ...s, name })} />
-                            <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                              {/* Type selector */}
-                              <select value={s.type}
-                                onChange={(e) => updateStream({ ...s, type: e.target.value as StreamType })}
-                                className="text-xs text-slate-500 border border-slate-100 rounded-md px-1.5 py-0.5 bg-transparent focus:border-cyan-400 focus:outline-none cursor-pointer">
-                                {Object.entries(STREAM_META).map(([k, v]) => (
-                                  <option key={k} value={k}>{v.label}</option>
-                                ))}
-                              </select>
-                              <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full border ${CONF_STYLE[s.confidence]}`}>
-                                {s.confidence === "high" ? "High" : s.confidence === "medium" ? "Medium" : "Low"} confidence
-                              </span>
-                            </div>
-                          </div>
-                          {deleteConfirmId === s.id ? (
-                            <div className="flex items-center gap-1.5 flex-shrink-0">
-                              <span className="text-xs text-red-500 font-medium whitespace-nowrap">Remove?</span>
-                              <button
-                                onClick={() => {
-                                  setStreams((prev) => prev.filter((x) => x.id !== s.id));
-                                  setDeleteConfirmId(null);
-                                }}
-                                className="text-xs font-semibold px-2 py-1 rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors">
-                                Yes
-                              </button>
-                              <button onClick={() => setDeleteConfirmId(null)}
-                                className="text-xs font-semibold px-2 py-1 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors">
-                                No
-                              </button>
-                            </div>
-                          ) : (
-                            <button onClick={() => setDeleteConfirmId(s.id)}
-                              className="p-1.5 rounded-lg text-slate-300 hover:text-red-400 hover:bg-red-50 transition-colors">
-                              <Trash2 className="w-4 h-4" />
+                        ))}
+                      </div>
+
+                      {/* Stream cards */}
+                      <div className="space-y-2">
+                        {streams.map((s, i) => {
+                          const Meta = STREAM_META[s.type]; const Icon = Meta.icon;
+                          return (
+                            <motion.div key={s.id} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+                              transition={{ delay: i * 0.07, ease: EASE }}
+                              className="bg-white rounded-2xl border border-slate-200 shadow-[0_1px_6px_rgba(0,0,0,0.05)]">
+
+                              {/* Card top row */}
+                              <div className="flex items-start gap-3 p-4">
+                                <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5"
+                                  style={{ background: Meta.bg }}>
+                                  <Icon className="w-4 h-4" style={{ color: Meta.color }} />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <EditableName value={s.name} onChange={(name) => updateStream({ ...s, name })} />
+                                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                    <select value={s.type}
+                                      onChange={(e) => updateStream({ ...s, type: e.target.value as StreamType })}
+                                      className="text-xs text-slate-500 border border-slate-100 rounded-md px-1.5 py-0.5 bg-transparent focus:border-cyan-400 focus:outline-none cursor-pointer">
+                                      {Object.entries(STREAM_META).map(([k, v]) => (
+                                        <option key={k} value={k}>{v.label}</option>
+                                      ))}
+                                    </select>
+                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${CONF_STYLE[s.confidence]}`}>
+                                      {s.confidence === "high" ? "High" : s.confidence === "medium" ? "Medium" : "Low"} confidence
+                                    </span>
+                                  </div>
+                                </div>
+                                {deleteConfirmId === s.id ? (
+                                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                                    <span className="text-xs text-red-500 font-medium whitespace-nowrap">Remove?</span>
+                                    <button onClick={() => { setStreams((prev) => prev.filter((x) => x.id !== s.id)); setDeleteConfirmId(null); }}
+                                      className="text-xs font-semibold px-2 py-1 rounded-lg bg-red-500 text-white hover:bg-red-600 transition-colors">Yes</button>
+                                    <button onClick={() => setDeleteConfirmId(null)}
+                                      className="text-xs font-semibold px-2 py-1 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors">No</button>
+                                  </div>
+                                ) : (
+                                  <button onClick={() => setDeleteConfirmId(s.id)}
+                                    className="p-1.5 rounded-lg text-slate-300 hover:text-red-400 hover:bg-red-50 transition-colors flex-shrink-0">
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Card detail row */}
+                              <div className="px-4 pb-3 ml-12 border-t border-slate-50 pt-2.5">
+                                <div className="grid grid-cols-3 gap-3">
+                                  <div>
+                                    <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Input Mode</p>
+                                    <p className="text-[11px] font-medium text-slate-600">{INPUT_MODE[s.type]}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Status</p>
+                                    {s.items.length > 0 ? (
+                                      <p className="text-[11px] font-bold text-emerald-600">{fmt(streamMRR(s))}/mo</p>
+                                    ) : (
+                                      <p className="text-[11px] font-medium text-amber-600">Awaiting Drivers</p>
+                                    )}
+                                  </div>
+                                  <div>
+                                    <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Description</p>
+                                    <p className="text-[11px] text-slate-500 leading-relaxed">{Meta.desc}</p>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Detection Basis — collapsible */}
+                              <details className="px-4 pb-3 ml-12 group">
+                                <summary className="text-[10px] text-slate-400 hover:text-cyan-600 cursor-pointer select-none list-none flex items-center gap-1 transition-colors">
+                                  <span className="underline underline-offset-2 decoration-dotted">Detection Basis</span>
+                                  <span className="text-slate-300 group-open:rotate-180 transition-transform text-[10px]">▾</span>
+                                </summary>
+                                <ul className="mt-1.5 space-y-1">
+                                  {DETECTION_BASIS[s.type].map((point) => (
+                                    <li key={point} className="text-[10px] text-slate-400 flex items-start gap-1.5">
+                                      <span className="text-cyan-400 flex-shrink-0 mt-px">·</span>
+                                      {point}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </details>
+
+                            </motion.div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Add stream + Re-run mapping */}
+                      <div className="space-y-2">
+                        <div className="bg-white border border-dashed border-slate-200 rounded-2xl p-4">
+                          <p className="text-[11px] font-semibold text-slate-500 mb-2.5">+ Add Additional Revenue Stream</p>
+                          <div className="flex flex-wrap gap-2">
+                            {(["product","service","subscription","rental","contract","marketplace"] as StreamType[]).map((t) => {
+                              const M = STREAM_META[t]; const TIcon = M.icon;
+                              return (
+                                <button key={t} onClick={() => setStreams(p => [...p, makeStream(M.label, t, "low")])}
+                                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-slate-200 bg-white hover:border-cyan-400 hover:text-cyan-600 text-slate-500 transition-all">
+                                  <TIcon className="w-3 h-3" style={{ color: M.color }} />
+                                  {M.label}
+                                </button>
+                              );
+                            })}
+                            <button onClick={() => setStreams(p => [...p, makeStream("New Revenue Stream", "custom", "low")])}
+                              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-dashed border-slate-200 text-slate-400 hover:border-slate-400 transition-all">
+                              <Plus className="w-3 h-3" /> Other
                             </button>
-                          )}
+                          </div>
                         </div>
-                        <div className="px-4 pb-3 ml-12 flex items-center justify-between gap-3">
-                          <p className="text-xs text-slate-400 flex-1">{Meta.desc}</p>
-                          {s.items.length > 0 ? (
-                            <span className="text-xs font-bold text-emerald-600 flex-shrink-0">{fmt(streamMRR(s))}/mo</span>
-                          ) : (
-                            <span className="text-[10px] text-slate-300 flex-shrink-0">no data yet</span>
-                          )}
+
+                        <button onClick={() => { setMessages([]); setStreams([]); go(0); }}
+                          className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-slate-200 text-xs font-medium text-slate-500 hover:bg-slate-50 transition-colors">
+                          <RefreshCw className="w-3.5 h-3.5" /> Re-run AI Mapping
+                        </button>
+                      </div>
+
+                      {/* MRR summary — when data exists */}
+                      {streams.some((s) => s.items.length > 0) && (
+                        <div className="flex items-center justify-between bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3">
+                          <div className="flex items-center gap-2">
+                            <BarChart3 className="w-4 h-4 text-emerald-600" />
+                            <span className="text-xs font-medium text-emerald-700">
+                              {streams.filter((s) => s.items.length > 0).length} of {streams.length} stream{streams.length !== 1 ? "s" : ""} have data
+                            </span>
+                          </div>
+                          <span className="text-sm font-bold text-emerald-700">
+                            {fmt(streams.reduce((a, s) => a + streamMRR(s), 0))}/mo
+                          </span>
                         </div>
-                      </motion.div>
-                    );
-                  })}
-                </div>
+                      )}
 
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => {
-                      const s = makeStream("New Revenue Stream", "custom", "low");
-                      setStreams((p) => [...p, s]);
-                    }}
-                    className="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl border border-dashed border-slate-200 text-sm font-medium text-slate-500 hover:border-cyan-400 hover:text-cyan-600 transition-colors">
-                    <Plus className="w-4 h-4" /> Add stream manually
-                  </button>
-                  <button onClick={() => { setMessages([]); setStreams([]); go(0); }}
-                    className="flex items-center gap-1.5 px-4 py-3 rounded-xl border border-slate-200 text-sm text-slate-500 hover:bg-slate-50 transition-colors">
-                    <RefreshCw className="w-3.5 h-3.5" /> Re-chat
-                  </button>
-                </div>
-
-                {/* Total MRR summary — shown only when at least one stream has items */}
-                {streams.some((s) => s.items.length > 0) && (
-                  <div className="flex items-center justify-between bg-emerald-50 border border-emerald-100 rounded-xl px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <BarChart3 className="w-4 h-4 text-emerald-600" />
-                      <span className="text-xs font-medium text-emerald-700">
-                        {streams.filter((s) => s.items.length > 0).length} of {streams.length} stream{streams.length !== 1 ? "s" : ""} have data
-                      </span>
+                      {/* CTA */}
+                      <div>
+                        <button
+                          disabled={streams.length === 0 || isSaving}
+                          onClick={async () => {
+                            setIsSaving(true); setSaveError(null);
+                            try {
+                              if (appId && userId) {
+                                const sb = createClient();
+                                const savedStreams = await saveStreams(sb, appId, userId,
+                                  streams.map((s, i) => ({
+                                    id: isDbId(s.id) ? s.id : undefined,
+                                    name: s.name, type: s.type, confidence: s.confidence,
+                                    monthly_growth_pct: s.monthlyGrowthPct,
+                                    sub_new_per_month: s.subNewPerMonth,
+                                    sub_churn_pct: s.subChurnPct,
+                                    rental_occupancy_pct: s.rentalOccupancyPct,
+                                    driver_done: s.driverDone,
+                                    position: i,
+                                  }))
+                                );
+                                const idMap: Record<string, string> = {};
+                                streams.forEach((s, i) => {
+                                  const db = savedStreams[i];
+                                  if (db && s.id !== db.id) idMap[s.id] = db.id;
+                                });
+                                if (Object.keys(idMap).length > 0) {
+                                  setStreams((prev) => prev.map((s) => ({ ...s, id: idMap[s.id] ?? s.id })));
+                                }
+                                await updateApplicationFlags(sb, appId, { intake_done: true });
+                              }
+                              setStreamIdx(0); setDriverMode("chat"); go(2);
+                            } catch (e) {
+                              console.error("[Collect Revenue Data] save failed:", e);
+                              setSaveError(e instanceof Error ? e.message : (e as {message?: string}).message ?? "Save failed — please retry");
+                            } finally {
+                              setIsSaving(false);
+                            }
+                          }}
+                          className="w-full flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-50"
+                          style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
+                          {isSaving ? (
+                            <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                            </svg> Saving structure…</>
+                          ) : <>Continue to Driver Inputs <ArrowRight className="w-4 h-4" /></>}
+                        </button>
+                        {saveError && <p className="text-xs text-red-500 text-center mt-2">{saveError}</p>}
+                        <p className="text-[11px] text-slate-400 text-center mt-2.5">
+                          You can edit streams, add categories, or return to mapping at any time.
+                        </p>
+                      </div>
                     </div>
-                    <span className="text-sm font-bold text-emerald-700">
-                      {fmt(streams.reduce((a, s) => a + streamMRR(s), 0))}/mo
-                    </span>
-                  </div>
-                )}
 
-                <button
-                  disabled={streams.length === 0 || isSaving}
-                  onClick={async () => {
-                    setIsSaving(true); setSaveError(null);
-                    try {
-                      if (appId && userId) {
-                        const sb = createClient();
-                        // Await the save — DB UUIDs must exist before DriverChat mounts
-                        const savedStreams = await saveStreams(sb, appId, userId,
-                          streams.map((s, i) => ({
-                            id: isDbId(s.id) ? s.id : undefined,
-                            name: s.name, type: s.type, confidence: s.confidence,
-                            monthly_growth_pct: s.monthlyGrowthPct,
-                            sub_new_per_month: s.subNewPerMonth,
-                            sub_churn_pct: s.subChurnPct,
-                            rental_occupancy_pct: s.rentalOccupancyPct,
-                            driver_done: s.driverDone,
-                            position: i,
-                          }))
-                        );
-                        // Sync newly assigned DB UUIDs so DriverChat always has stable IDs
-                        const idMap: Record<string, string> = {};
-                        streams.forEach((s, i) => {
-                          const db = savedStreams[i];
-                          if (db && s.id !== db.id) idMap[s.id] = db.id;
-                        });
-                        if (Object.keys(idMap).length > 0) {
-                          setStreams((prev) => prev.map((s) => ({ ...s, id: idMap[s.id] ?? s.id })));
-                        }
-                        await updateApplicationFlags(sb, appId, { intake_done: true });
-                        // wizard_step is saved automatically by the useEffect when go(2) fires
-                      }
-                      setStreamIdx(0); setDriverMode("chat"); go(2);
-                    } catch (e) {
-                      console.error("[Collect Revenue Data] save failed:", e);
-                      setSaveError(e instanceof Error ? e.message : (e as {message?: string}).message ?? "Save failed — please retry");
-                    } finally {
-                      setIsSaving(false);
-                    }
-                  }}
-                  className="w-full flex items-center justify-center gap-2 py-4 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20 disabled:opacity-50"
-                  style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
-                  {isSaving ? (
-                    <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                    </svg> Saving structure…</>
-                  ) : <>Collect Revenue Data <ArrowRight className="w-4 h-4" /></>}
-                </button>
-                {saveError && (
-                  <p className="text-xs text-red-500 text-center -mt-2">{saveError}</p>
-                )}
-              </motion.div>
-            )}
+                    {/* ── Right: Model Snapshot panel ── */}
+                    <div className="hidden lg:block">
+                      <div className="bg-white rounded-2xl border border-slate-200 shadow-[0_2px_16px_rgba(0,0,0,0.07)] p-4 sticky top-4">
+                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">
+                          Model Snapshot
+                        </p>
+                        <div className="space-y-2.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-slate-500">Streams</span>
+                            <span className="text-xs font-bold text-slate-800">{streams.length}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-slate-500">Categories</span>
+                            <span className="text-xs font-medium text-slate-400 italic">
+                              {totalItems > 0 ? totalItems : "Pending"}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-slate-500">Items</span>
+                            <span className="text-xs font-medium text-slate-400 italic">
+                              {totalItems > 0 ? `${totalItems} entered` : "Pending"}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-slate-500">Forecast Horizon</span>
+                            <span className="text-xs font-medium text-slate-400 italic">Pending</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-slate-500">Currency</span>
+                            <span className="text-xs font-semibold text-slate-700">
+                              {currency ? <>{getCurrencySymbol(currency)} <span className="font-normal text-slate-400">{currency}</span></> : <span className="italic text-slate-400">—</span>}
+                            </span>
+                          </div>
+                          <div className="border-t border-slate-100 pt-2 flex items-center justify-between">
+                            <span className="text-xs text-slate-500">Autosave</span>
+                            <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" /> On
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Stream type breakdown */}
+                        {detectedTypes.length > 0 && (
+                          <div className="mt-4 pt-3 border-t border-slate-100 space-y-1.5">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">Stream Types</p>
+                            {detectedTypes.map(t => {
+                              const M = STREAM_META[t]; const TI = M.icon;
+                              return (
+                                <div key={t} className="flex items-center gap-2">
+                                  <div className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0"
+                                    style={{ background: M.bg }}>
+                                    <TI className="w-3 h-3" style={{ color: M.color }} />
+                                  </div>
+                                  <span className="text-[11px] text-slate-600">{M.label}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        <div className="mt-4 pt-3 border-t border-slate-100">
+                          <p className="text-[10px] text-slate-400 leading-relaxed">
+                            Driver inputs define volumes, pricing, and growth — the engine of your projection model.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                  </div>{/* /two-column */}
+                </motion.div>
+              );
+            })()}
+
 
             {/* ══ STEP 2: Per-Stream Driver Collection ══ */}
             {step === 2 && currentStream && (
