@@ -288,7 +288,11 @@ function parseItems(text: string): StreamItem[] | null {
   const idx = text.indexOf("[ITEMS_DETECTED]");
   if (idx === -1) return null;
   try {
-    const arr = JSON.parse(text.slice(idx + "[ITEMS_DETECTED]".length).trim()) as
+    let jsonPart = text.slice(idx + "[ITEMS_DETECTED]".length).trim();
+    // Strip any trailing detection tags so JSON.parse doesn't choke on them
+    const nextTag = jsonPart.search(/\[FORECAST_YEARS\]/);
+    if (nextTag !== -1) jsonPart = jsonPart.slice(0, nextTag).trim();
+    const arr = JSON.parse(jsonPart) as
       { name: string; category?: string; volume?: number; price?: number; unit?: string; note?: string }[];
     return arr.map((a) => ({
       id: uid(), name: a.name, category: a.category ?? "General",
