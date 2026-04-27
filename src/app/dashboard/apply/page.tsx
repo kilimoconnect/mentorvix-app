@@ -197,10 +197,46 @@ function streamMRR(s: RevenueStream): number {
   }, 0);
 }
 
-function fmt(n: number) {
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000)     return `$${(n / 1_000).toFixed(1)}K`;
-  return `$${Math.round(n)}`;
+/* ─── Currency catalogue ─────────────────────────────────────────────────── */
+const CURRENCIES = [
+  { code: "USD", symbol: "$",    name: "US Dollar" },
+  { code: "EUR", symbol: "€",    name: "Euro" },
+  { code: "GBP", symbol: "£",    name: "British Pound" },
+  { code: "NGN", symbol: "₦",    name: "Nigerian Naira" },
+  { code: "KES", symbol: "KSh",  name: "Kenyan Shilling" },
+  { code: "GHS", symbol: "GH₵",  name: "Ghana Cedi" },
+  { code: "ZAR", symbol: "R",    name: "South African Rand" },
+  { code: "UGX", symbol: "USh",  name: "Ugandan Shilling" },
+  { code: "TZS", symbol: "TSh",  name: "Tanzanian Shilling" },
+  { code: "RWF", symbol: "FRw",  name: "Rwandan Franc" },
+  { code: "ETB", symbol: "Br",   name: "Ethiopian Birr" },
+  { code: "XOF", symbol: "CFA",  name: "West African CFA Franc" },
+  { code: "EGP", symbol: "E£",   name: "Egyptian Pound" },
+  { code: "MAD", symbol: "MAD",  name: "Moroccan Dirham" },
+  { code: "INR", symbol: "₹",    name: "Indian Rupee" },
+  { code: "AED", symbol: "AED",  name: "UAE Dirham" },
+  { code: "SAR", symbol: "SAR",  name: "Saudi Riyal" },
+  { code: "CAD", symbol: "CA$",  name: "Canadian Dollar" },
+  { code: "AUD", symbol: "A$",   name: "Australian Dollar" },
+  { code: "BRL", symbol: "R$",   name: "Brazilian Real" },
+  { code: "MXN", symbol: "MX$",  name: "Mexican Peso" },
+  { code: "JPY", symbol: "¥",    name: "Japanese Yen" },
+  { code: "CNY", symbol: "¥",    name: "Chinese Yuan" },
+  { code: "SGD", symbol: "S$",   name: "Singapore Dollar" },
+] as const;
+
+type CurrencyCode = typeof CURRENCIES[number]["code"];
+
+function getCurrencySymbol(code: string | null): string {
+  return CURRENCIES.find((c) => c.code === code)?.symbol ?? code ?? "";
+}
+
+function makeFmt(symbol: string) {
+  return (n: number): string => {
+    if (n >= 1_000_000) return `${symbol}${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000)     return `${symbol}${(n / 1_000).toFixed(1)}K`;
+    return `${symbol}${Math.round(n).toLocaleString()}`;
+  };
 }
 
 /* ═══════════════════════════════════════ projection ══ */
@@ -452,8 +488,8 @@ function StreamTypeControls({ stream, onUpdate }: { stream: RevenueStream; onUpd
 
 /* ═══════════════════════════════════════ ItemRow ══ */
 function ItemRow({
-  item, type, onChange, onDelete,
-}: { item: StreamItem; type: StreamType; onChange: (i: StreamItem) => void; onDelete: () => void }) {
+  item, type, onChange, onDelete, fmt, currencySymbol,
+}: { item: StreamItem; type: StreamType; onChange: (i: StreamItem) => void; onDelete: () => void; fmt: (n: number) => string; currencySymbol: string }) {
   const upN = (k: keyof StreamItem, v: string | number) => onChange({ ...item, [k]: v });
   const rev = itemMonthlyRev(item, type);
   return (
@@ -473,7 +509,7 @@ function ItemRow({
       </td>
       <td className="px-3 py-2">
         <div className="flex items-center justify-end gap-0.5">
-          <span className="text-xs text-slate-300">{type === "marketplace" ? "%" : "$"}</span>
+          <span className="text-xs text-slate-300">{type === "marketplace" ? "%" : currencySymbol}</span>
           <input type="number" value={item.price || ""} placeholder="0"
             onChange={(e) => upN("price", Number(e.target.value))}
             className="w-20 text-xs text-right text-slate-700 bg-transparent border-b border-transparent group-hover:border-slate-200 focus:border-cyan-400 outline-none" />
@@ -492,7 +528,7 @@ function ItemRow({
 }
 
 /* ═══════════════════════════════════════ ItemTable ══ */
-function ItemTable({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s: RevenueStream) => void }) {
+function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueStream; onUpdate: (s: RevenueStream) => void; fmt: (n: number) => string; currencySymbol: string }) {
   const addItem = () => {
     const item: StreamItem = { id: uid(), name: "New item", category: "General", volume: 0, price: 0, unit: "unit" };
     onUpdate({ ...stream, items: [...stream.items, item] });
@@ -560,6 +596,8 @@ function ItemTable({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s: 
                         type={stream.type}
                         onChange={updateItem}
                         onDelete={() => deleteItem(item.id)}
+                        fmt={fmt}
+                        currencySymbol={currencySymbol}
                       />
                     ))}
                   </>
@@ -890,7 +928,8 @@ function ImportPane({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s:
 }
 
 /* ═══════════════════════════════════════ RevenueMix ══ */
-function RevenueMix({ streams, months }: { streams: RevenueStream[]; months: ProjMonth[] }) {
+function RevenueMix({ streams, months, currency }: { streams: RevenueStream[]; months: ProjMonth[]; currency: string | null }) {
+  const fmt = makeFmt(getCurrencySymbol(currency));
   if (!months.length || !streams.length) return null;
 
   const totals = streams.map((s, i) => ({
@@ -943,13 +982,16 @@ function ForecastView({
   horizonYears,
   startYear,
   startMonth,
+  currency,
 }: {
   streams:          RevenueStream[];
   onUpdateStream:   (s: RevenueStream) => void;
   horizonYears:     number;
   startYear:        number;
   startMonth:       number;
+  currency:         string | null;
 }) {
+  const fmt = makeFmt(getCurrencySymbol(currency));
   const [view,             setView]             = useState<"annual" | "monthly">("annual");
   const [selectedYear,     setSelectedYear]     = useState(1);
   const [showAssumptions,  setShowAssumptions]  = useState(false);
@@ -1062,7 +1104,7 @@ function ForecastView({
       )}
 
       {/* ── Revenue Mix ── */}
-      <RevenueMix streams={streams} months={projection} />
+      <RevenueMix streams={streams} months={projection} currency={currency} />
 
       {/* ── Revenue Assumptions (inline edit without going back) ── */}
       <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
@@ -1149,7 +1191,7 @@ function ForecastView({
               <p className="text-xs font-bold text-slate-800 uppercase tracking-wider">Revenue Statement</p>
               <p className="text-[10px] text-slate-400 mt-0.5">Annual projection · {streams.length} stream{streams.length !== 1 ? "s" : ""}</p>
             </div>
-            <span className="text-[10px] text-slate-400 font-medium">Amounts in {fmt(1).replace("1", "").trim() || "$"}</span>
+            <span className="text-[10px] text-slate-400 font-medium">Amounts in {getCurrencySymbol(currency)} ({currency ?? "—"})</span>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full border-collapse">
@@ -1445,8 +1487,12 @@ function ApplyPageInner() {
 
   // Situation detection (pre-gate)
   const [situation,     setSituation]     = useState<SituationId | null>(null);
+  const [currency,      setCurrency]      = useState<CurrencyCode | null>(null);
   const [nameDone,      setNameDone]      = useState(false);  // passed the "name your project" screen
   const [situationDone, setSituationDone] = useState(false);
+
+  // Currency-aware number formatter used everywhere outside ForecastView/RevenueMix
+  const fmt = makeFmt(getCurrencySymbol(currency));
 
   // Progress bar position: 0=situation, 1=mapping, 2=confirm, 3=data, 4=forecast
   const displayStep = !situationDone ? 0 : step + 1;
@@ -1555,6 +1601,7 @@ function ApplyPageInner() {
       setSituation(app.situation as SituationId);
       setNameDone(true); // they've already passed the "name your project" screen
     }
+    if (app.currency) setCurrency(app.currency as CurrencyCode);
 
     const intake = state.intakeConversation;
     if (intake?.messages?.length) {
@@ -2015,6 +2062,37 @@ function ApplyPageInner() {
                   })}
                 </div>
 
+                {/* ── Currency selector ── */}
+                <div className="bg-white rounded-2xl border border-slate-200 px-4 py-3.5">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <div className="w-7 h-7 rounded-lg bg-cyan-50 flex items-center justify-center">
+                        <span className="text-xs font-bold text-cyan-700">
+                          {currency ? getCurrencySymbol(currency) : "¤"}
+                        </span>
+                      </div>
+                      <span className="text-xs font-semibold text-slate-700">Currency</span>
+                    </div>
+                    <select
+                      value={currency ?? ""}
+                      onChange={(e) => setCurrency(e.target.value as CurrencyCode)}
+                      className="flex-1 text-sm text-slate-700 bg-transparent border-0 focus:outline-none focus:ring-0 cursor-pointer"
+                    >
+                      <option value="" disabled>Select your currency…</option>
+                      {CURRENCIES.map((c) => (
+                        <option key={c.code} value={c.code}>
+                          {c.symbol} — {c.name} ({c.code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {!currency && (
+                    <p className="text-[10px] text-slate-400 mt-2 ml-9">
+                      All revenue figures will be displayed in your selected currency.
+                    </p>
+                  )}
+                </div>
+
                 <div className="flex gap-3">
                   <button onClick={() => { setNameDone(false); setIsSaving(false); setSaveError(null); }}
                     className="flex items-center gap-2 px-5 py-4 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
@@ -2022,16 +2100,15 @@ function ApplyPageInner() {
                   </button>
                   <motion.button
                     whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}
-                    disabled={!situation || isSaving}
+                    disabled={!situation || !currency || isSaving}
                     onClick={async () => {
-                      if (!situation) return;
+                      if (!situation || !currency) return;
                       if (appId) {
                         setIsSaving(true); setSaveError(null);
                         try {
                           const sb = createClient();
-                          // Save the chosen situation so the restore gate (app.situation != null)
-                          // opens on next login — mid-chat progress will be recovered.
-                          await updateApplicationFlags(sb, appId, { situation });
+                          // Save situation + currency so the restore gate opens on next login.
+                          await updateApplicationFlags(sb, appId, { situation, currency });
                         } catch (e) {
                           setSaveError(e instanceof Error ? e.message : (e as {message?: string}).message ?? "Save failed");
                           setIsSaving(false);
@@ -2426,13 +2503,13 @@ function ApplyPageInner() {
                     <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
                       Revenue Items — edit inline
                     </p>
-                    <ItemTable stream={currentStream} onUpdate={updateStream} />
+                    <ItemTable stream={currentStream} onUpdate={updateStream} fmt={fmt} currencySymbol={getCurrencySymbol(currency)} />
                   </div>
                 )}
 
                 {/* Add first item when no items yet in manual mode */}
                 {driverMode === "manual" && currentStream.items.length === 0 && (
-                  <ItemTable stream={currentStream} onUpdate={updateStream} />
+                  <ItemTable stream={currentStream} onUpdate={updateStream} fmt={fmt} currencySymbol={getCurrencySymbol(currency)} />
                 )}
 
                 {/* Navigation */}
@@ -2528,6 +2605,7 @@ function ApplyPageInner() {
                   horizonYears={forecastHorizon}
                   startYear={forecastStartYear}
                   startMonth={forecastStartMonth}
+                  currency={currency}
                 />
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">

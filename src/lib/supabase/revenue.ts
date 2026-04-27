@@ -24,6 +24,7 @@ export interface DbApplication {
   user_id: string;
   name: string | null;
   situation: string | null;   // e.g. "existing" | "new_business" | "expansion" etc.
+  currency: string | null;    // ISO 4217 code, e.g. "USD", "NGN", "KES"
   wizard_step: number;         // last active step: 0=situation, 1=mapping, 2=confirm, 3=data, 4=forecast
   status: "draft" | "submitted" | "under_review" | "approved" | "rejected";
   intake_done: boolean;
@@ -168,7 +169,7 @@ export async function getOrCreateApplication(
 export async function updateApplicationFlags(
   supabase: SupabaseClient,
   applicationId: string,
-  flags: Partial<Pick<DbApplication, "intake_done" | "drivers_done" | "forecast_done" | "name" | "status" | "situation" | "wizard_step">>,
+  flags: Partial<Pick<DbApplication, "intake_done" | "drivers_done" | "forecast_done" | "name" | "status" | "situation" | "wizard_step" | "currency">>,
 ): Promise<void> {
   const { error } = await supabase
     .from("applications")
