@@ -130,6 +130,46 @@ const MIX_COLORS = [
   "#0891b2","#8b5cf6","#0f766e","#dc2626","#d97706","#2563eb",
 ];
 
+/* ═══════════════════════════════════════ shared voice utilities ══ */
+function pickBestVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
+  if (!voices.length) return null;
+  const en = voices.filter((v) => v.lang.startsWith("en"));
+  const priority: ((v: SpeechSynthesisVoice) => boolean)[] = [
+    (v) => /neural|enhanced|premium|natural/i.test(v.name) && v.lang === "en-US",
+    (v) => /neural|enhanced|premium|natural/i.test(v.name) && v.lang.startsWith("en"),
+    (v) => /online/i.test(v.name) && v.lang === "en-US",
+    (v) => /online/i.test(v.name) && v.lang.startsWith("en"),
+    (v) => /samantha|karen|victoria|moira/i.test(v.name),
+    (v) => /aria|jenny|guy|emma|brian/i.test(v.name),
+    (v) => /google us english/i.test(v.name),
+    (v) => v.lang === "en-US",
+    (v) => v.lang.startsWith("en"),
+  ];
+  for (const test of priority) { const m = en.find(test); if (m) return m; }
+  return voices[0] ?? null;
+}
+
+function resolveVoice(
+  cached: React.MutableRefObject<SpeechSynthesisVoice | null>
+): Promise<SpeechSynthesisVoice | null> {
+  return new Promise((resolve) => {
+    if (cached.current) { resolve(cached.current); return; }
+    const voices = window.speechSynthesis.getVoices();
+    if (voices.length) {
+      const v = pickBestVoice(voices);
+      cached.current = v;
+      resolve(v);
+    } else {
+      window.speechSynthesis.onvoiceschanged = () => {
+        const v = pickBestVoice(window.speechSynthesis.getVoices());
+        cached.current = v;
+        window.speechSynthesis.onvoiceschanged = null;
+        resolve(v);
+      };
+    }
+  });
+}
+
 /* ═══════════════════════════════════════ helpers ══ */
 let _id = 0;
 const uid = () => `i${++_id}`;
@@ -507,11 +547,25 @@ function ItemTable({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s: 
 }
 
 /* ═══════════════════════════════════════ DriverChat ══ */
-function DriverChat({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s: RevenueStream) => void }) {
-  const [input,  setInput]  = useState("");
-  const [typing, setTyping] = useState(false);
-  const [error,  setError]  = useState("");
-  const endRef = useRef<HTMLDivElement>(null);
+function DriverChat({ stream, onUpdate, situation }: {
+  stream: RevenueStream;
+  onUpdate: (s: RevenueStream) => void;
+  situation: string | null;
+}) {
+  const [input,       setInput]       = useState("");
+  const [typing,      setTyping]      = useState(false);
+  const [error,       setError]       = useState("");
+  const [micActive,   setMicActive]   = useState(false);
+  const [speakingIdx, setSpeakingIdx] = useState<number | null>(null);
+  const endRef        = useRef<HTMLDivElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
+  const cachedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
+
+  // Pre-warm voice on mount
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.speechSynthesis) resolveVoice(cachedVoiceRef);
+  }, []);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [stream.driverMessages, typing]);
   useEffect(() => {
@@ -522,15 +576,14 @@ function DriverChat({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s:
   const callDriver = async (history: ChatMessage[]) => {
     setTyping(true); setError("");
     try {
-      const res  = await fetch("/api/drivers", {
+      const res = await fetch("/api/drivers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history, stream: { name: stream.name, type: stream.type } }),
+        body: JSON.stringify({ messages: history, stream: { name: stream.name, type: stream.type }, situation }),
       });
       const data = await res.json() as { text?: string; provider?: Provider; error?: string };
       if (data.error) throw new Error(data.error);
       const text = data.text ?? "";
-
       const items = parseItems(text);
       if (items) {
         const cleanText = text.slice(0, text.indexOf("[ITEMS_DETECTED]")).trim() ||
@@ -553,6 +606,65 @@ function DriverChat({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s:
     callDriver(updated);
   };
 
+  // Speaker — per message
+  const speakMsg = async (text: string, idx: number) => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    if (speakingIdx === idx) { window.speechSynthesis.cancel(); setSpeakingIdx(null); return; }
+    window.speechSynthesis.cancel();
+    const voice = await resolveVoice(cachedVoiceRef);
+    const utt = new SpeechSynthesisUtterance(text);
+    if (voice) utt.voice = voice;
+    utt.lang = "en-US"; utt.rate = 1.0; utt.pitch = 1.0;
+    utt.onend = () => setSpeakingIdx(null);
+    utt.onerror = () => setSpeakingIdx(null);
+    setSpeakingIdx(idx);
+    window.speechSynthesis.speak(utt);
+  };
+
+  // Mic — manual stop+send
+  const toggleMic = () => {
+    if (typeof window === "undefined") return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!SR) return;
+
+    if (micActive) {
+      // Stop and send whatever was captured
+      recognitionRef.current?.stop();
+      recognitionRef.current = null;
+      setMicActive(false);
+      setTimeout(() => {
+        setInput((prev) => { if (prev.trim()) { /* send via effect below */ } return prev; });
+      }, 50);
+      // Use a ref-based send to avoid stale closure
+      sendRef.current();
+      return;
+    }
+
+    const rec = new SR();
+    rec.lang = "en-US";
+    rec.interimResults = true;
+    rec.continuous = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rec.onresult = (e: any) => {
+      let final = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) final += (e.results[i][0]?.transcript as string) ?? "";
+      }
+      if (final) setInput((prev) => prev ? prev.trimEnd() + " " + final.trim() : final.trim());
+    };
+    rec.onerror = () => { recognitionRef.current = null; setMicActive(false); };
+    rec.onend   = () => { if (recognitionRef.current) { recognitionRef.current = null; setMicActive(false); } };
+    rec.start();
+    recognitionRef.current = rec;
+    setMicActive(true);
+  };
+
+  // Stable ref so toggleMic can call send() without stale closure
+  const sendRef = useRef(send);
+  useEffect(() => { sendRef.current = send; });
+
   return (
     <div className="flex flex-col gap-3">
       <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-3 overflow-y-auto" style={{ maxHeight: 280 }}>
@@ -571,6 +683,15 @@ function DriverChat({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s:
             }`} style={m.role === "user" ? { background: "linear-gradient(135deg,#0e7490,#0891b2)" } : {}}>
               {m.content}
             </div>
+            {m.role === "assistant" && (
+              <button onClick={() => speakMsg(m.content, i)}
+                title={speakingIdx === i ? "Stop" : "Read aloud"}
+                className={`ml-1.5 mt-0.5 w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 self-start transition-all ${
+                  speakingIdx === i ? "text-cyan-600 bg-cyan-50" : "text-slate-300 hover:text-cyan-500 hover:bg-slate-50"
+                }`}>
+                <Volume2 className="w-3 h-3" />
+              </button>
+            )}
           </div>
         ))}
         {typing && (
@@ -598,11 +719,24 @@ function DriverChat({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s:
       </div>
       {!stream.driverDone && (
         <div className="flex items-end gap-2">
+          {/* Mic — click to start, click again to stop & send */}
+          <motion.button whileTap={{ scale: 0.95 }} onClick={toggleMic}
+            title={micActive ? "Stop & send" : "Speak your answer"}
+            className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all ${
+              micActive
+                ? "bg-red-500 text-white shadow-lg shadow-red-500/30 animate-pulse"
+                : "border border-slate-200 text-slate-400 hover:border-cyan-400 hover:text-cyan-600 bg-white"
+            }`}>
+            {micActive ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+          </motion.button>
           <textarea rows={2} value={input} onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
             disabled={typing}
-            placeholder="Answer the AI's question… (Enter to send)"
-            className="flex-1 resize-none px-4 py-2.5 border border-slate-200 rounded-xl text-sm text-slate-800 bg-white focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all placeholder:text-slate-300 disabled:opacity-60" />
+            placeholder={micActive ? "Listening… tap mic to stop & send" : "Answer the AI's question… (Enter to send)"}
+            className={`flex-1 resize-none px-4 py-2.5 border rounded-xl text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 transition-all placeholder:text-slate-300 disabled:opacity-60 ${
+              micActive ? "border-red-300 focus:border-red-400 focus:ring-red-400/20"
+                        : "border-slate-200 focus:border-cyan-500 focus:ring-cyan-500/20"
+            }`} />
           <motion.button whileTap={{ scale: 0.95 }} onClick={send} disabled={!input.trim() || typing}
             className="w-10 h-10 rounded-xl flex items-center justify-center text-white disabled:opacity-40"
             style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
@@ -1035,80 +1169,30 @@ export default function ApplyPage() {
   const [micActive,    setMicActive]    = useState(false);
   const [speakingIdx,  setSpeakingIdx]  = useState<number | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef  = useRef<any>(null);
-  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const cachedVoiceRef  = useRef<SpeechSynthesisVoice | null>(null);
-
-  // Resolve the best voice — picks from loaded list, waits via onvoiceschanged if not ready yet
-  const resolveBestVoice = useCallback((): Promise<SpeechSynthesisVoice | null> => {
-    return new Promise((resolve) => {
-      const pick = (voices: SpeechSynthesisVoice[]) => {
-        if (!voices.length) return null;
-        const en = voices.filter((v) => v.lang.startsWith("en"));
-        const priority = [
-          (v: SpeechSynthesisVoice) => /neural|enhanced|premium|natural/i.test(v.name) && v.lang === "en-US",
-          (v: SpeechSynthesisVoice) => /neural|enhanced|premium|natural/i.test(v.name) && v.lang.startsWith("en"),
-          (v: SpeechSynthesisVoice) => /online/i.test(v.name) && v.lang === "en-US",
-          (v: SpeechSynthesisVoice) => /online/i.test(v.name) && v.lang.startsWith("en"),
-          (v: SpeechSynthesisVoice) => /samantha|karen|victoria|moira/i.test(v.name),
-          (v: SpeechSynthesisVoice) => /aria|jenny|guy|emma|brian/i.test(v.name),
-          (v: SpeechSynthesisVoice) => /google us english/i.test(v.name),
-          (v: SpeechSynthesisVoice) => v.lang === "en-US",
-          (v: SpeechSynthesisVoice) => v.lang.startsWith("en"),
-        ];
-        for (const test of priority) { const m = en.find(test); if (m) return m; }
-        return voices[0];
-      };
-
-      if (cachedVoiceRef.current) { resolve(cachedVoiceRef.current); return; }
-      const voices = window.speechSynthesis.getVoices();
-      if (voices.length) {
-        const v = pick(voices);
-        cachedVoiceRef.current = v;
-        resolve(v);
-      } else {
-        // Voices not loaded yet — wait for the event (fires once on first load)
-        window.speechSynthesis.onvoiceschanged = () => {
-          const v = pick(window.speechSynthesis.getVoices());
-          cachedVoiceRef.current = v;
-          window.speechSynthesis.onvoiceschanged = null;
-          resolve(v);
-        };
-      }
-    });
-  }, []);
+  const recognitionRef = useRef<any>(null);
+  const cachedVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
   // Pre-warm: load and cache the voice as soon as the component mounts
   useEffect(() => {
-    if (typeof window !== "undefined" && window.speechSynthesis) resolveBestVoice();
-  }, [resolveBestVoice]);
+    if (typeof window !== "undefined" && window.speechSynthesis) resolveVoice(cachedVoiceRef);
+  }, []);
 
   const speakMessage = useCallback(async (text: string, idx: number) => {
     if (typeof window === "undefined" || !window.speechSynthesis) return;
-    if (speakingIdx === idx) {
-      window.speechSynthesis.cancel();
-      setSpeakingIdx(null);
-      return;
-    }
+    if (speakingIdx === idx) { window.speechSynthesis.cancel(); setSpeakingIdx(null); return; }
     window.speechSynthesis.cancel();
-    const voice = await resolveBestVoice();
+    const voice = await resolveVoice(cachedVoiceRef);
     const utt = new SpeechSynthesisUtterance(text);
     if (voice) utt.voice = voice;
-    utt.lang  = "en-US";
-    utt.rate  = 1.0;
-    utt.pitch = 1.0;
-    utt.onend  = () => setSpeakingIdx(null);
+    utt.lang = "en-US"; utt.rate = 1.0; utt.pitch = 1.0;
+    utt.onend = () => setSpeakingIdx(null);
     utt.onerror = () => setSpeakingIdx(null);
     setSpeakingIdx(idx);
     window.speechSynthesis.speak(utt);
-  }, [speakingIdx, resolveBestVoice]);
+  }, [speakingIdx]);
 
-  const stopMic = useCallback(() => {
-    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-    recognitionRef.current?.stop();
-    recognitionRef.current = null;
-    setMicActive(false);
-  }, []);
+  // sendIntake ref so toggleMic closure always calls the latest version
+  const sendIntakeRef = useRef<() => void>(() => {});
 
   const toggleMic = useCallback(() => {
     if (typeof window === "undefined") return;
@@ -1117,40 +1201,33 @@ export default function ApplyPage() {
     const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
     if (!SR) return;
 
-    // If already active — manual stop
-    if (micActive) { stopMic(); return; }
+    if (micActive) {
+      // Stop recording and immediately send whatever was captured
+      recognitionRef.current?.stop();
+      recognitionRef.current = null;
+      setMicActive(false);
+      sendIntakeRef.current();
+      return;
+    }
 
     const rec = new SR();
     rec.lang = "en-US";
-    rec.interimResults = true;   // show live transcript while speaking
-    rec.continuous = true;       // keep listening until silence or manual stop
-
+    rec.interimResults = true;
+    rec.continuous = true;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     rec.onresult = (e: any) => {
-      // Reset silence timer on every new result
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-
-      // Collect all final segments from this event batch
       let finalText = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
         if (e.results[i].isFinal) finalText += (e.results[i][0]?.transcript as string) ?? "";
       }
-      if (finalText) {
-        setInput((prev) => (prev ? prev.trimEnd() + " " + finalText.trim() : finalText.trim()));
-      }
-
-      // Auto-stop after 1.8 s of silence following the last final result
-      silenceTimerRef.current = setTimeout(() => stopMic(), 1800);
+      if (finalText) setInput((prev) => prev ? prev.trimEnd() + " " + finalText.trim() : finalText.trim());
     };
-
-    rec.onerror = () => stopMic();
-    // onend fires when browser forcefully stops (e.g. timeout) — clean up state
-    rec.onend = () => { if (recognitionRef.current) stopMic(); };
-
+    rec.onerror = () => { recognitionRef.current = null; setMicActive(false); };
+    rec.onend   = () => { if (recognitionRef.current) { recognitionRef.current = null; setMicActive(false); } };
     rec.start();
     recognitionRef.current = rec;
     setMicActive(true);
-  }, [micActive, stopMic]);
+  }, [micActive]);
 
   const go = (n: number) => { setDir(n > step ? 1 : -1); setStep(n); };
 
@@ -1192,6 +1269,8 @@ export default function ApplyPage() {
     const updated = [...messages, { role: "user" as const, content: text }];
     setMessages(updated); setInput(""); callIntake(updated);
   };
+  // Keep ref in sync so toggleMic's closure always calls the latest sendIntake
+  useEffect(() => { sendIntakeRef.current = sendIntake; });
 
   const updateStream = useCallback((updated: RevenueStream) => {
     setStreams((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
@@ -1390,7 +1469,7 @@ export default function ApplyPage() {
                   {/* Mic button */}
                   <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
                     onClick={toggleMic}
-                    title={micActive ? "Stop recording" : "Speak your answer"}
+                    title={micActive ? "Stop & send" : "Speak your answer"}
                     className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 transition-all ${
                       micActive
                         ? "bg-red-500 text-white shadow-lg shadow-red-500/30 animate-pulse"
@@ -1582,7 +1661,7 @@ export default function ApplyPage() {
                 </div>
 
                 {/* Mode content */}
-                {driverMode === "chat"   && <DriverChat   stream={currentStream} onUpdate={updateStream} />}
+                {driverMode === "chat"   && <DriverChat   stream={currentStream} onUpdate={updateStream} situation={situation} />}
                 {driverMode === "import" && <ImportPane   stream={currentStream} onUpdate={updateStream} />}
                 {driverMode === "manual" && (
                   <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-xs text-amber-700">

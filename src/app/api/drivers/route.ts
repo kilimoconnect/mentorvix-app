@@ -5,7 +5,16 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 type Message = { role: "user" | "assistant"; content: string };
 type StreamType = "product" | "service" | "subscription" | "rental" | "marketplace" | "contract" | "custom";
 
-function buildSystem(streamName: string, streamType: StreamType): string {
+const SITUATION_LABELS: Record<string, string> = {
+  new_business:    "STARTING A NEW BUSINESS — use future/planned language throughout (will, planning to, expecting). Never ask about current sales.",
+  existing:        "EXISTING OPERATING BUSINESS — ask about current actuals.",
+  expansion:       "EXPANSION / GROWTH — the business is adding capacity. Distinguish existing vs. new/planned revenue.",
+  working_capital: "WORKING CAPITAL NEED — focus on current monthly revenue and repayment capacity.",
+  asset_purchase:  "ASSET PURCHASE — focus on revenue the asset will enable or support.",
+  turnaround:      "TURNAROUND / RECOVERY — be sensitive. Focus on current active revenue, not peak.",
+};
+
+function buildSystem(streamName: string, streamType: StreamType, situation?: string): string {
 
   const formulaHint: Record<StreamType, string> = {
     product:      "Revenue = Units Sold × Selling Price",
@@ -87,8 +96,12 @@ OPENING STRATEGY FOR CUSTOM / CONVERSION STREAMS:
   Otherwise: ask about volume and price per revenue item.`,
   };
 
-  return `You are a revenue data specialist at Mentorvix, collecting item-level sales data for one revenue stream. You think at the level of a commercial analyst — not a chatbot.
+  const situationCtx = situation && SITUATION_LABELS[situation]
+    ? `\nCLIENT SITUATION: ${SITUATION_LABELS[situation]}\n`
+    : "";
 
+  return `You are a revenue data specialist at Mentorvix, collecting item-level sales data for one revenue stream. You think at the level of a commercial analyst — not a chatbot.
+${situationCtx}
 STREAM: "${streamName}"
 TYPE: ${streamType}
 PROJECTION FORMULA: ${formulaHint[streamType]}
@@ -158,16 +171,17 @@ async function callGemini(messages: Message[], system: string): Promise<string> 
 
 export async function POST(req: NextRequest) {
   try {
-    const { messages, stream } = await req.json() as {
+    const { messages, stream, situation } = await req.json() as {
       messages: Message[];
       stream: { name: string; type: StreamType };
+      situation?: string;
     };
 
     if (!stream?.name) {
       return NextResponse.json({ error: "Stream name required" }, { status: 400 });
     }
 
-    const system   = buildSystem(stream.name, stream.type);
+    const system   = buildSystem(stream.name, stream.type, situation);
     const provider = chooseProvider();
     const text     = provider === "gemini"
       ? await callGemini(messages ?? [], system)
