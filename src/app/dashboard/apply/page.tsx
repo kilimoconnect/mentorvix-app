@@ -331,7 +331,7 @@ interface ProjMonth {
   index: number; year: number; monthLabel: string; yearMonth: string; total: number;
   byStream: {
     id: string; name: string; type: StreamType; rev: number;
-    byCategory: Record<string, { rev: number; items: { name: string; rev: number }[] }>;
+    byCategory: Record<string, { rev: number; items: { id: string; name: string; rev: number }[] }>;
   }[];
 }
 
@@ -348,14 +348,14 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
     const d = new Date(startDate.getFullYear(), startDate.getMonth() + i, 1);
 
     const byStream = streams.map((s) => {
-      const byCategory: Record<string, { rev: number; items: { name: string; rev: number }[] }> = {};
+      const byCategory: Record<string, { rev: number; items: { id: string; name: string; rev: number }[] }> = {};
       let streamRev = 0;
 
-      const addItem = (name: string, cat: string, rev: number) => {
+      const addItem = (id: string, name: string, cat: string, rev: number) => {
         const c = cat || "Other";
         if (!byCategory[c]) byCategory[c] = { rev: 0, items: [] };
         byCategory[c].rev += rev;
-        byCategory[c].items.push({ name, rev });
+        byCategory[c].items.push({ id, name, rev });
         streamRev += rev;
       };
 
@@ -405,7 +405,7 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
           if (p.sunsetMonth !== null && i > p.sunsetMonth) return;
           const pF = Math.pow(1 + p.pricePct / 1200, i);
           const sF = p.seasonMults[calMonth] ?? 1;
-          addItem(it.name, it.category, Math.round(it.volume * it.price * subFactor * pF * sF * expansionFactor));
+          addItem(it.id, it.name, it.category, Math.round(it.volume * it.price * subFactor * pF * sF * expansionFactor));
         });
 
       } else if (s.type === "rental") {
@@ -417,7 +417,7 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
           const vF = Math.pow(1 + p.volPct   / 100,  i);
           const pF = Math.pow(1 + p.pricePct / 1200, i);
           const sF = p.seasonMults[calMonth] ?? 1;
-          addItem(it.name, it.category, Math.round(it.volume * vF * it.price * pF * occ * sF * expansionFactor));
+          addItem(it.id, it.name, it.category, Math.round(it.volume * vF * it.price * pF * occ * sF * expansionFactor));
         });
 
       } else if (s.type === "marketplace") {
@@ -428,7 +428,7 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
           const vF = Math.pow(1 + p.volPct   / 100,  i);
           const pF = Math.pow(1 + p.pricePct / 1200, i);
           const sF = p.seasonMults[calMonth] ?? 1;
-          addItem(it.name, it.category, Math.round(it.volume * vF * (it.price / 100) * pF * sF * expansionFactor));
+          addItem(it.id, it.name, it.category, Math.round(it.volume * vF * (it.price / 100) * pF * sF * expansionFactor));
         });
 
       } else {
@@ -440,7 +440,7 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
           const vF = Math.pow(1 + p.volPct   / 100,  i);
           const pF = Math.pow(1 + p.pricePct / 1200, i);
           const sF = p.seasonMults[calMonth] ?? 1;
-          addItem(it.name, it.category, Math.round(it.volume * vF * it.price * pF * sF * expansionFactor));
+          addItem(it.id, it.name, it.category, Math.round(it.volume * vF * it.price * pF * sF * expansionFactor));
         });
       }
 
@@ -2428,10 +2428,14 @@ function ForecastView({
                           </TD>
                         )}
                       </tr>
-                      {/* Item drilldown rows */}
+                      {/* Item drilldown rows — read actual per-item revenue from projection */}
                       {isExpanded && s.items.map((it) => {
-                        const itMRR  = it.volume * (s.type === "marketplace" ? (it.price / 100) : s.type === "rental" ? it.price * ((s.rentalOccupancyPct ?? 100) / 100) : it.price);
-                        const frac   = sMRR > 0 ? itMRR / sMRR : 0;
+                        const getItemYearRev = (yr: ReturnType<typeof groupByYear>[0]) =>
+                          yr.months.reduce((sum, m) => {
+                            const cat = m.byStream.find((b) => b.id === s.id)?.byCategory[it.category || "Other"];
+                            return sum + (cat?.items.find((x) => x.id === it.id)?.rev ?? 0);
+                          }, 0);
+                        const itemGrand = years.reduce((sum, y) => sum + getItemYearRev(y), 0);
                         return (
                           <tr key={it.id} className="bg-slate-50/30 border-t border-slate-50">
                             <td className="pl-8 pr-3 py-2 text-[10px] text-slate-500 sticky left-0 bg-slate-50/30">
@@ -2440,13 +2444,13 @@ function ForecastView({
                                 {it.name}{it.category ? ` · ${it.category}` : ""}
                               </span>
                             </td>
-                            {yearTotals.map((yt, i) => (
+                            {years.map((y, i) => (
                               <td key={i} className="px-3 py-2 text-right text-[10px] tabular-nums whitespace-nowrap text-slate-500">
-                                {fmt(Math.round(yt * frac))}
+                                {fmt(getItemYearRev(y))}
                               </td>
                             ))}
                             <td className="px-3 py-2 text-right text-[10px] tabular-nums text-slate-500 border-l border-slate-100">
-                              {fmt(Math.round(streamGrand * frac))}
+                              {fmt(itemGrand)}
                             </td>
                             {years.length > 1 && <td className="px-3 py-2 text-right text-[10px] text-slate-300">—</td>}
                           </tr>
@@ -2605,10 +2609,13 @@ function ForecastView({
                             ))}
                             <TD cls="font-bold border-l border-slate-200">{fmt(yearTotal)}</TD>
                           </tr>
-                          {/* Item drilldown rows */}
+                          {/* Item drilldown rows — read actual per-item revenue from projection */}
                           {isExpanded && s.items.map((it) => {
-                            const itMRR = it.volume * (s.type === "marketplace" ? (it.price / 100) : s.type === "rental" ? it.price * ((s.rentalOccupancyPct ?? 100) / 100) : it.price);
-                            const frac  = sMRR > 0 ? itMRR / sMRR : 0;
+                            const getItemMonthRev = (m: ProjMonth) => {
+                              const cat = m.byStream.find((b) => b.id === s.id)?.byCategory[it.category || "Other"];
+                              return cat?.items.find((x) => x.id === it.id)?.rev ?? 0;
+                            };
+                            const itemYearRev = selectedYearData.months.reduce((a, m) => a + getItemMonthRev(m), 0);
                             return (
                               <tr key={it.id} className="bg-slate-50/30 border-t border-slate-50">
                                 <td className="pl-8 pr-3 py-1.5 text-[10px] text-slate-500 sticky left-0 bg-slate-50/30">
@@ -2621,16 +2628,16 @@ function ForecastView({
                                   <>
                                     {q.months.map((m) => (
                                       <td key={m.yearMonth} className="px-3 py-1.5 text-right text-[10px] tabular-nums whitespace-nowrap text-slate-400 border-l border-slate-50/80">
-                                        {fmt(Math.round(streamMonthRev(s.id, m) * frac))}
+                                        {fmt(getItemMonthRev(m))}
                                       </td>
                                     ))}
                                     <td key={`${q.label}-itot`} className="px-3 py-1.5 text-right text-[10px] tabular-nums whitespace-nowrap text-slate-400 font-medium border-l border-slate-200 bg-slate-50/80">
-                                      {fmt(Math.round(q.months.reduce((a, m) => a + streamMonthRev(s.id, m), 0) * frac))}
+                                      {fmt(q.months.reduce((a, m) => a + getItemMonthRev(m), 0))}
                                     </td>
                                   </>
                                 ))}
                                 <td className="px-3 py-1.5 text-right text-[10px] tabular-nums whitespace-nowrap text-slate-400 font-medium border-l border-slate-200">
-                                  {fmt(Math.round(yearTotal * frac))}
+                                  {fmt(itemYearRev)}
                                 </td>
                               </tr>
                             );
