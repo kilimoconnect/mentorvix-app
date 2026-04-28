@@ -2795,16 +2795,277 @@ function ForecastView({
         </div>
       )}
 
-      {/* ── Confidence Banner ── */}
-      <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-        <div className="flex items-start gap-3">
-          <Info className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
-          <div>
-            <p className="text-xs font-bold text-amber-800">Forecast Confidence: Medium</p>
-            <p className="text-xs text-amber-700 mt-0.5">Based on manual estimates only. Connect verified sales data or import bank records to reach High confidence.</p>
+      {/* ── Model Assumptions & Forecast Summary ── */}
+      {(() => {
+        const endDate   = new Date(startYear, startMonth + horizonYears * 12 - 1, 1);
+        const endLabel  = endDate.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+        const startLabel = new Date(startYear, startMonth, 1).toLocaleDateString("en-US", { month: "short", year: "numeric" });
+
+        // Per-stream projected totals for yr1 / final yr / total
+        const streamTotals = streams.map((s) => ({
+          ...s,
+          projTotal: projection.reduce((a, m) => a + (m.byStream.find((b) => b.id === s.id)?.rev ?? 0), 0),
+          yr1: years[0]?.months.reduce((a, m) => a + (m.byStream.find((b) => b.id === s.id)?.rev ?? 0), 0) ?? 0,
+          yrN: years[years.length - 1]?.months.reduce((a, m) => a + (m.byStream.find((b) => b.id === s.id)?.rev ?? 0), 0) ?? 0,
+        }));
+
+        // Peak revenue month
+        const peakMonth = projection.length > 0
+          ? projection.reduce((mx, m) => m.total > mx.total ? m : mx, projection[0])
+          : null;
+
+        // First month where revenue ≥ 2× baseline
+        const baseRev = projection[0]?.total ?? 0;
+        const doublingMonth = baseRev > 0
+          ? projection.find((m, idx) => idx > 0 && m.total >= baseRev * 2)
+          : null;
+
+        // Structural drivers
+        const expansionStreams  = streams.filter((s) => s.expansionMonth !== null);
+        const overrideStreams   = streams.filter((s) => (s.overrides ?? []).length > 0);
+        const totalOverrides    = streams.reduce((a, s) => a + (s.overrides ?? []).length, 0);
+        const customSeasonItems = streams.reduce((a, s) => a + s.items.filter((it) => it.seasonalityPreset).length, 0);
+        const seasonalStreams   = streams.filter((s) => (s.seasonalityPreset ?? "none") !== "none");
+
+        const Dot = ({ color }: { color: string }) => (
+          <span className="w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 inline-block" style={{ background: color }} />
+        );
+
+        return (
+          <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
+
+            {/* Header */}
+            <div className="px-5 py-3.5" style={{ background: "#042f3d" }}>
+              <p className="text-[11px] font-bold text-white uppercase tracking-wider">Model Assumptions &amp; Forecast Summary</p>
+              <p className="text-[10px] text-slate-400 mt-0.5">All drivers, assumptions, and projected outcomes powering this model</p>
+            </div>
+
+            {/* ── Row 1: Parameters + Outlook ── */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-slate-100">
+              <div className="px-5 py-4 space-y-2">
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">Forecast Parameters</p>
+                {([
+                  ["Period",    `${startLabel} → ${endLabel}`],
+                  ["Horizon",   `${horizonYears} year${horizonYears !== 1 ? "s" : ""} · ${totalMths} months`],
+                  ["Streams",   `${streams.length} revenue stream${streams.length !== 1 ? "s" : ""}`],
+                  ["Items",     `${totalItems} revenue item${totalItems !== 1 ? "s" : ""}`],
+                  ["Scenario",  GROWTH_PRESETS[dominantScenario].label],
+                  ["Currency",  currency ?? "—"],
+                ] as [string, string][]).map(([label, val]) => (
+                  <div key={label} className="flex items-center justify-between gap-4">
+                    <span className="text-[10px] text-slate-400">{label}</span>
+                    <span className="text-[10px] font-semibold text-slate-700 text-right">{val}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="px-5 py-4 space-y-2">
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">Revenue Outlook</p>
+                {([
+                  ["Baseline MRR",              fmt(totalMRR),                                    ""],
+                  ["Year 1 Revenue",            fmt(years[0]?.total ?? 0),                        ""],
+                  [`Year ${horizonYears} Rev`,  fmt(years[years.length - 1]?.total ?? 0),         ""],
+                  ["Cumulative Total",          fmt(grandTotal),                                   "#0e7490"],
+                  ["CAGR",                      cagr !== null ? `${cagr >= 0 ? "+" : ""}${cagr.toFixed(1)}%` : "—", cagr !== null ? (cagr >= 0 ? "#059669" : "#e11d48") : ""],
+                  ["Peak Month",                peakMonth ? `${peakMonth.yearMonth} · ${fmt(peakMonth.total)}` : "—", ""],
+                ] as [string, string, string][]).map(([label, val, color]) => (
+                  <div key={label} className="flex items-center justify-between gap-4">
+                    <span className="text-[10px] text-slate-400">{label}</span>
+                    <span className="text-[10px] font-semibold text-right" style={{ color: color || "#1e293b" }}>{val}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* ── Row 2: Per-stream table ── */}
+            <div className="border-t border-slate-100">
+              <div className="px-5 py-2.5 bg-slate-50/60">
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Stream Assumptions</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse" style={{ minWidth: 680 }}>
+                  <thead>
+                    <tr style={{ background: "#f8fafc" }}>
+                      {["Stream","Scenario","Vol/mo","Price/yr","Eff. Rate","Seasonality","Items","Mix %","Yr 1","Final Yr"].map((h) => (
+                        <th key={h} className={`px-3 py-2 text-[10px] font-bold text-slate-500 whitespace-nowrap ${h === "Stream" ? "text-left" : "text-right"}`}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {streamTotals.map((s, si) => {
+                      const pct    = grandTotal > 0 ? Math.round((s.projTotal / grandTotal) * 100) : 0;
+                      const sCagr  = years.length > 1 && s.yr1 > 0 ? ((Math.pow(s.yrN / s.yr1, 1 / (years.length - 1)) - 1) * 100) : null;
+                      const scCol  = s.scenario === "growth" ? "#059669" : s.scenario === "conservative" ? "#b45309" : "#0e7490";
+                      const hasSeasOvr = (s.overrides ?? []).some((o) => o.seasonalityPreset);
+                      const hasItemSeas = s.items.some((it) => it.seasonalityPreset);
+                      return (
+                        <tr key={s.id} className={si % 2 === 0 ? "bg-white" : "bg-slate-50/40"}>
+                          <td className="px-3 py-2.5 text-[10px] font-medium text-slate-700">
+                            <span className="flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: MIX_COLORS[si % MIX_COLORS.length] }} />
+                              {s.name}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 text-right">
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ color: scCol, background: `${scCol}18` }}>
+                              {GROWTH_PRESETS[s.scenario].label}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 text-right text-[10px] tabular-nums text-slate-600">
+                            {(s.volumeGrowthPct ?? 0) > 0 ? `+${s.volumeGrowthPct}%` : "—"}
+                          </td>
+                          <td className="px-3 py-2.5 text-right text-[10px] tabular-nums text-slate-600">
+                            {(s.annualPriceGrowthPct ?? 0) > 0 ? `+${s.annualPriceGrowthPct}%` : "—"}
+                          </td>
+                          <td className="px-3 py-2.5 text-right text-[10px] font-semibold tabular-nums" style={{ color: s.monthlyGrowthPct > 0 ? "#059669" : "#64748b" }}>
+                            {s.monthlyGrowthPct > 0 ? `+${s.monthlyGrowthPct.toFixed(2)}%/mo` : "Flat"}
+                          </td>
+                          <td className="px-3 py-2.5 text-right text-[10px] text-slate-500">
+                            {SEASONALITY_PRESETS[s.seasonalityPreset ?? "none"]?.label ?? "None"}
+                            {hasSeasOvr && <span className="text-[8px] text-cyan-500 ml-1">+ovr</span>}
+                          </td>
+                          <td className="px-3 py-2.5 text-right text-[10px] text-slate-500 tabular-nums">
+                            {s.items.length}
+                            {hasItemSeas && <span className="text-[8px] text-violet-500 ml-1">+S</span>}
+                          </td>
+                          <td className="px-3 py-2.5 text-right text-[10px] font-semibold text-slate-700 tabular-nums">{pct}%</td>
+                          <td className="px-3 py-2.5 text-right text-[10px] tabular-nums text-slate-600">{fmt(s.yr1)}</td>
+                          <td className="px-3 py-2.5 text-right text-[10px] font-semibold tabular-nums">
+                            <span style={{ color: s.yrN >= s.yr1 ? "#059669" : "#e11d48" }}>{fmt(s.yrN)}</span>
+                            {sCagr !== null && (
+                              <span className="text-[8px] text-slate-400 ml-1 font-normal">
+                                {sCagr >= 0 ? "+" : ""}{sCagr.toFixed(0)}%
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* ── Row 3: Structural Drivers + Milestones ── */}
+            <div className="border-t border-slate-100 grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 sm:divide-x divide-slate-100">
+              <div className="px-5 py-4">
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-3">Structural Drivers</p>
+                <ul className="space-y-2">
+                  <li className="flex items-start gap-2">
+                    <Dot color="#0e7490" />
+                    <span className="text-[10px] text-slate-600">
+                      <span className="font-semibold">{totalItems} revenue items</span> across {streams.length} stream{streams.length !== 1 ? "s" : ""}
+                    </span>
+                  </li>
+                  {expansionStreams.map((s) => (
+                    <li key={s.id} className="flex items-start gap-2">
+                      <Dot color="#059669" />
+                      <span className="text-[10px] text-slate-600">
+                        <span className="font-semibold">{s.name}</span> — expansion event from month {(s.expansionMonth ?? 0) + 1}{" "}
+                        at +{Math.round(((s.expansionMultiplier ?? 1) - 1) * 100)}% capacity uplift
+                      </span>
+                    </li>
+                  ))}
+                  {totalOverrides > 0 && (
+                    <li className="flex items-start gap-2">
+                      <Dot color="#7c3aed" />
+                      <span className="text-[10px] text-slate-600">
+                        <span className="font-semibold">{totalOverrides} growth/seasonality override{totalOverrides !== 1 ? "s" : ""}</span>{" "}
+                        across {overrideStreams.length} stream{overrideStreams.length !== 1 ? "s" : ""}
+                      </span>
+                    </li>
+                  )}
+                  {customSeasonItems > 0 && (
+                    <li className="flex items-start gap-2">
+                      <Dot color="#a78bfa" />
+                      <span className="text-[10px] text-slate-600">
+                        <span className="font-semibold">{customSeasonItems} item{customSeasonItems !== 1 ? "s" : ""}</span> with individual seasonality patterns
+                      </span>
+                    </li>
+                  )}
+                  {seasonalStreams.length > 0 && (
+                    <li className="flex items-start gap-2">
+                      <Dot color="#f59e0b" />
+                      <span className="text-[10px] text-slate-600">
+                        Seasonality on <span className="font-semibold">{seasonalStreams.length} stream{seasonalStreams.length !== 1 ? "s" : ""}</span>:{" "}
+                        {seasonalStreams.map((s) => SEASONALITY_PRESETS[s.seasonalityPreset ?? "none"]?.label).join(", ")}
+                      </span>
+                    </li>
+                  )}
+                  {expansionStreams.length === 0 && totalOverrides === 0 && customSeasonItems === 0 && seasonalStreams.length === 0 && (
+                    <li className="flex items-start gap-2">
+                      <Dot color="#cbd5e1" />
+                      <span className="text-[10px] text-slate-400">No structural overrides — pure volume × price model</span>
+                    </li>
+                  )}
+                </ul>
+              </div>
+              <div className="px-5 py-4">
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-3">Key Milestones</p>
+                <ul className="space-y-2">
+                  {peakMonth && (
+                    <li className="flex items-start gap-2">
+                      <TrendingUp className="w-3 h-3 text-emerald-500 shrink-0 mt-0.5" />
+                      <span className="text-[10px] text-slate-600">
+                        <span className="font-semibold">Peak month:</span> {peakMonth.yearMonth} at {fmt(peakMonth.total)}/mo
+                      </span>
+                    </li>
+                  )}
+                  {doublingMonth ? (
+                    <li className="flex items-start gap-2">
+                      <Zap className="w-3 h-3 text-amber-500 shrink-0 mt-0.5" />
+                      <span className="text-[10px] text-slate-600">
+                        <span className="font-semibold">Revenue doubles</span> by {doublingMonth.yearMonth} (month {doublingMonth.index + 1})
+                      </span>
+                    </li>
+                  ) : baseRev > 0 && dominantScenario === "base" && (
+                    <li className="flex items-start gap-2">
+                      <Info className="w-3 h-3 text-slate-300 shrink-0 mt-0.5" />
+                      <span className="text-[10px] text-slate-400">Revenue stays flat — switch to Conservative or Growth to model upside</span>
+                    </li>
+                  )}
+                  {cagr !== null && (
+                    <li className="flex items-start gap-2">
+                      <BarChart3 className="w-3 h-3 text-cyan-500 shrink-0 mt-0.5" />
+                      <span className="text-[10px] text-slate-600">
+                        <span className="font-semibold">CAGR {cagr >= 0 ? "+" : ""}{cagr.toFixed(1)}%</span> compounding over {horizonYears} year{horizonYears !== 1 ? "s" : ""}
+                      </span>
+                    </li>
+                  )}
+                  {years.length > 0 && years[0].total > 0 && (
+                    <li className="flex items-start gap-2">
+                      <Calendar className="w-3 h-3 text-slate-400 shrink-0 mt-0.5" />
+                      <span className="text-[10px] text-slate-600">
+                        <span className="font-semibold">Year 1 avg:</span> {fmt(Math.round((years[0]?.total ?? 0) / 12))}/mo · {fmt(years[0]?.total ?? 0)} total
+                      </span>
+                    </li>
+                  )}
+                  {years.length > 1 && (years[0]?.total ?? 0) > 0 && (
+                    <li className="flex items-start gap-2">
+                      <ScrollText className="w-3 h-3 text-slate-400 shrink-0 mt-0.5" />
+                      <span className="text-[10px] text-slate-600">
+                        <span className="font-semibold">Final year</span> is{" "}
+                        {Math.abs(Math.round(((years[years.length - 1]?.total ?? 0) / (years[0]?.total ?? 1) - 1) * 100))}%{" "}
+                        {(years[years.length - 1]?.total ?? 0) >= (years[0]?.total ?? 0) ? "above" : "below"} Year 1
+                      </span>
+                    </li>
+                  )}
+                </ul>
+              </div>
+            </div>
+
+            {/* ── Footer: model quality note ── */}
+            <div className="border-t border-slate-100 px-5 py-3 bg-slate-50/50 flex items-center justify-between gap-3 flex-wrap">
+              <p className="text-[10px] text-slate-400 leading-relaxed">
+                Projections are based on manually entered estimates. Actual outcomes depend on execution, market conditions, and input accuracy.
+              </p>
+              <span className="text-[9px] font-bold px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-600 shrink-0 whitespace-nowrap">
+                Medium Confidence
+              </span>
+            </div>
+
           </div>
-        </div>
-      </div>
+        );
+      })()}
 
     </div>
   );
