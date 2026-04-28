@@ -608,6 +608,17 @@ function StreamTypeControls({ stream, onUpdate }: { stream: RevenueStream; onUpd
     );
   }
 
+  if (stream.type === "custom") {
+    return (
+      <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-4 py-3">
+        <p className="text-xs text-indigo-700">
+          <span className="font-semibold">Custom formula:</span>{" "}
+          Revenue = Volume × Price per unit. Use Volume for your output quantity (e.g. sachets, kg, litres) and Price for the selling price per unit.
+        </p>
+      </div>
+    );
+  }
+
   return null;
 }
 
@@ -1184,7 +1195,14 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
             </div>
           </div>
 
-          {(stream.seasonalityPreset ?? "none") !== "none" && (
+          {(stream.seasonalityPreset ?? "none") === "custom" ? (
+            <button
+              onClick={() => setShowAdvanced(true)}
+              className="flex items-center gap-1.5 text-[10px] font-semibold text-cyan-600 hover:text-cyan-700 transition-colors">
+              <Pencil className="w-3 h-3" />
+              Edit custom monthly values in Advanced Controls
+            </button>
+          ) : (stream.seasonalityPreset ?? "none") !== "none" && (
             <p className="text-[10px] text-slate-400 italic leading-relaxed">
               {SEASONALITY_PRESETS[stream.seasonalityPreset ?? "none"]?.desc}
             </p>
@@ -1205,9 +1223,15 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
             </div>
             {/* Toggle */}
             <button
+              role="switch"
+              aria-checked={stream.expansionMonth !== null}
               onClick={() => onUpdate({ ...stream, expansionMonth: stream.expansionMonth !== null ? null : 12 })}
-              className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ${stream.expansionMonth !== null ? "bg-cyan-600" : "bg-slate-200"}`}>
-              <span className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${stream.expansionMonth !== null ? "translate-x-4" : "translate-x-0.5"}`} />
+              className={`relative inline-flex w-10 h-[22px] rounded-full transition-colors duration-200 shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400 ${
+                stream.expansionMonth !== null ? "bg-cyan-500" : "bg-slate-200"
+              }`}>
+              <span className={`absolute top-[3px] left-[3px] w-4 h-4 bg-white rounded-full shadow transition-transform duration-200 ${
+                stream.expansionMonth !== null ? "translate-x-[18px]" : "translate-x-0"
+              }`} />
             </button>
           </div>
 
@@ -1244,13 +1268,18 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
         </div>
 
         {/* Advanced Controls CTA */}
-        <div className="border-t border-slate-100 pt-3 flex items-center justify-between">
-          <div>
-            <p className="text-[10px] text-slate-400">
-              {(stream.overrides ?? []).length > 0
-                ? `${(stream.overrides ?? []).length} override${(stream.overrides ?? []).length !== 1 ? "s" : ""} configured`
-                : "Override growth, pricing, or seasonality by category or item"}
-            </p>
+        <div className="border-t border-slate-100 pt-3 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            {(stream.overrides ?? []).length > 0 ? (
+              <p className="text-[10px] font-semibold text-cyan-700">
+                {(stream.overrides ?? []).length} item-level rule{(stream.overrides ?? []).length !== 1 ? "s" : ""} active
+              </p>
+            ) : (
+              <>
+                <p className="text-[10px] font-semibold text-slate-600">Per-item overrides</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">Different growth, pricing or seasonality for specific categories or items</p>
+              </>
+            )}
           </div>
           <button
             onClick={() => setShowAdvanced(true)}
