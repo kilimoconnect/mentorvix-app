@@ -4529,12 +4529,9 @@ function ApplyPageInner() {
               ];
 
               return (
-                <motion.div key={`drivers-${currentStream.id}`} custom={dir} variants={slide} initial="enter" animate="center" exit="exit">
-
-                  {/* ── Top header ── */}
-                  <div className="mb-4">
-                    {/* Stream tabs + Add Stream + running MRR */}
-                    <div className="mb-3 space-y-2">
+                <>
+                {/* ── Stream tabs — static, outside animation so they don't slide away on switch ── */}
+                <div className="mb-3 space-y-2">
                       <div className="flex items-center gap-2 flex-wrap">
                         <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-x-auto">
                           {streams.map((s, i) => {
@@ -4598,6 +4595,8 @@ function ApplyPageInner() {
                       )}
                     </div>
 
+                <motion.div key={`drivers-${currentStream.id}`} custom={dir} variants={slide} initial="enter" animate="center" exit="exit">
+                  <div className="mb-4">
                     {/* H2 + subtitle */}
                     <div className="flex items-start gap-3">
                       <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5"
@@ -4878,6 +4877,7 @@ function ApplyPageInner() {
 
                   </div>{/* /two-column */}
                 </motion.div>
+                </>
               );
             })()}
 
