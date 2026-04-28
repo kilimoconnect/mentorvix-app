@@ -3108,8 +3108,10 @@ function ApplyPageInner() {
   // Streams
   const [streams,          setStreams]          = useState<RevenueStream[]>([]);
   const [streamIdx,        setStreamIdx]        = useState(0);
-  const [driverMode,       setDriverMode]       = useState<DriverMode>("chat");
+  // Per-stream mode memory: streamId → DriverMode. Absent = defaults to "chat".
+  const [driverModes,      setDriverModes]      = useState<Record<string, DriverMode>>({});
   const [showStreamPicker, setShowStreamPicker] = useState(false);
+  const [newStreamName,    setNewStreamName]    = useState("");
 
   // Forecast config — lifted so Phase 4 detection can set them directly
   const now0 = new Date();
@@ -3262,7 +3264,7 @@ function ApplyPageInner() {
       if (targetStep === 2) {
         const firstPending = restored.findIndex((s) => !s.driverDone);
         setStreamIdx(firstPending >= 0 ? firstPending : 0);
-        setDriverMode("chat");
+        setDriverModes({});
       }
       return;
     }
@@ -3489,7 +3491,6 @@ function ApplyPageInner() {
     if (step !== 2 || !currentDone || streamIdx >= streams.length - 1) return;
     const t = setTimeout(() => {
       setStreamIdx((prev) => Math.min(prev + 1, streams.length - 1));
-      setDriverMode("chat");
     }, 1400); // brief pause so user sees the "complete" badge before sliding
     return () => clearTimeout(t);
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -4400,7 +4401,7 @@ function ApplyPageInner() {
                                 }
                                 await updateApplicationFlags(sb, appId, { intake_done: true });
                               }
-                              setStreamIdx(0); setDriverMode("chat"); go(2);
+                              setStreamIdx(0); setDriverModes({}); go(2);
                             } catch (e) {
                               console.error("[Collect Revenue Data] save failed:", e);
                               setSaveError(e instanceof Error ? e.message : (e as {message?: string}).message ?? "Save failed — please retry");
@@ -4528,6 +4529,11 @@ function ApplyPageInner() {
                 { label: "Pricing data",        done: hasPricing },
               ];
 
+              // Per-stream mode derived from map (defaults to "chat" when absent)
+              const driverMode = driverModes[currentStream.id] ?? "chat";
+              const setDriverMode = (m: DriverMode) =>
+                setDriverModes((p) => ({ ...p, [currentStream.id]: m }));
+
               return (
                 <>
                 {/* ── Stream tabs — static, outside animation so they don't slide away on switch ── */}
@@ -4539,7 +4545,7 @@ function ApplyPageInner() {
                             const active = i === streamIdx;
                             return (
                               <button key={s.id}
-                                onClick={() => { setStreamIdx(i); setDriverMode("chat"); setShowStreamPicker(false); }}
+                                onClick={() => { setStreamIdx(i); setShowStreamPicker(false); }}
                                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap shrink-0 ${
                                   active
                                     ? "bg-cyan-600 text-white shadow-sm"
@@ -4571,25 +4577,69 @@ function ApplyPageInner() {
                       </div>
                       {/* Inline stream type picker */}
                       {showStreamPicker && (
-                        <div className="bg-white border border-cyan-100 rounded-xl p-3 shadow-md">
-                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Choose stream type</p>
-                          <div className="flex flex-wrap gap-1.5">
-                            {(["product","service","subscription","rental","contract","marketplace","custom"] as StreamType[]).map((t) => {
-                              const M = STREAM_META[t]; const TIcon = M.icon;
-                              return (
-                                <button key={t}
-                                  onClick={() => {
-                                    const ns = makeStream(M.label, t, "low");
-                                    setStreams((p) => [...p, ns]);
-                                    setStreamIdx(streams.length);
-                                    setDriverMode("chat");
-                                    setShowStreamPicker(false);
-                                  }}
-                                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-slate-200 bg-white hover:border-cyan-400 hover:text-cyan-600 text-slate-600 transition-all">
-                                  <TIcon className="w-3 h-3" style={{ color: M.color }} /> {M.label}
-                                </button>
-                              );
-                            })}
+                        <div className="bg-white border border-cyan-100 rounded-xl p-3 shadow-md space-y-2.5">
+                          <div>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Stream name (optional)</p>
+                            <input
+                              type="text"
+                              value={newStreamName}
+                              onChange={(e) => setNewStreamName(e.target.value)}
+                              placeholder="e.g. Online Sales, Consulting, Rentals…"
+                              className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 text-slate-700 placeholder-slate-300 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-200"
+                            />
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Choose stream type</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {(["product","service","subscription","rental","contract","marketplace","custom"] as StreamType[]).map((t) => {
+                                const M = STREAM_META[t]; const TIcon = M.icon;
+                                return (
+                                  <button key={t}
+                                    onClick={async () => {
+                                      const name = newStreamName.trim() || M.label;
+                                      const ns = makeStream(name, t, "low");
+                                      const newIdx = streams.length;
+                                      // Optimistically add to UI first
+                                      setStreams((p) => [...p, ns]);
+                                      setStreamIdx(newIdx);
+                                      setNewStreamName("");
+                                      setShowStreamPicker(false);
+                                      // Save to DB to get a real ID, then patch local state
+                                      if (appId && userId) {
+                                        try {
+                                          const sb = createClient();
+                                          const allStreams = [...streams, ns];
+                                          const savedS = await saveStreams(sb, appId, userId,
+                                            allStreams.map((s, i) => ({
+                                              id: isDbId(s.id) ? s.id : undefined,
+                                              name: s.name, type: s.type, confidence: s.confidence,
+                                              monthly_growth_pct: s.monthlyGrowthPct,
+                                              sub_new_per_month: s.subNewPerMonth,
+                                              sub_churn_pct: s.subChurnPct,
+                                              rental_occupancy_pct: s.rentalOccupancyPct,
+                                              driver_done: s.driverDone,
+                                              position: i,
+                                            }))
+                                          );
+                                          const idMap: Record<string, string> = {};
+                                          allStreams.forEach((s, i) => {
+                                            const db = savedS[i];
+                                            if (db && s.id !== db.id) idMap[s.id] = db.id;
+                                          });
+                                          if (Object.keys(idMap).length > 0) {
+                                            setStreams((prev) => prev.map((s) => ({ ...s, id: idMap[s.id] ?? s.id })));
+                                          }
+                                        } catch (e) {
+                                          console.error("[Add Stream] save failed:", e);
+                                        }
+                                      }
+                                    }}
+                                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-slate-200 bg-white hover:border-cyan-400 hover:text-cyan-600 text-slate-600 transition-all">
+                                    <TIcon className="w-3 h-3" style={{ color: M.color }} /> {M.label}
+                                  </button>
+                                );
+                              })}
+                            </div>
                           </div>
                         </div>
                       )}
@@ -4713,7 +4763,7 @@ function ApplyPageInner() {
                       <div className="flex gap-3 pt-1">
                         <button
                           onClick={() => {
-                            if (streamIdx > 0) { setStreamIdx(streamIdx - 1); setDriverMode("chat"); }
+                            if (streamIdx > 0) { setStreamIdx(streamIdx - 1); }
                             else { go(1); }
                           }}
                           className="flex items-center gap-2 px-5 py-3.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
@@ -4721,7 +4771,7 @@ function ApplyPageInner() {
                         </button>
 
                         {streamIdx < streams.length - 1 ? (
-                          <button onClick={() => { setStreamIdx(streamIdx + 1); setDriverMode("chat"); }}
+                          <button onClick={() => { setStreamIdx(streamIdx + 1); }}
                             className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20"
                             style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
                             Next Stream: {streams[streamIdx + 1]?.name} <ArrowRight className="w-4 h-4" />
@@ -4734,7 +4784,7 @@ function ApplyPageInner() {
                               try {
                                 if (appId && userId) {
                                   const sb = createClient();
-                                  await saveStreams(sb, appId, userId,
+                                  const savedS = await saveStreams(sb, appId, userId,
                                     streams.map((s, i) => ({
                                       id: isDbId(s.id) ? s.id : undefined,
                                       name: s.name, type: s.type, confidence: s.confidence,
@@ -4746,6 +4796,30 @@ function ApplyPageInner() {
                                       position: i,
                                     }))
                                   );
+                                  // Resolve any temp IDs → real DB UUIDs
+                                  const idMap: Record<string, string> = {};
+                                  streams.forEach((s, i) => {
+                                    const db = savedS[i];
+                                    if (db && s.id !== db.id) idMap[s.id] = db.id;
+                                  });
+                                  let resolvedStreams = streams;
+                                  if (Object.keys(idMap).length > 0) {
+                                    resolvedStreams = streams.map((s) => ({ ...s, id: idMap[s.id] ?? s.id }));
+                                    setStreams(resolvedStreams);
+                                  }
+                                  // Save items for every stream that has them
+                                  for (const s of resolvedStreams) {
+                                    if (isDbId(s.id) && s.items.length > 0) {
+                                      await saveStreamItems(sb, s.id, userId, s.items.map((it, pos) => ({
+                                        id: isDbId(it.id) ? it.id : undefined,
+                                        name: it.name, category: it.category ?? "",
+                                        volume: it.volume, price: it.price,
+                                        unit: it.unit ?? "", note: it.note ?? "",
+                                        seasonality_preset: it.seasonalityPreset ?? null,
+                                        position: pos,
+                                      })));
+                                    }
+                                  }
                                   await updateApplicationFlags(sb, appId, { drivers_done: true });
                                 }
                                 go(3);
