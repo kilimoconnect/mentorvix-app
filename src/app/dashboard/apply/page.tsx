@@ -2138,7 +2138,7 @@ function ForecastView({
               className="text-xs font-semibold text-slate-700 bg-slate-100 border-0 rounded-md px-2 py-0.5 cursor-pointer focus:outline-none focus:ring-1 focus:ring-cyan-500 appearance-none pr-5"
               style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236b7280' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 4px center" }}
             >
-              {[1,2,3,4,5,7,10].map((y) => (
+              {[1,2,3,4,5,6,7,8,9,10,12,15,20,25,30].map((y) => (
                 <option key={y} value={y}>{y} {y === 1 ? "year" : "years"}</option>
               ))}
             </select>
