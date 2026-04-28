@@ -1144,7 +1144,7 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
         </div>
 
         {/* ── Seasonality (compact) ── */}
-        <div className="border-t border-slate-100 pt-3 space-y-1">
+        <div className="border-t border-slate-100 pt-3 space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Seasonality</p>
             <select
@@ -1159,8 +1159,33 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
               ))}
             </select>
           </div>
+
+          {/* Bar preview — always visible */}
+          <div>
+            <div className="flex items-end gap-px" style={{ height: 32 }}>
+              {stream.seasonalityMultipliers.map((v, mi) => {
+                const maxV = Math.max(...stream.seasonalityMultipliers, 1);
+                const barH = Math.max((v / maxV) * 100, 5);
+                return (
+                  <div key={mi} className="flex-1 flex flex-col justify-end" style={{ height: 32 }}
+                    title={`${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][mi]}: ${v.toFixed(2)}×`}>
+                    <div className="w-full rounded-t-sm transition-all duration-300"
+                      style={{ height: `${barH}%`, background: v >= 1 ? "#0e7490" : "#cbd5e1", opacity: 0.85 }} />
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex gap-px mt-0.5">
+              {["J","F","M","A","M","J","J","A","S","O","N","D"].map((m, mi) => (
+                <div key={mi} className="flex-1 text-center">
+                  <span className="text-[7px] text-slate-300 font-medium">{m}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {(stream.seasonalityPreset ?? "none") !== "none" && (
-            <p className="text-[10px] text-slate-400 italic">
+            <p className="text-[10px] text-slate-400 italic leading-relaxed">
               {SEASONALITY_PRESETS[stream.seasonalityPreset ?? "none"]?.desc}
             </p>
           )}
