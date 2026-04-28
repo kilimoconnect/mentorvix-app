@@ -315,6 +315,17 @@ function streamMRR(s: RevenueStream): number {
 
 type CurrencyCode = string;
 
+/** Plain-English description of an active override rule — used in ItemTable card and modal. */
+function describeOverrideRule(ovr: GrowthOverride): string {
+  const parts: string[] = [];
+  if (ovr.volumeGrowthPct      !== null) parts.push(`${ovr.volumeGrowthPct > 0 ? "+" : ""}${ovr.volumeGrowthPct}% growth/mo`);
+  if (ovr.annualPriceGrowthPct !== null) parts.push(`${ovr.annualPriceGrowthPct > 0 ? "+" : ""}${ovr.annualPriceGrowthPct}% price/yr`);
+  if (ovr.seasonalityPreset)              parts.push(SEASONALITY_PRESETS[ovr.seasonalityPreset]?.label ?? ovr.seasonalityPreset);
+  if (ovr.launchMonth  !== null)          parts.push(`from month ${ovr.launchMonth + 1}`);
+  if (ovr.sunsetMonth  !== null)          parts.push(`ends month ${ovr.sunsetMonth + 1}`);
+  return parts.length ? parts.join(" · ") : "Uses base assumptions";
+}
+
 /* ═══════════════════════════════════════ projection ══ */
 interface ProjMonth {
   index: number; year: number; monthLabel: string; yearMonth: string; total: number;
@@ -860,15 +871,8 @@ function AdvancedGrowthModal({
     (stream.overrides ?? []).filter((o) => o.id !== editingId).map((o) => o.targetId)
   );
 
-  const describeRule = (ovr: GrowthOverride): string => {
-    const parts: string[] = [];
-    if (ovr.volumeGrowthPct      !== null) parts.push(`${ovr.volumeGrowthPct > 0 ? "+" : ""}${ovr.volumeGrowthPct}% growth/mo`);
-    if (ovr.annualPriceGrowthPct !== null) parts.push(`${ovr.annualPriceGrowthPct > 0 ? "+" : ""}${ovr.annualPriceGrowthPct}% price/yr`);
-    if (ovr.seasonalityPreset)              parts.push(SEASONALITY_PRESETS[ovr.seasonalityPreset]?.label ?? ovr.seasonalityPreset);
-    if (ovr.launchMonth  !== null)          parts.push(`from month ${ovr.launchMonth + 1}`);
-    if (ovr.sunsetMonth  !== null)          parts.push(`ends month ${ovr.sunsetMonth + 1}`);
-    return parts.length ? parts.join(" · ") : "Uses base assumptions";
-  };
+  // Use module-level helper
+  const describeRule = describeOverrideRule;
 
   const commitRule = () => {
     if (!b.targetId) return;
@@ -1115,41 +1119,65 @@ function AdvancedGrowthModal({
                   </div>
 
                   {/* Seasonality */}
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Seasonality</p>
-                      <select value={b.seasonality}
-                        onChange={(e) => {
-                          const val = e.target.value as SeasonalityPreset | "";
-                          const mults = val === "custom"
-                            ? (Array(12).fill(1) as number[])
-                            : val ? [...SEASONALITY_PRESETS[val].months] : (Array(12).fill(1) as number[]);
-                          setB({ seasonality: val, customMults: mults });
-                        }}
-                        className="w-full text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:border-cyan-400">
-                        <option value="">— use base —</option>
-                        {(Object.keys(SEASONALITY_PRESETS) as SeasonalityPreset[]).map((p) => (
-                          <option key={p} value={p}>{SEASONALITY_PRESETS[p].label}</option>
-                        ))}
-                      </select>
-                    </div>
+                  <div>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Seasonality</p>
+                    <select value={b.seasonality}
+                      onChange={(e) => {
+                        const val = e.target.value as SeasonalityPreset | "";
+                        const mults = val === "custom"
+                          ? (Array(12).fill(1) as number[])
+                          : val ? [...SEASONALITY_PRESETS[val].months] : (Array(12).fill(1) as number[]);
+                        setB({ seasonality: val, customMults: mults });
+                      }}
+                      className="w-full text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:border-cyan-400">
+                      <option value="">— use base —</option>
+                      {(Object.keys(SEASONALITY_PRESETS) as SeasonalityPreset[]).map((p) => (
+                        <option key={p} value={p}>{SEASONALITY_PRESETS[p].label}</option>
+                      ))}
+                    </select>
 
-                    {/* Lifecycle */}
-                    <div>
-                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Lifecycle (months)</p>
-                      <div className="flex items-center gap-1.5">
-                        <input type="number" min={1} max={240} placeholder="start"
-                          value={b.launch}
-                          onChange={(e) => setB({ launch: e.target.value })}
-                          className="w-16 text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:border-cyan-400 placeholder:text-slate-300" />
-                        <span className="text-slate-300 text-xs">→</span>
-                        <input type="number" min={1} max={240} placeholder="end"
-                          value={b.sunset}
-                          onChange={(e) => setB({ sunset: e.target.value })}
-                          className="w-16 text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:border-cyan-400 placeholder:text-slate-300" />
-                      </div>
-                      <p className="text-[9px] text-slate-300 mt-1">Blank = always active</p>
+                    {/* Bar preview — shown whenever a preset is selected */}
+                    {b.seasonality && (() => {
+                      const mults = b.seasonality === "custom" ? b.customMults : SEASONALITY_PRESETS[b.seasonality]?.months ?? Array(12).fill(1) as number[];
+                      const maxV = Math.max(...mults, 1);
+                      return (
+                        <div className="mt-2">
+                          <div className="flex items-end gap-px" style={{ height: 28 }}>
+                            {mults.map((v, mi) => (
+                              <div key={mi} className="flex-1 flex flex-col justify-end" style={{ height: 28 }}
+                                title={`${months12[mi]}: ${v.toFixed(2)}×`}>
+                                <div className="w-full rounded-t-sm transition-all duration-300"
+                                  style={{ height: `${Math.max((v / maxV) * 100, 5)}%`, background: v >= 1 ? "#0e7490" : "#cbd5e1", opacity: 0.85 }} />
+                              </div>
+                            ))}
+                          </div>
+                          <div className="flex gap-px mt-0.5">
+                            {["J","F","M","A","M","J","J","A","S","O","N","D"].map((m, mi) => (
+                              <div key={mi} className="flex-1 text-center">
+                                <span className="text-[7px] text-slate-300">{m}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Lifecycle */}
+                  <div>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Lifecycle (months)</p>
+                    <div className="flex items-center gap-1.5">
+                      <input type="number" min={1} max={240} placeholder="start"
+                        value={b.launch}
+                        onChange={(e) => setB({ launch: e.target.value })}
+                        className="w-16 text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:border-cyan-400 placeholder:text-slate-300" />
+                      <span className="text-slate-300 text-xs">→</span>
+                      <input type="number" min={1} max={240} placeholder="end"
+                        value={b.sunset}
+                        onChange={(e) => setB({ sunset: e.target.value })}
+                        className="w-16 text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:border-cyan-400 placeholder:text-slate-300" />
                     </div>
+                    <p className="text-[9px] text-slate-300 mt-1">Blank = always active</p>
                   </div>
 
                   {/* Custom seasonality sliders for the builder */}
@@ -1349,9 +1377,12 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
               +{stream.monthlyGrowthPct.toFixed(2)}% / month
             </span>
           </div>
-          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${CONF_STYLE[GROWTH_PRESETS[stream.scenario]?.confidence ?? "medium"]}`}>
-            {GROWTH_PRESETS[stream.scenario]?.confidence === "high" ? "High" : GROWTH_PRESETS[stream.scenario]?.confidence === "low" ? "Low" : "Medium"} confidence
-          </span>
+          <div className="flex flex-col items-end gap-0.5">
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${CONF_STYLE[GROWTH_PRESETS[stream.scenario]?.confidence ?? "medium"]}`}>
+              {GROWTH_PRESETS[stream.scenario]?.confidence === "high" ? "High" : GROWTH_PRESETS[stream.scenario]?.confidence === "low" ? "Low" : "Medium"} Confidence
+            </span>
+            <span className="text-[9px] text-slate-300">Forecast reliability</span>
+          </div>
         </div>
 
         {/* ── Seasonality (compact) ── */}
@@ -1400,7 +1431,7 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
               onClick={() => setShowAdvanced(true)}
               className="flex items-center gap-1.5 text-[10px] font-semibold text-cyan-600 hover:text-cyan-700 transition-colors">
               <Pencil className="w-3 h-3" />
-              Edit custom monthly values in Advanced Controls
+              Edit custom monthly values in Item &amp; Category Overrides
             </button>
           ) : (stream.seasonalityPreset ?? "none") !== "none" && (
             <p className="text-[10px] text-slate-400 italic leading-relaxed">
@@ -1409,15 +1440,15 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
           )}
         </div>
 
-        {/* ── Expansion Event ── */}
+        {/* ── Expansion Events ── */}
         <div className="border-t border-slate-100 pt-3 space-y-2.5">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
-              <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Expansion Event</p>
+              <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Expansion Events</p>
               <div className="group relative inline-block">
                 <Info className="w-3 h-3 text-slate-300 cursor-help" />
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-52 text-[10px] text-slate-600 bg-white border border-slate-100 rounded-lg px-2.5 py-2 shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none z-20 leading-relaxed">
-                  Model a future capacity increase, new location, or product launch that boosts revenue from a specific month.
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 w-56 text-[10px] text-slate-600 bg-white border border-slate-100 rounded-lg px-2.5 py-2 shadow-lg opacity-0 group-hover:opacity-100 pointer-events-none z-20 leading-relaxed">
+                  Model a future event that increases capacity from a specific month — e.g. new branch, new product category, or new distributor.
                 </div>
               </div>
             </div>
@@ -1467,26 +1498,45 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
           )}
         </div>
 
-        {/* Advanced Controls CTA */}
-        <div className="border-t border-slate-100 pt-3 flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            {(stream.overrides ?? []).length > 0 ? (
-              <p className="text-[10px] font-semibold text-cyan-700">
-                {(stream.overrides ?? []).length} item-level rule{(stream.overrides ?? []).length !== 1 ? "s" : ""} active
-              </p>
-            ) : (
-              <>
-                <p className="text-[10px] font-semibold text-slate-600">Per-item overrides</p>
-                <p className="text-[10px] text-slate-400 mt-0.5">Different growth, pricing or seasonality for specific categories or items</p>
-              </>
-            )}
+        {/* Advanced Overrides premium card */}
+        <div className="border-t border-slate-100 pt-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[10px] font-bold text-slate-700">Advanced Overrides</p>
+              {(stream.overrides ?? []).length > 0 ? (
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  {(stream.overrides ?? []).length} active rule{(stream.overrides ?? []).length !== 1 ? "s" : ""}
+                </p>
+              ) : (
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  Configure item or category-specific growth, pricing, and seasonality rules.
+                </p>
+              )}
+            </div>
+            <button
+              onClick={() => setShowAdvanced(true)}
+              className="flex items-center gap-1.5 text-[10px] font-bold text-cyan-600 hover:text-cyan-700 border border-cyan-200 hover:border-cyan-300 bg-cyan-50 hover:bg-cyan-100 px-3 py-1.5 rounded-lg transition-all shrink-0">
+              Item &amp; Category Overrides
+              <ChevronRight className="w-3 h-3" />
+            </button>
           </div>
-          <button
-            onClick={() => setShowAdvanced(true)}
-            className="flex items-center gap-1.5 text-[10px] font-bold text-cyan-600 hover:text-cyan-700 border border-cyan-200 hover:border-cyan-300 bg-cyan-50 hover:bg-cyan-100 px-3 py-1.5 rounded-lg transition-all">
-            Advanced Controls
-            <ChevronRight className="w-3 h-3" />
-          </button>
+
+          {/* Active rules list */}
+          {(stream.overrides ?? []).length > 0 && (
+            <ul className="mt-2.5 space-y-1.5">
+              {(stream.overrides ?? []).map((ovr) => (
+                <li key={ovr.id} className="flex items-start gap-2 text-[10px]">
+                  <span className="mt-[3px] w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0" />
+                  <span>
+                    <span className="font-semibold text-slate-700">
+                      {ovr.scope === "category" ? "Category: " : ""}{ovr.targetName}
+                    </span>
+                    <span className="text-slate-400 ml-1">→ {describeOverrideRule(ovr)}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
 
