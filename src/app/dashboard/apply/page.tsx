@@ -195,8 +195,8 @@ type GrowthScenario = "conservative" | "base" | "growth";
 const GROWTH_PRESETS: Record<GrowthScenario, {
   label: string; desc: string; volPct: number; pricePct: number; confidence: Confidence;
 }> = {
-  conservative: { label: "Conservative", desc: "Low growth, stable pricing",  volPct: 0.5, pricePct: 3.0, confidence: "high"   },
-  base:         { label: "Base",         desc: "Realistic execution",          volPct: 1.5, pricePct: 5.0, confidence: "medium" },
+  conservative: { label: "Conservative", desc: "Modest growth, stable pricing", volPct: 0.5, pricePct: 2.0, confidence: "high"   },
+  base:         { label: "Base",         desc: "Flat — current run rate, no growth assumed", volPct: 0, pricePct: 0, confidence: "high"   },
   growth:       { label: "Growth Case",  desc: "Strong performance scenario",  volPct: 3.0, pricePct: 8.0, confidence: "low"    },
 };
 
@@ -2935,7 +2935,7 @@ function ApplyPageInner() {
         monthlyGrowthPct:    Number(s.monthly_growth_pct),
         volumeGrowthPct:     Number(s.monthly_growth_pct), // treat stored rate as volume growth
         annualPriceGrowthPct: 0,                            // price growth unknown — default 0
-        scenario:            (Number(s.monthly_growth_pct) <= 1.0 ? "conservative" : Number(s.monthly_growth_pct) <= 2.5 ? "base" : "growth") as GrowthScenario,
+        scenario:            (Number(s.monthly_growth_pct) === 0 ? "base" : Number(s.monthly_growth_pct) <= 1.0 ? "conservative" : "growth") as GrowthScenario,
         subNewPerMonth:      Number(s.sub_new_per_month),
         subChurnPct:         Number(s.sub_churn_pct),
         rentalOccupancyPct:  Number(s.rental_occupancy_pct),
