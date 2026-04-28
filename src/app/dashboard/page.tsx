@@ -131,6 +131,7 @@ export default function DashboardPage() {
 
   /* ── delete confirmation ── */
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deleteLoading,   setDeleteLoading]   = useState(false);
 
   /* ── what-if simulator ── */
   const [simRevenuePct,  setSimRevenuePct]  = useState(0);
@@ -167,10 +168,33 @@ export default function DashboardPage() {
   };
 
   const deleteApplication = async (id: string) => {
+    setDeleteLoading(true);
     try {
-      await createClient().from("applications").delete().eq("id", id);
+      const sb = createClient();
+
+      // 1. Fetch stream IDs so we can delete stream_items directly
+      //    (stream_items has no application_id column)
+      const { data: streamRows } = await sb
+        .from("revenue_streams")
+        .select("id")
+        .eq("application_id", id);
+      const streamIds = (streamRows ?? []).map((r: { id: string }) => r.id);
+
+      // 2. Delete child records explicitly, innermost → outermost
+      if (streamIds.length > 0) {
+        await sb.from("stream_items").delete().in("stream_id", streamIds);
+      }
+      await sb.from("projection_snapshots").delete().eq("application_id", id);
+      await sb.from("forecast_configs").delete().eq("application_id", id);
+      await sb.from("ai_conversations").delete().eq("application_id", id);
+      await sb.from("revenue_streams").delete().eq("application_id", id);
+
+      // 3. Delete the application itself
+      await sb.from("applications").delete().eq("id", id);
+
       setApplications((prev) => prev.filter((a) => a.id !== id));
     } catch (e) { console.error("[dashboard] delete app:", e); }
+    setDeleteLoading(false);
     setDeleteConfirmId(null);
   };
 
@@ -1085,7 +1109,7 @@ export default function DashboardPage() {
             className="fixed inset-0 z-50 flex items-center justify-center p-4"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
             <motion.div className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-              onClick={() => setDeleteConfirmId(null)} />
+              onClick={() => { if (!deleteLoading) setDeleteConfirmId(null); }} />
             <motion.div
               initial={{ scale: 0.92, opacity: 0, y: 12 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
@@ -1106,14 +1130,22 @@ export default function DashboardPage() {
                 All revenue streams, items, conversations, and projections for this application will be permanently deleted from your account.
               </p>
               <div className="flex gap-3">
-                <button onClick={() => setDeleteConfirmId(null)}
-                  className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors">
+                <button disabled={deleteLoading} onClick={() => setDeleteConfirmId(null)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-600 hover:bg-slate-50 transition-colors disabled:opacity-50">
                   Cancel
                 </button>
-                <motion.button whileTap={{ scale: 0.97 }} onClick={() => deleteApplication(deleteConfirmId)}
-                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-2"
+                <motion.button whileTap={{ scale: 0.97 }}
+                  disabled={deleteLoading}
+                  onClick={() => deleteApplication(deleteConfirmId)}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white flex items-center justify-center gap-2 disabled:opacity-60"
                   style={{ background: "linear-gradient(135deg,#dc2626,#e11d48)" }}>
-                  <Trash2 className="w-3.5 h-3.5" /> Delete
+                  {deleteLoading
+                    ? <><svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                      </svg> Deleting…</>
+                    : <><Trash2 className="w-3.5 h-3.5" /> Delete</>
+                  }
                 </motion.button>
               </div>
             </motion.div>
