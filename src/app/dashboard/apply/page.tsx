@@ -3244,6 +3244,8 @@ function ApplyPageInner() {
         driverMessages: ((state.driverConversations.find((c) => c.stream_id === s.id)?.messages) ?? []) as ChatMessage[],
       }));
       setStreams(restored);
+      // Mark already-done streams so the auto-advance effect never fires for them
+      autoAdvancedRef.current = new Set(restored.filter((s) => s.driverDone).map((s) => s.id));
 
       if (state.forecastConfig) {
         setForecastHorizon(state.forecastConfig.horizon_years);
@@ -3485,11 +3487,20 @@ function ApplyPageInner() {
   // Count distinct types for summary
   const detectedTypes = [...new Set(streams.map((s) => s.type))];
 
-  // Auto-advance to next stream when AI finishes collecting items
+  // Tracks stream IDs that have already triggered auto-advance this session.
+  // Pre-populated with already-done streams on restore so navigating back to a
+  // completed stream never bounces the user away involuntarily.
+  const autoAdvancedRef = useRef<Set<string>>(new Set());
+
+  // Auto-advance to next stream when the AI *freshly* finishes collecting items.
+  // Only fires once per stream (ID tracked in autoAdvancedRef).
   const currentDone = streams[streamIdx]?.driverDone ?? false;
   useEffect(() => {
     if (step !== 2 || !currentDone || streamIdx >= streams.length - 1) return;
+    const id = streams[streamIdx]?.id;
+    if (!id || autoAdvancedRef.current.has(id)) return; // already advanced past this stream
     const t = setTimeout(() => {
+      autoAdvancedRef.current.add(id);
       setStreamIdx((prev) => Math.min(prev + 1, streams.length - 1));
     }, 1400); // brief pause so user sees the "complete" badge before sliding
     return () => clearTimeout(t);
