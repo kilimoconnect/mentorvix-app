@@ -1213,7 +1213,7 @@ function AdvancedGrowthModal({
                       {b.customMults.map((v, mi) => (
                         <div key={mi} className="flex items-center gap-2">
                           <span className="text-[9px] text-slate-400 w-7 text-right shrink-0">{months12[mi]}</span>
-                          <input type="range" min={0} max={3} step={0.05} value={v}
+                          <input type="range" min={0} max={20} step={0.1} value={v}
                             onChange={(e) => {
                               const m2 = [...b.customMults]; m2[mi] = parseFloat(e.target.value); setB({ customMults: m2 });
                             }}
@@ -1305,7 +1305,7 @@ function AdvancedGrowthModal({
 }
 
 /* ═══════════════════════════════════════ ItemTable ══ */
-function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueStream; onUpdate: (s: RevenueStream) => void; fmt: (n: number) => string; currencySymbol: string }) {
+function ItemTable({ stream, onUpdate, onApplySeasonalityToAll, fmt, currencySymbol }: { stream: RevenueStream; onUpdate: (s: RevenueStream) => void; onApplySeasonalityToAll?: (preset: SeasonalityPreset, mults: number[]) => void; fmt: (n: number) => string; currencySymbol: string }) {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const addItem = () => {
@@ -1453,12 +1453,35 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
           </div>
 
           {(stream.seasonalityPreset ?? "none") === "custom" ? (
-            <button
-              onClick={() => setShowAdvanced(true)}
-              className="flex items-center gap-1.5 text-[10px] font-semibold text-cyan-600 hover:text-cyan-700 transition-colors">
-              <Pencil className="w-3 h-3" />
-              Edit custom monthly values in Item &amp; Category Overrides
-            </button>
+            <div className="space-y-1.5 p-3 bg-slate-50 rounded-xl border border-slate-200">
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Custom Monthly Multipliers</p>
+                {onApplySeasonalityToAll && (
+                  <button
+                    onClick={() => onApplySeasonalityToAll("custom", stream.seasonalityMultipliers)}
+                    className="flex items-center gap-1 text-[9px] font-bold text-cyan-600 hover:text-cyan-700 transition-colors">
+                    <RefreshCw className="w-2.5 h-2.5" />
+                    Apply to all streams
+                  </button>
+                )}
+              </div>
+              {stream.seasonalityMultipliers.map((v, mi) => (
+                <div key={mi} className="flex items-center gap-2">
+                  <span className="text-[9px] text-slate-400 w-7 text-right shrink-0">
+                    {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][mi]}
+                  </span>
+                  <input type="range" min={0} max={20} step={0.1} value={v}
+                    onChange={(e) => {
+                      const m2 = [...stream.seasonalityMultipliers];
+                      m2[mi] = parseFloat(e.target.value);
+                      onUpdate({ ...stream, seasonalityMultipliers: m2 });
+                    }}
+                    className="flex-1 h-1 appearance-none cursor-pointer rounded-full"
+                    style={{ accentColor: "#0e7490" }} />
+                  <span className="text-[9px] font-bold text-slate-600 w-10 text-right shrink-0">{v.toFixed(2)}×</span>
+                </div>
+              ))}
+            </div>
           ) : (stream.seasonalityPreset ?? "none") !== "none" && (
             <p className="text-[10px] text-slate-400 italic leading-relaxed">
               {SEASONALITY_PRESETS[stream.seasonalityPreset ?? "none"]?.desc}
@@ -4367,7 +4390,19 @@ function ApplyPageInner() {
                               Revenue Items — edit inline
                             </p>
                           )}
-                          <ItemTable stream={currentStream} onUpdate={updateStream} fmt={fmt} currencySymbol={getCurrencySymbol(currency)} />
+                          <ItemTable
+                            stream={currentStream}
+                            onUpdate={updateStream}
+                            onApplySeasonalityToAll={(preset, mults) =>
+                              setStreams((prev) => prev.map((s) => ({
+                                ...s,
+                                seasonalityPreset:      preset,
+                                seasonalityMultipliers: [...mults],
+                              })))
+                            }
+                            fmt={fmt}
+                            currencySymbol={getCurrencySymbol(currency)}
+                          />
                         </div>
                       )}
 
