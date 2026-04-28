@@ -823,224 +823,424 @@ function AdvancedGrowthModal({
   onUpdate: (s: RevenueStream) => void;
   onClose: () => void;
 }) {
-  const [editingId, setEditingId] = useState<string | null>(null);
   const months12 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const categories = [...new Set(stream.items.map((i) => i.category))];
 
-  const addOverride = (scope: "category" | "item", targetId: string, targetName: string) => {
-    const ovr: GrowthOverride = {
-      id: uid(), scope, targetId, targetName,
-      volumeGrowthPct: null, annualPriceGrowthPct: null,
-      seasonalityPreset: null, seasonalityMultipliers: null,
-      launchMonth: null, sunsetMonth: null,
-    };
-    onUpdate({ ...stream, overrides: [...(stream.overrides ?? []), ovr] });
-    setEditingId(ovr.id);
+  /* ── Builder state ── */
+  type BuilderState = {
+    scope: "category" | "item";
+    targetId: string;
+    volPct: string;
+    pricePct: string;
+    seasonality: SeasonalityPreset | "";
+    customMults: number[];
+    launch: string;
+    sunset: string;
+  };
+  const emptyBuilder = (): BuilderState => ({
+    scope: "category", targetId: "",
+    volPct: "", pricePct: "",
+    seasonality: "", customMults: Array(12).fill(1) as number[],
+    launch: "", sunset: "",
+  });
+  const [builder, setBuilder] = useState<BuilderState>(emptyBuilder());
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingDefaults, setEditingDefaults] = useState(false);
+
+  const b = builder;
+  const setB = (patch: Partial<BuilderState>) => setBuilder((prev) => ({ ...prev, ...patch }));
+
+  const switchScope = (scope: "category" | "item") => setB({ scope, targetId: "" });
+
+  const targetOptions = b.scope === "category"
+    ? categories.map((c) => ({ id: c, name: c }))
+    : stream.items.map((i) => ({ id: i.id, name: i.name }));
+
+  const usedTargets = new Set(
+    (stream.overrides ?? []).filter((o) => o.id !== editingId).map((o) => o.targetId)
+  );
+
+  const describeRule = (ovr: GrowthOverride): string => {
+    const parts: string[] = [];
+    if (ovr.volumeGrowthPct      !== null) parts.push(`${ovr.volumeGrowthPct > 0 ? "+" : ""}${ovr.volumeGrowthPct}% growth/mo`);
+    if (ovr.annualPriceGrowthPct !== null) parts.push(`${ovr.annualPriceGrowthPct > 0 ? "+" : ""}${ovr.annualPriceGrowthPct}% price/yr`);
+    if (ovr.seasonalityPreset)              parts.push(SEASONALITY_PRESETS[ovr.seasonalityPreset]?.label ?? ovr.seasonalityPreset);
+    if (ovr.launchMonth  !== null)          parts.push(`from month ${ovr.launchMonth + 1}`);
+    if (ovr.sunsetMonth  !== null)          parts.push(`ends month ${ovr.sunsetMonth + 1}`);
+    return parts.length ? parts.join(" · ") : "Uses base assumptions";
   };
 
-  const updateOverride = (updated: GrowthOverride) =>
-    onUpdate({ ...stream, overrides: (stream.overrides ?? []).map((o) => (o.id === updated.id ? updated : o)) });
+  const commitRule = () => {
+    if (!b.targetId) return;
+    const targetName = b.scope === "category"
+      ? b.targetId
+      : stream.items.find((i) => i.id === b.targetId)?.name ?? b.targetId;
+    const season = b.seasonality as SeasonalityPreset | "";
+    const ovr: GrowthOverride = {
+      id: editingId ?? uid(),
+      scope: b.scope, targetId: b.targetId, targetName,
+      volumeGrowthPct:      b.volPct   !== "" ? parseFloat(b.volPct)   : null,
+      annualPriceGrowthPct: b.pricePct !== "" ? parseFloat(b.pricePct) : null,
+      seasonalityPreset:    season || null,
+      seasonalityMultipliers: season === "custom"
+        ? [...b.customMults]
+        : season ? [...SEASONALITY_PRESETS[season].months] : null,
+      launchMonth: b.launch !== "" ? Math.max(0, parseInt(b.launch, 10) - 1) : null,
+      sunsetMonth: b.sunset !== "" ? Math.max(0, parseInt(b.sunset, 10) - 1) : null,
+    };
+    if (editingId) {
+      onUpdate({ ...stream, overrides: (stream.overrides ?? []).map((o) => (o.id === editingId ? ovr : o)) });
+    } else {
+      onUpdate({ ...stream, overrides: [...(stream.overrides ?? []), ovr] });
+    }
+    setBuilder(emptyBuilder());
+    setEditingId(null);
+  };
 
-  const deleteOverride = (id: string) =>
+  const startEdit = (ovr: GrowthOverride) => {
+    setEditingId(ovr.id);
+    setBuilder({
+      scope:       ovr.scope,
+      targetId:    ovr.targetId,
+      volPct:      ovr.volumeGrowthPct      !== null ? String(ovr.volumeGrowthPct)      : "",
+      pricePct:    ovr.annualPriceGrowthPct !== null ? String(ovr.annualPriceGrowthPct) : "",
+      seasonality: ovr.seasonalityPreset ?? "",
+      customMults: ovr.seasonalityMultipliers ?? (Array(12).fill(1) as number[]),
+      launch:      ovr.launchMonth !== null ? String(ovr.launchMonth + 1) : "",
+      sunset:      ovr.sunsetMonth !== null ? String(ovr.sunsetMonth + 1) : "",
+    });
+  };
+
+  const cancelEdit = () => { setBuilder(emptyBuilder()); setEditingId(null); };
+
+  const deleteRule = (id: string) => {
     onUpdate({ ...stream, overrides: (stream.overrides ?? []).filter((o) => o.id !== id) });
+    if (editingId === id) cancelEdit();
+  };
+
+  const overrides = stream.overrides ?? [];
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto">
-      {/* Backdrop */}
-      <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
 
-      {/* Panel */}
-      <div className="relative w-full max-w-3xl mx-4 my-8 bg-white rounded-2xl shadow-2xl flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-          <div>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Advanced Growth &amp; Seasonality</p>
-            <h2 className="text-sm font-bold text-slate-800 mt-0.5">{stream.name}</h2>
+      <div className="relative w-full max-w-xl mx-4 my-10 bg-white rounded-2xl shadow-2xl flex flex-col">
+
+        {/* ── Header ── */}
+        <div className="px-7 pt-7 pb-5">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Advanced Revenue Drivers</p>
+              <h2 className="text-base font-bold text-slate-900 leading-tight">{stream.name}</h2>
+              <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed max-w-xs">
+                Adjust how this stream grows and how specific items behave over the projection.
+              </p>
+            </div>
+            <button onClick={onClose} className="p-2 rounded-xl hover:bg-slate-100 transition-colors mt-0.5 shrink-0">
+              <X className="w-4 h-4 text-slate-400" />
+            </button>
           </div>
-          <button onClick={onClose} className="p-2 rounded-xl hover:bg-slate-100 transition-colors">
-            <X className="w-4 h-4 text-slate-500" />
-          </button>
         </div>
 
-        <div className="p-6 space-y-8">
-          {/* ── Stream-Level Seasonality ── */}
-          <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Stream Seasonality</p>
-                <p className="text-[10px] text-slate-400 mt-0.5">Monthly revenue pattern for this entire stream. Override per category or item below.</p>
-              </div>
-              <select
-                value={stream.seasonalityPreset ?? "none"}
-                onChange={(e) => {
-                  const preset = e.target.value as SeasonalityPreset;
-                  onUpdate({ ...stream, seasonalityPreset: preset, seasonalityMultipliers: [...SEASONALITY_PRESETS[preset].months] });
-                }}
-                className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:border-cyan-400">
-                {(Object.keys(SEASONALITY_PRESETS) as SeasonalityPreset[]).map((p) => (
-                  <option key={p} value={p}>{SEASONALITY_PRESETS[p].label}</option>
-                ))}
-              </select>
+        <div className="px-7 pb-7 space-y-7">
+
+          {/* ─────── § 1  Base Assumptions ─────── */}
+          <section>
+            <div className="flex items-center justify-between mb-2.5">
+              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Base Assumptions</p>
+              <button onClick={() => setEditingDefaults(!editingDefaults)}
+                className="text-[10px] font-bold text-cyan-600 hover:text-cyan-700 transition-colors">
+                {editingDefaults ? "Collapse" : "Edit"}
+              </button>
             </div>
 
-            {/* Mini bar chart */}
-            {(stream.seasonalityPreset ?? "none") !== "none" && (
-              <div>
-                <div className="flex items-end gap-px" style={{ height: 52 }}>
-                  {stream.seasonalityMultipliers.map((v, mi) => {
-                    const maxV = Math.max(...stream.seasonalityMultipliers, 1);
-                    const barH = Math.max((v / maxV) * 100, 5);
-                    return (
-                      <div key={mi} className="flex-1 flex flex-col justify-end" style={{ height: 52 }}
-                        title={`${months12[mi]}: ${v.toFixed(2)}×`}>
-                        <div className="w-full rounded-t-sm transition-all"
-                          style={{ height: `${barH}%`, background: v >= 1 ? "#0e7490" : "#cbd5e1", opacity: 0.85 }} />
-                      </div>
-                    );
-                  })}
+            {!editingDefaults ? (
+              /* Summary pill row */
+              <div className="bg-slate-50 rounded-xl px-4 py-3">
+                <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs">
+                  <span className="text-slate-500">Growth <span className="font-bold text-slate-800 ml-1">+{stream.volumeGrowthPct ?? 0}%<span className="font-normal text-slate-400">/mo</span></span></span>
+                  <span className="text-slate-500">Price <span className="font-bold text-slate-800 ml-1">+{stream.annualPriceGrowthPct ?? 0}%<span className="font-normal text-slate-400">/yr</span></span></span>
+                  <span className="text-slate-500">Seasonality <span className="font-bold text-slate-800 ml-1">{SEASONALITY_PRESETS[stream.seasonalityPreset ?? "none"]?.label ?? "None"}</span></span>
+                  <span className="text-slate-500">Scenario <span className="font-bold text-slate-800 ml-1 capitalize">{stream.scenario ?? "base"}</span></span>
                 </div>
-                <div className="flex gap-px mt-1">
-                  {["J","F","M","A","M","J","J","A","S","O","N","D"].map((m, mi) => (
-                    <div key={mi} className="flex-1 text-center">
-                      <span className="text-[7px] text-slate-300 font-medium">{m}</span>
-                    </div>
-                  ))}
-                </div>
+                <p className="text-[9px] text-slate-400 mt-2">Applied to all items unless overridden below.</p>
               </div>
-            )}
-
-            {(stream.seasonalityPreset ?? "none") === "custom" && (
-              <div className="space-y-1.5 p-3 bg-slate-50 rounded-xl">
-                {stream.seasonalityMultipliers.map((v, mi) => (
-                  <div key={mi} className="flex items-center gap-2">
-                    <span className="text-[9px] text-slate-400 w-7 text-right shrink-0">{months12[mi]}</span>
-                    <input type="range" min={0} max={3} step={0.05} value={v}
-                      onChange={(e) => {
-                        const mults = [...stream.seasonalityMultipliers];
-                        mults[mi] = parseFloat(e.target.value);
-                        onUpdate({ ...stream, seasonalityMultipliers: mults });
-                      }}
-                      className="flex-1 h-1 appearance-none cursor-pointer rounded-full"
-                      style={{ accentColor: "#0e7490" }} />
-                    <span className="text-[9px] font-bold text-slate-600 w-8 text-right shrink-0">{v.toFixed(2)}×</span>
+            ) : (
+              /* Editable defaults */
+              <div className="space-y-4 pt-1">
+                {/* Scenario */}
+                <div>
+                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">Scenario</p>
+                  <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg w-fit">
+                    {(["conservative", "base", "growth"] as GrowthScenario[]).map((sc) => (
+                      <button key={sc}
+                        onClick={() => {
+                          const p = GROWTH_PRESETS[sc];
+                          onUpdate({ ...stream, scenario: sc, volumeGrowthPct: p.volPct, annualPriceGrowthPct: p.pricePct, monthlyGrowthPct: effectiveMonthlyGrowth(p.volPct, p.pricePct) });
+                        }}
+                        className={`text-[10px] font-bold px-3 py-1 rounded-md capitalize transition-all ${stream.scenario === sc ? "bg-white text-slate-800 shadow-sm" : "text-slate-400 hover:text-slate-600"}`}>
+                        {GROWTH_PRESETS[sc].label}
+                      </button>
+                    ))}
                   </div>
-                ))}
+                </div>
+
+                {/* Vol + Price */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Volume Growth</p>
+                    <div className="flex items-center gap-1.5">
+                      <input type="number" min={0} max={30} step={0.1} value={stream.volumeGrowthPct}
+                        onChange={(e) => { const v = parseFloat(e.target.value) || 0; onUpdate({ ...stream, volumeGrowthPct: v, monthlyGrowthPct: effectiveMonthlyGrowth(v, stream.annualPriceGrowthPct ?? 0) }); }}
+                        className="w-16 text-sm font-bold text-slate-800 border border-slate-200 rounded-lg px-2 py-1.5 text-center focus:outline-none focus:border-cyan-400" />
+                      <span className="text-xs text-slate-400">% / mo</span>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Price Increase</p>
+                    <div className="flex items-center gap-1.5">
+                      <input type="number" min={0} max={50} step={0.5} value={stream.annualPriceGrowthPct}
+                        onChange={(e) => { const v = parseFloat(e.target.value) || 0; onUpdate({ ...stream, annualPriceGrowthPct: v, monthlyGrowthPct: effectiveMonthlyGrowth(stream.volumeGrowthPct ?? 0, v) }); }}
+                        className="w-16 text-sm font-bold text-slate-800 border border-slate-200 rounded-lg px-2 py-1.5 text-center focus:outline-none focus:border-cyan-400" />
+                      <span className="text-xs text-slate-400">% / yr</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Seasonality */}
+                <div>
+                  <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Seasonality</p>
+                  <select
+                    value={stream.seasonalityPreset ?? "none"}
+                    onChange={(e) => { const p = e.target.value as SeasonalityPreset; onUpdate({ ...stream, seasonalityPreset: p, seasonalityMultipliers: [...SEASONALITY_PRESETS[p].months] }); }}
+                    className="text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:border-cyan-400 w-full max-w-xs">
+                    {(Object.keys(SEASONALITY_PRESETS) as SeasonalityPreset[]).map((p) => (
+                      <option key={p} value={p}>{SEASONALITY_PRESETS[p].label} — {SEASONALITY_PRESETS[p].desc}</option>
+                    ))}
+                  </select>
+                  {/* Bar chart */}
+                  <div className="mt-2.5">
+                    <div className="flex items-end gap-px" style={{ height: 40 }}>
+                      {stream.seasonalityMultipliers.map((v, mi) => {
+                        const maxV = Math.max(...stream.seasonalityMultipliers, 1);
+                        const barH = Math.max((v / maxV) * 100, 5);
+                        return (
+                          <div key={mi} className="flex-1 flex flex-col justify-end" style={{ height: 40 }} title={`${months12[mi]}: ${v.toFixed(2)}×`}>
+                            <div className="w-full rounded-t-sm transition-all duration-300"
+                              style={{ height: `${barH}%`, background: v >= 1 ? "#0e7490" : "#cbd5e1", opacity: 0.85 }} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="flex gap-px mt-0.5">
+                      {["J","F","M","A","M","J","J","A","S","O","N","D"].map((m, mi) => (
+                        <div key={mi} className="flex-1 text-center"><span className="text-[7px] text-slate-300">{m}</span></div>
+                      ))}
+                    </div>
+                  </div>
+                  {/* Custom sliders */}
+                  {(stream.seasonalityPreset ?? "none") === "custom" && (
+                    <div className="space-y-1.5 mt-2.5 p-3 bg-slate-50 rounded-xl">
+                      {stream.seasonalityMultipliers.map((v, mi) => (
+                        <div key={mi} className="flex items-center gap-2">
+                          <span className="text-[9px] text-slate-400 w-7 text-right shrink-0">{months12[mi]}</span>
+                          <input type="range" min={0} max={3} step={0.05} value={v}
+                            onChange={(e) => { const m2 = [...stream.seasonalityMultipliers]; m2[mi] = parseFloat(e.target.value); onUpdate({ ...stream, seasonalityMultipliers: m2 }); }}
+                            className="flex-1 h-1 appearance-none cursor-pointer rounded-full" style={{ accentColor: "#0e7490" }} />
+                          <span className="text-[9px] font-bold text-slate-600 w-8 text-right shrink-0">{v.toFixed(2)}×</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </section>
 
-          {/* ── Per-Category / Per-Item Overrides ── */}
-          <section className="space-y-3">
-            <div>
-              <p className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Growth &amp; Seasonality Overrides</p>
-              <p className="text-[10px] text-slate-400 mt-0.5">Override growth rates, pricing, or seasonality for specific categories or items. Blank fields inherit stream defaults.</p>
-            </div>
+          {/* ─────── § 2  Rule Composer ─────── */}
+          <section>
+            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-3">
+              {editingId ? "Edit Rule" : "Create Override Rule"}
+            </p>
 
-            {(stream.overrides ?? []).length > 0 && (
-              <div className="space-y-2">
-                {(stream.overrides ?? []).map((ovr) => (
-                  <OverrideRow
-                    key={ovr.id}
-                    override={ovr}
-                    onUpdate={updateOverride}
-                    onDelete={() => deleteOverride(ovr.id)}
-                    isEditing={editingId === ovr.id}
-                    onToggleEdit={() => setEditingId(editingId === ovr.id ? null : ovr.id)}
-                  />
-                ))}
+            <div className="bg-slate-50 rounded-xl p-4 space-y-4">
+              {/* Apply To row */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-semibold text-slate-500 shrink-0">Apply to</span>
+                <div className="flex items-center gap-0.5 bg-white border border-slate-200 p-0.5 rounded-lg">
+                  {(["category", "item"] as const).map((sc) => (
+                    <button key={sc} onClick={() => switchScope(sc)}
+                      className={`text-[10px] font-bold px-2.5 py-1 rounded-md capitalize transition-all ${b.scope === sc ? "bg-slate-100 text-slate-800" : "text-slate-400 hover:text-slate-600"}`}>
+                      {sc}
+                    </button>
+                  ))}
+                </div>
+                <select value={b.targetId} onChange={(e) => setB({ targetId: e.target.value })}
+                  className="text-xs font-semibold border border-slate-200 bg-white rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:border-cyan-400">
+                  <option value="">— select {b.scope} —</option>
+                  {targetOptions.map((opt) => (
+                    <option key={opt.id} value={opt.id} disabled={usedTargets.has(opt.id)}>
+                      {opt.name}{usedTargets.has(opt.id) ? " (rule exists)" : ""}
+                    </option>
+                  ))}
+                </select>
               </div>
-            )}
 
-            {/* Add override buttons */}
-            <div className="flex flex-wrap gap-2">
-              {categories.map((cat) => {
-                if ((stream.overrides ?? []).some((o) => o.scope === "category" && o.targetId === cat)) return null;
-                return (
-                  <button key={`cat-${cat}`}
-                    onClick={() => addOverride("category", cat, cat)}
-                    className="flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1.5 border border-dashed border-cyan-300 text-cyan-600 rounded-lg hover:bg-cyan-50 transition-colors">
-                    <Plus className="w-3 h-3" /> {cat} <span className="text-cyan-400 font-normal">category</span>
-                  </button>
-                );
-              })}
-              {stream.items.map((item) => {
-                if ((stream.overrides ?? []).some((o) => o.scope === "item" && o.targetId === item.id)) return null;
-                return (
-                  <button key={`item-${item.id}`}
-                    onClick={() => addOverride("item", item.id, item.name)}
-                    className="flex items-center gap-1.5 text-[10px] font-semibold px-2.5 py-1.5 border border-dashed border-violet-300 text-violet-600 rounded-lg hover:bg-violet-50 transition-colors">
-                    <Plus className="w-3 h-3" /> {item.name}
-                  </button>
-                );
-              })}
-              {categories.length === 0 && stream.items.length === 0 && (
-                <p className="text-[10px] text-slate-400 italic">Add items to the stream first to configure overrides.</p>
+              {b.targetId ? (
+                <>
+                  {/* Growth + Price */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Growth / mo</p>
+                      <div className="flex items-center gap-1.5">
+                        <input type="number" min={-10} max={30} step={0.1}
+                          placeholder={`${stream.volumeGrowthPct ?? 0} (base)`}
+                          value={b.volPct}
+                          onChange={(e) => setB({ volPct: e.target.value })}
+                          className="w-20 text-sm font-bold text-slate-800 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-400 placeholder:text-slate-300 placeholder:font-normal placeholder:text-[10px]" />
+                        <span className="text-xs text-slate-400">%</span>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Price / yr</p>
+                      <div className="flex items-center gap-1.5">
+                        <input type="number" min={-10} max={50} step={0.5}
+                          placeholder={`${stream.annualPriceGrowthPct ?? 0} (base)`}
+                          value={b.pricePct}
+                          onChange={(e) => setB({ pricePct: e.target.value })}
+                          className="w-20 text-sm font-bold text-slate-800 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:border-cyan-400 placeholder:text-slate-300 placeholder:font-normal placeholder:text-[10px]" />
+                        <span className="text-xs text-slate-400">%</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Seasonality */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Seasonality</p>
+                      <select value={b.seasonality}
+                        onChange={(e) => {
+                          const val = e.target.value as SeasonalityPreset | "";
+                          const mults = val === "custom"
+                            ? (Array(12).fill(1) as number[])
+                            : val ? [...SEASONALITY_PRESETS[val].months] : (Array(12).fill(1) as number[]);
+                          setB({ seasonality: val, customMults: mults });
+                        }}
+                        className="w-full text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:border-cyan-400">
+                        <option value="">— use base —</option>
+                        {(Object.keys(SEASONALITY_PRESETS) as SeasonalityPreset[]).map((p) => (
+                          <option key={p} value={p}>{SEASONALITY_PRESETS[p].label}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Lifecycle */}
+                    <div>
+                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Lifecycle (months)</p>
+                      <div className="flex items-center gap-1.5">
+                        <input type="number" min={1} max={240} placeholder="start"
+                          value={b.launch}
+                          onChange={(e) => setB({ launch: e.target.value })}
+                          className="w-16 text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:border-cyan-400 placeholder:text-slate-300" />
+                        <span className="text-slate-300 text-xs">→</span>
+                        <input type="number" min={1} max={240} placeholder="end"
+                          value={b.sunset}
+                          onChange={(e) => setB({ sunset: e.target.value })}
+                          className="w-16 text-xs bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-slate-700 focus:outline-none focus:border-cyan-400 placeholder:text-slate-300" />
+                      </div>
+                      <p className="text-[9px] text-slate-300 mt-1">Blank = always active</p>
+                    </div>
+                  </div>
+
+                  {/* Custom seasonality sliders for the builder */}
+                  {b.seasonality === "custom" && (
+                    <div className="space-y-1.5 p-3 bg-white rounded-xl border border-slate-200">
+                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">Custom Monthly Pattern</p>
+                      {b.customMults.map((v, mi) => (
+                        <div key={mi} className="flex items-center gap-2">
+                          <span className="text-[9px] text-slate-400 w-7 text-right shrink-0">{months12[mi]}</span>
+                          <input type="range" min={0} max={3} step={0.05} value={v}
+                            onChange={(e) => {
+                              const m2 = [...b.customMults]; m2[mi] = parseFloat(e.target.value); setB({ customMults: m2 });
+                            }}
+                            className="flex-1 h-1 appearance-none cursor-pointer rounded-full" style={{ accentColor: "#0e7490" }} />
+                          <span className="text-[9px] font-bold text-slate-600 w-8 text-right shrink-0">{v.toFixed(2)}×</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between pt-1">
+                    <p className="text-[10px] text-slate-400">Leave blank to use base assumptions.</p>
+                    <div className="flex items-center gap-2">
+                      {editingId && (
+                        <button onClick={cancelEdit} className="text-xs text-slate-400 hover:text-slate-600 transition-colors">Cancel</button>
+                      )}
+                      <button onClick={commitRule}
+                        className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-bold text-white rounded-lg transition-all hover:opacity-90"
+                        style={{ background: "#0e7490" }}>
+                        <Check className="w-3.5 h-3.5" />
+                        {editingId ? "Update Rule" : "Add Rule"}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <p className="text-xs text-slate-400 py-1">
+                  {categories.length === 0 && stream.items.length === 0
+                    ? "Add items to the stream first, then create overrides here."
+                    : `Select a ${b.scope} above to configure the override.`}
+                </p>
               )}
             </div>
           </section>
 
-          {/* ── Rule Summary Grid ── */}
-          {(stream.overrides ?? []).length > 0 && (
-            <section className="space-y-2">
-              <p className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">Rule Summary</p>
-              <div className="overflow-x-auto rounded-xl border border-slate-100">
-                <table className="w-full">
-                  <thead>
-                    <tr className="bg-slate-50 text-left">
-                      <th className="px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase">Scope</th>
-                      <th className="px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase">Target</th>
-                      <th className="px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase text-right">Vol Growth</th>
-                      <th className="px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase text-right">Price</th>
-                      <th className="px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase">Seasonality</th>
-                      <th className="px-3 py-2 text-[10px] font-semibold text-slate-500 uppercase">Events</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(stream.overrides ?? []).map((ovr) => (
-                      <tr key={ovr.id} className="border-t border-slate-100 text-xs">
-                        <td className="px-3 py-2">
-                          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${ovr.scope === "category" ? "bg-cyan-50 text-cyan-700" : "bg-violet-50 text-violet-700"}`}>
-                            {ovr.scope === "category" ? "Cat" : "Item"}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2 font-medium text-slate-700 max-w-[120px] truncate">{ovr.targetName}</td>
-                        <td className="px-3 py-2 text-right text-slate-600">
-                          {ovr.volumeGrowthPct !== null
-                            ? <span className="font-bold" style={{ color: "#0e7490" }}>{ovr.volumeGrowthPct}%/mo</span>
-                            : <span className="text-slate-300 italic text-[10px]">stream</span>}
-                        </td>
-                        <td className="px-3 py-2 text-right text-slate-600">
-                          {ovr.annualPriceGrowthPct !== null
-                            ? <span className="font-bold" style={{ color: "#0e7490" }}>{ovr.annualPriceGrowthPct}%/yr</span>
-                            : <span className="text-slate-300 italic text-[10px]">stream</span>}
-                        </td>
-                        <td className="px-3 py-2 text-slate-600">
-                          {ovr.seasonalityPreset
-                            ? SEASONALITY_PRESETS[ovr.seasonalityPreset]?.label
-                            : <span className="text-slate-300 italic text-[10px]">stream</span>}
-                        </td>
-                        <td className="px-3 py-2 text-slate-600 text-[10px]">
-                          {ovr.launchMonth !== null || ovr.sunsetMonth !== null ? (
-                            <span>
-                              {ovr.launchMonth !== null && `Launch m${ovr.launchMonth + 1}`}
-                              {ovr.launchMonth !== null && ovr.sunsetMonth !== null && " · "}
-                              {ovr.sunsetMonth !== null && `End m${ovr.sunsetMonth + 1}`}
-                            </span>
-                          ) : <span className="text-slate-300 italic">always</span>}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+          {/* ─────── § 3  Active Rules ─────── */}
+          {overrides.length > 0 && (
+            <section>
+              <div className="flex items-center gap-2 mb-3">
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Active Overrides</p>
+                <span className="text-[9px] font-bold text-white bg-cyan-500 px-1.5 py-0.5 rounded-full">{overrides.length}</span>
+              </div>
+
+              <div className="space-y-1.5">
+                {overrides.map((ovr) => (
+                  <div key={ovr.id}
+                    className={`flex items-center justify-between px-4 py-3 rounded-xl transition-all ${
+                      editingId === ovr.id ? "bg-cyan-50 ring-1 ring-cyan-200" : "bg-slate-50 hover:bg-slate-100"
+                    }`}>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0 ${
+                        ovr.scope === "category" ? "bg-cyan-100 text-cyan-700" : "bg-violet-100 text-violet-700"
+                      }`}>
+                        {ovr.scope === "category" ? "Category" : "Item"}
+                      </span>
+                      <div className="min-w-0">
+                        <span className="text-xs font-bold text-slate-800">{ovr.targetName}</span>
+                        <span className="text-[10px] text-slate-400 ml-2 truncate">{describeRule(ovr)}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0 ml-3">
+                      <button onClick={() => startEdit(ovr)}
+                        className={`p-1.5 rounded-lg transition-colors ${editingId === ovr.id ? "text-cyan-600 bg-cyan-100" : "text-slate-300 hover:text-slate-600 hover:bg-slate-200"}`}>
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                      <button onClick={() => deleteRule(ovr.id)}
+                        className="p-1.5 rounded-lg text-slate-300 hover:text-red-400 hover:bg-red-50 transition-colors">
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </section>
           )}
         </div>
 
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-100 flex justify-end">
+        {/* ── Footer ── */}
+        <div className="px-7 py-4 border-t border-slate-100 flex justify-end">
           <button onClick={onClose}
-            className="px-6 py-2 text-sm font-semibold text-white rounded-xl transition-all hover:opacity-90"
+            className="px-6 py-2 text-sm font-bold text-white rounded-xl transition-all hover:opacity-90"
             style={{ background: "#0e7490" }}>
             Done
           </button>
