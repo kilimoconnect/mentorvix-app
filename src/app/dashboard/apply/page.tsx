@@ -1649,8 +1649,8 @@ function ItemTable({ stream, onUpdate, onApplySeasonalityToAll, fmt, currencySym
       )}
 
       <button onClick={addItem}
-        className="flex items-center gap-2 text-xs font-medium text-slate-400 hover:text-cyan-600 transition-colors">
-        <Plus className="w-3.5 h-3.5" /> Add item manually
+        className="flex items-center gap-2 text-xs font-semibold text-cyan-700 bg-cyan-50 border border-cyan-200 hover:bg-cyan-100 px-3 py-2 rounded-lg transition-colors">
+        <Plus className="w-3.5 h-3.5" /> Add Item
       </button>
     </div>
     </>
@@ -2173,15 +2173,15 @@ function ForecastView({
       {/* ── Model Summary Strip ── */}
       <div className="bg-slate-50 border border-slate-100 rounded-xl px-4 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-1.5">
         {[
-          { label: "Streams",    val: String(streams.length) },
-          { label: "Items",      val: String(totalItems) },
+          { label: "Streams",    val: `${streams.length} stream${streams.length !== 1 ? "s" : ""}` },
+          { label: "Items",      val: `${totalItems} item${totalItems !== 1 ? "s" : ""}` },
           { label: "Currency",   val: currency ?? "—" },
+          { label: "Scenario",   val: GROWTH_PRESETS[dominantScenario].label, highlight: dominantScenario === "growth" ? "emerald" : dominantScenario === "conservative" ? "amber" : "cyan" },
           { label: "Confidence", val: "Medium", highlight: "amber" },
-          { label: "CAGR",       val: cagr !== null ? `${cagr >= 0 ? "+" : ""}${cagr.toFixed(1)}%` : "—", highlight: cagr !== null && cagr > 0 ? "emerald" : "" },
         ].map(({ label, val, highlight }, i) => (
           <div key={label} className={`flex items-center gap-1.5 ${i > 0 ? "sm:border-l sm:border-slate-200 sm:pl-5" : ""}`}>
             <span className="text-[10px] text-slate-400 uppercase tracking-wider">{label}</span>
-            <span className={`text-[11px] font-bold ${highlight === "emerald" ? "text-emerald-600" : highlight === "amber" ? "text-amber-600" : "text-slate-700"}`}>{val}</span>
+            <span className={`text-[11px] font-bold ${highlight === "emerald" ? "text-emerald-600" : highlight === "amber" ? "text-amber-600" : highlight === "cyan" ? "text-cyan-700" : "text-slate-700"}`}>{val}</span>
           </div>
         ))}
       </div>
@@ -2360,16 +2360,6 @@ function ForecastView({
               <span className="text-[10px] text-slate-500">
                 Start <span className="font-semibold text-slate-700">{MONTH_NAMES[startMonth]} {startYear}</span>
               </span>
-              {cagr !== null && (
-                <>
-                  <span className="text-[10px] text-slate-400 hidden sm:inline">|</span>
-                  <span className="text-[10px] text-slate-500">
-                    CAGR <span className={`font-semibold ${cagr >= 0 ? "text-emerald-600" : "text-red-500"}`}>
-                      {cagr >= 0 ? "+" : ""}{cagr.toFixed(1)}%
-                    </span>
-                  </span>
-                </>
-              )}
             </div>
             {onEditDrivers && (
               <button onClick={onEditDrivers}
@@ -2859,20 +2849,29 @@ function ForecastView({
                 ))}
               </div>
               <div className="px-5 py-4 space-y-2">
-                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-2">Revenue Outlook</p>
-                {([
-                  ["Baseline MRR",              fmt(totalMRR),                                    ""],
-                  ["Year 1 Revenue",            fmt(years[0]?.total ?? 0),                        ""],
-                  [`Year ${horizonYears} Rev`,  fmt(years[years.length - 1]?.total ?? 0),         ""],
-                  ["Cumulative Total",          fmt(grandTotal),                                   "#0e7490"],
-                  ["CAGR",                      cagr !== null ? `${cagr >= 0 ? "+" : ""}${cagr.toFixed(1)}%` : "—", cagr !== null ? (cagr >= 0 ? "#059669" : "#e11d48") : ""],
-                  ["Peak Month",                peakMonth ? `${peakMonth.yearMonth} · ${fmt(peakMonth.total)}` : "—", ""],
-                ] as [string, string, string][]).map(([label, val, color]) => (
-                  <div key={label} className="flex items-center justify-between gap-4">
-                    <span className="text-[13px] text-slate-400">{label}</span>
-                    <span className="text-[13px] font-semibold text-right" style={{ color: color || "#1e293b" }}>{val}</span>
-                  </div>
-                ))}
+                <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-2">Growth Analytics</p>
+                {(() => {
+                  const baseRevM = projection[0]?.total ?? 0;
+                  const doublingM = baseRevM > 0
+                    ? projection.find((m, idx) => idx > 0 && m.total >= baseRevM * 2)
+                    : null;
+                  const yr1Total = years[0]?.total ?? 0;
+                  const yrNTotal = years[years.length - 1]?.total ?? 0;
+                  const finalVsYr1Pct = yr1Total > 0 ? Math.round((yrNTotal / yr1Total - 1) * 100) : null;
+                  const rows: [string, string, string][] = [
+                    ["CAGR", cagr !== null ? `${cagr >= 0 ? "+" : ""}${cagr.toFixed(1)}%` : "—", cagr !== null ? (cagr >= 0 ? "#059669" : "#e11d48") : ""],
+                    ["Peak Month", peakMonth ? `${peakMonth.yearMonth} · ${fmt(peakMonth.total)}` : "—", ""],
+                    ["Revenue Doubles", doublingM ? `${doublingM.yearMonth} (mo ${doublingM.index + 1})` : dominantScenario === "base" ? "Flat — no growth" : "Beyond horizon", doublingM ? "#059669" : "#94a3b8"],
+                    ["Year 1 Avg/mo", fmt(Math.round(yr1Total / 12)), ""],
+                    [`Yr ${horizonYears} vs Yr 1`, finalVsYr1Pct !== null ? `${finalVsYr1Pct >= 0 ? "+" : ""}${finalVsYr1Pct}%` : "—", finalVsYr1Pct !== null ? (finalVsYr1Pct >= 0 ? "#059669" : "#e11d48") : ""],
+                  ];
+                  return rows.map(([label, val, color]) => (
+                    <div key={label} className="flex items-center justify-between gap-4">
+                      <span className="text-[13px] text-slate-400">{label}</span>
+                      <span className="text-[13px] font-semibold text-right" style={{ color: color || "#1e293b" }}>{val}</span>
+                    </div>
+                  ));
+                })()}
               </div>
             </div>
 
@@ -3107,9 +3106,10 @@ function ApplyPageInner() {
   const [appName, setAppName] = useState("New Application");
 
   // Streams
-  const [streams,      setStreams]      = useState<RevenueStream[]>([]);
-  const [streamIdx,    setStreamIdx]    = useState(0);
-  const [driverMode,   setDriverMode]   = useState<DriverMode>("chat");
+  const [streams,          setStreams]          = useState<RevenueStream[]>([]);
+  const [streamIdx,        setStreamIdx]        = useState(0);
+  const [driverMode,       setDriverMode]       = useState<DriverMode>("chat");
+  const [showStreamPicker, setShowStreamPicker] = useState(false);
 
   // Forecast config — lifted so Phase 4 detection can set them directly
   const now0 = new Date();
@@ -4533,25 +4533,68 @@ function ApplyPageInner() {
 
                   {/* ── Top header ── */}
                   <div className="mb-4">
-                    {/* Stream pills + running MRR */}
-                    <div className="flex items-center gap-2 mb-3 flex-wrap">
-                      <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                        {streams.map((s, i) => {
-                          const done = s.driverDone || s.items.length > 0;
-                          return (
-                            <button key={s.id} onClick={() => { setStreamIdx(i); setDriverMode("chat"); }}
-                              title={s.name}
-                              className={`h-2 rounded-full transition-all flex-shrink-0 ${i === streamIdx ? "w-8" : "w-2"} ${done ? "bg-emerald-500" : i === streamIdx ? "bg-cyan-600" : "bg-slate-200"}`} />
-                          );
-                        })}
-                        <span className="text-[11px] text-slate-400 truncate ml-1">
-                          Stream {streamIdx + 1} of {streams.length} · <span className="font-semibold text-slate-600">{currentStream.name}</span>
-                        </span>
+                    {/* Stream tabs + Add Stream + running MRR */}
+                    <div className="mb-3 space-y-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-x-auto">
+                          {streams.map((s, i) => {
+                            const done = s.driverDone || s.items.length > 0;
+                            const active = i === streamIdx;
+                            return (
+                              <button key={s.id}
+                                onClick={() => { setStreamIdx(i); setDriverMode("chat"); setShowStreamPicker(false); }}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap shrink-0 ${
+                                  active
+                                    ? "bg-cyan-600 text-white shadow-sm"
+                                    : done
+                                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
+                                      : "bg-slate-100 text-slate-500 hover:bg-slate-200 border border-slate-200"
+                                }`}>
+                                {done && !active && <CheckCircle2 className="w-3 h-3 shrink-0" />}
+                                <span className="truncate max-w-[140px]">{s.name}</span>
+                                {active && s.items.length > 0 && (
+                                  <span className="ml-0.5 text-[10px] opacity-75">{s.items.length}</span>
+                                )}
+                              </button>
+                            );
+                          })}
+                          <button
+                            onClick={() => setShowStreamPicker((v) => !v)}
+                            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap shrink-0 border border-dashed ${
+                              showStreamPicker ? "border-cyan-400 text-cyan-600 bg-cyan-50" : "border-slate-300 text-slate-400 hover:border-cyan-400 hover:text-cyan-600"
+                            }`}>
+                            <Plus className="w-3.5 h-3.5" /> Add Stream
+                          </button>
+                        </div>
+                        {streams.some(s => streamMRR(s) > 0) && (
+                          <span className="text-xs font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-full flex-shrink-0">
+                            {fmt(streams.reduce((a, s) => a + streamMRR(s), 0))}/mo total
+                          </span>
+                        )}
                       </div>
-                      {streams.some(s => streamMRR(s) > 0) && (
-                        <span className="text-xs font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-full flex-shrink-0">
-                          {fmt(streams.reduce((a, s) => a + streamMRR(s), 0))}/mo total
-                        </span>
+                      {/* Inline stream type picker */}
+                      {showStreamPicker && (
+                        <div className="bg-white border border-cyan-100 rounded-xl p-3 shadow-md">
+                          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">Choose stream type</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {(["product","service","subscription","rental","contract","marketplace","custom"] as StreamType[]).map((t) => {
+                              const M = STREAM_META[t]; const TIcon = M.icon;
+                              return (
+                                <button key={t}
+                                  onClick={() => {
+                                    const ns = makeStream(M.label, t, "low");
+                                    setStreams((p) => [...p, ns]);
+                                    setStreamIdx(streams.length);
+                                    setDriverMode("chat");
+                                    setShowStreamPicker(false);
+                                  }}
+                                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border border-slate-200 bg-white hover:border-cyan-400 hover:text-cyan-600 text-slate-600 transition-all">
+                                  <TIcon className="w-3 h-3" style={{ color: M.color }} /> {M.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
                       )}
                     </div>
 
