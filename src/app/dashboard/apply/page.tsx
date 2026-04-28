@@ -128,7 +128,7 @@ type DriverMode = "chat" | "import" | "manual";
 type SeasonalityPreset = "none" | "q4_peak" | "q1_slow" | "summer_peak" | "end_of_year" | "construction" | "custom";
 
 interface ChatMessage { role: "user" | "assistant"; content: string; }
-interface StreamItem  { id: string; name: string; category: string; volume: number; price: number; unit: string; note?: string; }
+interface StreamItem  { id: string; name: string; category: string; volume: number; price: number; unit: string; note?: string; seasonalityPreset?: SeasonalityPreset; }
 
 /** Per-category or per-item growth/seasonality/event override. null = inherit from stream. */
 interface GrowthOverride {
@@ -367,16 +367,25 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
         ? (s.expansionMultiplier ?? 1)
         : 1;
 
-      // Per-item override resolver: item override > category override > stream default
-      const getItemParams = (itemId: string, category: string) => {
+      // Per-item override resolver:
+      // seasonality priority: item.seasonalityPreset > item override > category override > stream default
+      // growth/pricing priority: item override > category override > stream default
+      const getItemParams = (it: StreamItem) => {
         const ovrs = s.overrides ?? [];
-        const itemOvr = ovrs.find((o) => o.scope === "item"     && o.targetId === itemId);
-        const catOvr  = ovrs.find((o) => o.scope === "category" && o.targetId === category);
+        const itemOvr = ovrs.find((o) => o.scope === "item"     && o.targetId === it.id);
+        const catOvr  = ovrs.find((o) => o.scope === "category" && o.targetId === it.category);
         const ovr = itemOvr ?? catOvr ?? null;
+        // Item-level seasonality preset is highest priority (but "none" means flat, not "inherit")
+        const itemSeasonMults: number[] | null =
+          it.seasonalityPreset
+            ? (it.seasonalityPreset === "none"
+                ? Array(12).fill(1) as number[]
+                : SEASONALITY_PRESETS[it.seasonalityPreset]?.months ?? null)
+            : null;
         return {
           volPct:      ovr?.volumeGrowthPct      ?? s.volumeGrowthPct      ?? 0,
           pricePct:    ovr?.annualPriceGrowthPct ?? s.annualPriceGrowthPct ?? 0,
-          seasonMults: ovr?.seasonalityMultipliers ?? s.seasonalityMultipliers ?? (Array(12).fill(1) as number[]),
+          seasonMults: itemSeasonMults ?? ovr?.seasonalityMultipliers ?? s.seasonalityMultipliers ?? (Array(12).fill(1) as number[]),
           launchMonth: ovr?.launchMonth ?? null,
           sunsetMonth: ovr?.sunsetMonth ?? null,
         };
@@ -391,7 +400,7 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
         const initial = Math.max(1, s.items.reduce((a, it) => a + it.volume, 0));
         const subFactor = subTotals[s.id] / initial;
         s.items.forEach((it) => {
-          const p = getItemParams(it.id, it.category);
+          const p = getItemParams(it);
           if (p.launchMonth !== null && i < p.launchMonth) return;
           if (p.sunsetMonth !== null && i > p.sunsetMonth) return;
           const pF = Math.pow(1 + p.pricePct / 1200, i);
@@ -402,7 +411,7 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
       } else if (s.type === "rental") {
         const occ = (s.rentalOccupancyPct ?? 100) / 100;
         s.items.forEach((it) => {
-          const p = getItemParams(it.id, it.category);
+          const p = getItemParams(it);
           if (p.launchMonth !== null && i < p.launchMonth) return;
           if (p.sunsetMonth !== null && i > p.sunsetMonth) return;
           const vF = Math.pow(1 + p.volPct   / 100,  i);
@@ -413,7 +422,7 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
 
       } else if (s.type === "marketplace") {
         s.items.forEach((it) => {
-          const p = getItemParams(it.id, it.category);
+          const p = getItemParams(it);
           if (p.launchMonth !== null && i < p.launchMonth) return;
           if (p.sunsetMonth !== null && i > p.sunsetMonth) return;
           const vF = Math.pow(1 + p.volPct   / 100,  i);
@@ -425,7 +434,7 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
       } else {
         // product, service, contract, custom
         s.items.forEach((it) => {
-          const p = getItemParams(it.id, it.category);
+          const p = getItemParams(it);
           if (p.launchMonth !== null && i < p.launchMonth) return;
           if (p.sunsetMonth !== null && i > p.sunsetMonth) return;
           const vF = Math.pow(1 + p.volPct   / 100,  i);
@@ -661,6 +670,23 @@ function ItemRow({
             onChange={(e) => upN("price", Number(e.target.value))}
             className="w-20 text-xs text-right text-slate-700 bg-transparent border-b border-transparent group-hover:border-slate-200 focus:border-cyan-400 outline-none" />
         </div>
+      </td>
+      <td className="px-2 py-2 text-center">
+        <select
+          value={item.seasonalityPreset ?? ""}
+          onChange={(e) => {
+            const val = e.target.value as SeasonalityPreset | "";
+            onChange({ ...item, seasonalityPreset: val || undefined });
+          }}
+          title="Per-item seasonality — overrides stream default"
+          className="text-[9px] text-slate-400 bg-transparent border-b border-transparent group-hover:border-slate-200 focus:border-cyan-400 outline-none cursor-pointer hover:text-slate-600 transition-colors max-w-[72px]">
+          <option value="">Stream</option>
+          {(Object.keys(SEASONALITY_PRESETS) as SeasonalityPreset[])
+            .filter((p) => p !== "custom")
+            .map((p) => (
+              <option key={p} value={p}>{SEASONALITY_PRESETS[p].label}</option>
+            ))}
+        </select>
       </td>
       <td className="px-3 py-2 text-right">
         <span className="text-xs font-semibold" style={{ color: "#0e7490" }}>{fmt(rev)}</span>
@@ -1553,6 +1579,7 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
                 <th className="px-3 py-2.5 text-xs font-semibold text-slate-500">Category</th>
                 <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 text-right">{cols.vol}</th>
                 <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 text-right">{cols.price}</th>
+                <th className="px-2 py-2.5 text-xs font-semibold text-slate-500 text-center">Season</th>
                 <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 text-right">{cols.rev}</th>
                 <th className="px-2 py-2.5 w-6" />
               </tr>
@@ -1564,7 +1591,7 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
                 return (
                   <>
                     <tr key={`cat-${cat}`} className="bg-slate-50/60">
-                      <td colSpan={4} className="px-3 py-1.5">
+                      <td colSpan={5} className="px-3 py-1.5">
                         <span className="text-xs font-bold text-slate-600">{cat}</span>
                       </td>
                       <td className="px-3 py-1.5 text-right">
@@ -1587,7 +1614,7 @@ function ItemTable({ stream, onUpdate, fmt, currencySymbol }: { stream: RevenueS
                 );
               })}
               <tr className="bg-slate-50 border-t-2 border-slate-200">
-                <td colSpan={4} className="px-3 py-2.5 text-xs font-bold text-slate-700">Stream Total</td>
+                <td colSpan={5} className="px-3 py-2.5 text-xs font-bold text-slate-700">Stream Total</td>
                 <td className="px-3 py-2.5 text-right text-sm font-bold" style={{ color: "#0e7490" }}>
                   {fmt(total)}/mo
                 </td>
@@ -2912,13 +2939,14 @@ function ApplyPageInner() {
         overrides:              [],
         driverDone:          s.driver_done,
         items: (state.itemsByStream[s.id] ?? []).map((it) => ({
-          id:       it.id,
-          name:     it.name,
-          category: it.category,
-          volume:   Number(it.volume),
-          price:    Number(it.price),
-          unit:     it.unit,
-          note:     it.note ?? undefined,
+          id:                it.id,
+          name:              it.name,
+          category:          it.category,
+          volume:            Number(it.volume),
+          price:             Number(it.price),
+          unit:              it.unit,
+          note:              it.note ?? undefined,
+          seasonalityPreset: (it.seasonality_preset as SeasonalityPreset | null) ?? undefined,
         })),
         driverMessages: ((state.driverConversations.find((c) => c.stream_id === s.id)?.messages) ?? []) as ChatMessage[],
       }));
@@ -3138,7 +3166,8 @@ function ApplyPageInner() {
       await saveStreamItems(sb, streamId, userId, items.map((it, pos) => ({
         name: it.name, category: it.category,
         volume: it.volume, price: it.price,
-        unit: it.unit, note: it.note ?? undefined, position: pos,
+        unit: it.unit, note: it.note ?? undefined,
+        seasonalityPreset: it.seasonalityPreset, position: pos,
       })));
       await saveDriverConversation(sb, appId, userId, streamId, driverMessages, null, true);
       // Mark drivers_done if every stream now has items
@@ -4583,7 +4612,8 @@ function ApplyPageInner() {
                               await saveStreamItems(sb, db.id, userId, local.items.map((it, pos) => ({
                                 name: it.name, category: it.category,
                                 volume: it.volume, price: it.price,
-                                unit: it.unit, note: it.note, position: pos,
+                                unit: it.unit, note: it.note,
+                                seasonalityPreset: it.seasonalityPreset, position: pos,
                               })));
                             }
                           }

@@ -80,6 +80,7 @@ export interface DbStreamItem {
   price: number;
   unit: string;
   note: string | null;
+  seasonality_preset: string | null;   // SeasonalityPreset key — NULL = inherit from stream
   position: number;
   created_at: string;
   updated_at: string;
@@ -408,6 +409,7 @@ export async function saveStreamItems(
     price: number;
     unit: string;
     note?: string;
+    seasonalityPreset?: string;
     position?: number;
   }>,
 ): Promise<DbStreamItem[]> {
@@ -425,6 +427,7 @@ export async function saveStreamItems(
     price: it.price,
     unit: it.unit,
     note: it.note ?? null,
+    seasonality_preset: it.seasonalityPreset ?? null,
     position: it.position ?? i,
   }));
 
