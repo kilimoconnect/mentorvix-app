@@ -110,6 +110,18 @@ export interface DbProjectionSnapshot {
   created_at: string;
 }
 
+export interface DbRevenueActual {
+  id: string;
+  application_id: string;
+  stream_id: string | null;
+  user_id: string;
+  year_month: string;     // "YYYY-MM"
+  revenue: number;
+  note: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ApplicationSummary extends DbApplication {
   stream_count: number;
   item_count: number;
@@ -125,10 +137,11 @@ export interface ApplicationState {
   application: DbApplication;
   intakeConversation: DbAiConversation | null;
   streams: DbRevenueStream[];
-  itemsByStream: Record<string, DbStreamItem[]>;  // keyed by stream_id
-  driverConversations: DbAiConversation[];        // type='driver'
+  itemsByStream: Record<string, DbStreamItem[]>;   // keyed by stream_id
+  driverConversations: DbAiConversation[];         // type='driver'
   forecastConfig: DbForecastConfig | null;
   latestSnapshot: DbProjectionSnapshot | null;
+  actualsByStream: Record<string, DbRevenueActual[]>;  // keyed by stream_id
 }
 
 /* ─────────────────────────────────────────── applications ── */
@@ -531,6 +544,66 @@ export async function getSnapshotData(
   return data as DbProjectionSnapshot;
 }
 
+/* ─────────────────────────────────────────── revenue actuals ── */
+
+/**
+ * Full replace for one stream's actuals.
+ * Deletes all existing actuals for this (stream_id) and inserts fresh ones.
+ * Called after ActualsChat emits [ACTUALS_DETECTED].
+ */
+export async function saveActuals(
+  supabase: SupabaseClient,
+  applicationId: string,
+  streamId: string,
+  userId: string,
+  actuals: Array<{ yearMonth: string; revenue: number; note?: string }>,
+): Promise<DbRevenueActual[]> {
+  // Delete existing actuals for this stream
+  await supabase
+    .from("revenue_actuals")
+    .delete()
+    .eq("stream_id", streamId);
+
+  if (actuals.length === 0) return [];
+
+  const rows = actuals.map((a) => ({
+    application_id: applicationId,
+    stream_id:      streamId,
+    user_id:        userId,
+    year_month:     a.yearMonth,
+    revenue:        a.revenue,
+    note:           a.note ?? null,
+  }));
+
+  const { data, error } = await supabase
+    .from("revenue_actuals")
+    .insert(rows)
+    .select();
+  if (error) throw new Error(`saveActuals insert: ${error.message}`);
+  return (data ?? []) as DbRevenueActual[];
+}
+
+/** Load all actuals for an application, grouped by stream_id */
+export async function loadActuals(
+  supabase: SupabaseClient,
+  applicationId: string,
+): Promise<Record<string, DbRevenueActual[]>> {
+  const { data, error } = await supabase
+    .from("revenue_actuals")
+    .select("*")
+    .eq("application_id", applicationId)
+    .order("year_month", { ascending: true });
+  if (error) throw new Error(`loadActuals: ${error.message}`);
+
+  const result: Record<string, DbRevenueActual[]> = {};
+  for (const row of (data ?? []) as DbRevenueActual[]) {
+    const key = row.stream_id ?? "__app__";
+    if (!result[key]) result[key] = [];
+    result[key].push(row);
+  }
+  return result;
+}
+
 /* ─────────────────────────────────────────── full state load ── */
 
 /**
@@ -576,12 +649,26 @@ export async function loadApplicationState(
     itemsByStream[s.id] = (itemResults[i].data ?? []) as DbStreamItem[];
   });
 
-  // Load forecast config
-  const { data: fcData } = await supabase
-    .from("forecast_configs")
-    .select("*")
-    .eq("application_id", applicationId)
-    .maybeSingle();
+  // Load forecast config + actuals in parallel
+  const [fcRes, actualsRes] = await Promise.all([
+    supabase
+      .from("forecast_configs")
+      .select("*")
+      .eq("application_id", applicationId)
+      .maybeSingle(),
+    supabase
+      .from("revenue_actuals")
+      .select("*")
+      .eq("application_id", applicationId)
+      .order("year_month", { ascending: true }),
+  ]);
+
+  const actualsByStream: Record<string, DbRevenueActual[]> = {};
+  for (const row of (actualsRes.data ?? []) as DbRevenueActual[]) {
+    const key = row.stream_id ?? "__app__";
+    if (!actualsByStream[key]) actualsByStream[key] = [];
+    actualsByStream[key].push(row);
+  }
 
   return {
     application: appRes.data as DbApplication,
@@ -589,7 +676,8 @@ export async function loadApplicationState(
     streams,
     itemsByStream,
     driverConversations: conversations.filter((c) => c.type === "driver"),
-    forecastConfig: (fcData ?? null) as DbForecastConfig | null,
+    forecastConfig: (fcRes.data ?? null) as DbForecastConfig | null,
     latestSnapshot: (snapshotRes.data ?? null) as DbProjectionSnapshot | null,
+    actualsByStream,
   };
 }

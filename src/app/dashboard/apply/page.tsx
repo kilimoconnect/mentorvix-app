@@ -9,6 +9,7 @@ import {
   getOrCreateApplication, saveStreams, saveStreamItems,
   saveIntakeConversation, saveDriverConversation, saveForecastConfig,
   saveProjectionSnapshot, loadApplicationState, updateApplicationFlags,
+  saveActuals,
   type DbApplication, type ApplicationState,
 } from "@/lib/supabase/revenue";
 import { CURRENCIES, getCurrencySymbol, makeFmt } from "@/lib/utils/currency";
@@ -17,7 +18,7 @@ import {
   BrainCircuit, BarChart3, TrendingUp, ShoppingBag, Briefcase,
   Repeat, Landmark, Zap, CheckCircle2, RefreshCw, Send,
   ChevronDown, ChevronUp, Info, Upload, Pencil,
-  Calendar, ChevronRight, ScrollText, Users, FileText,
+  Calendar, ChevronRight, ScrollText, Users,
   Rocket, Store, Wrench, RefreshCcw, Banknote,
   Mic, MicOff, Volume2,
 } from "lucide-react";
@@ -558,6 +559,22 @@ function parseStreams(text: string): RevenueStream[] | null {
     const arr = JSON.parse(text.slice(idx + "[STREAMS_DETECTED]".length).trim()) as
       { name: string; type: StreamType; confidence: Confidence }[];
     return arr.map((s) => makeStream(s.name, s.type ?? "custom", s.confidence ?? "medium"));
+  } catch { return null; }
+}
+
+/** One month of actual (historical) revenue data */
+interface ActualMonth { yearMonth: string; total: number; }
+
+function parseActuals(text: string): ActualMonth[] | null {
+  const idx = text.indexOf("[ACTUALS_DETECTED]");
+  if (idx === -1) return null;
+  try {
+    const arr = JSON.parse(text.slice(idx + "[ACTUALS_DETECTED]".length).trim()) as
+      { yearMonth?: string; revenue?: number; note?: string }[];
+    return arr
+      .map((a) => ({ yearMonth: a.yearMonth ?? "", total: Number(a.revenue ?? 0) }))
+      .filter((a) => /^\d{4}-\d{2}$/.test(a.yearMonth))
+      .sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
   } catch { return null; }
 }
 
@@ -1911,20 +1928,205 @@ function DriverChat({ stream, onUpdate, onItemsSaved, situation, isFirstStream, 
   );
 }
 
+/* ═══════════════════════════════════════ ActualsChat ══ */
+function ActualsChat({ stream, onActualsSaved }: {
+  stream: RevenueStream;
+  onActualsSaved: (streamId: string, actuals: ActualMonth[], msgs: ChatMessage[]) => Promise<void>;
+}) {
+  const [msgs,        setMsgs]        = useState<ChatMessage[]>([]);
+  const [input,       setInput]       = useState("");
+  const [typing,      setTyping]      = useState(false);
+  const [error,       setError]       = useState("");
+  const [done,        setDone]        = useState(false);
+  const [micActive,   setMicActive]   = useState(false);
+  const [speakingIdx, setSpeakingIdx] = useState<number | null>(null);
+  const endRef          = useRef<HTMLDivElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef  = useRef<any>(null);
+  const cachedVoiceRef  = useRef<SpeechSynthesisVoice | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.speechSynthesis) resolveVoice(cachedVoiceRef);
+  }, []);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, typing]);
+  useEffect(() => {
+    if (msgs.length === 0 && !typing) callActuals([]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const callActuals = async (history: ChatMessage[]) => {
+    setTyping(true); setError("");
+    try {
+      const res = await fetch("/api/actuals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: history, streamName: stream.name }),
+      });
+      const data = await res.json() as { text?: string; error?: string };
+      if (data.error) throw new Error(data.error);
+      const text = data.text ?? "";
+      const actuals = parseActuals(text);
+      if (actuals) {
+        const cleanText = text.slice(0, text.indexOf("[ACTUALS_DETECTED]")).trim() ||
+          `I've captured ${actuals.length} months of actual revenue for ${stream.name}.`;
+        const newMsgs = [...history, { role: "assistant" as const, content: cleanText }];
+        setMsgs(newMsgs);
+        setDone(true);
+        onActualsSaved(stream.id, actuals, newMsgs).catch(
+          (e) => console.error("[ActualsChat] save error:", e)
+        );
+      } else {
+        setMsgs([...history, { role: "assistant" as const, content: text }]);
+      }
+    } catch (e) { setError(e instanceof Error ? e.message : "Error"); }
+    finally { setTyping(false); }
+  };
+
+  const send = () => {
+    const text = input.trim();
+    if (!text || typing) return;
+    const updated = [...msgs, { role: "user" as const, content: text }];
+    setMsgs(updated); setInput("");
+    callActuals(updated);
+  };
+
+  const speakMsg = async (text: string, idx: number) => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    if (speakingIdx === idx) { window.speechSynthesis.cancel(); setSpeakingIdx(null); return; }
+    window.speechSynthesis.cancel();
+    const voice = await resolveVoice(cachedVoiceRef);
+    const utt = new SpeechSynthesisUtterance(text);
+    if (voice) utt.voice = voice;
+    utt.lang = "en-US"; utt.rate = 1.0; utt.pitch = 1.0;
+    utt.onend = () => setSpeakingIdx(null);
+    utt.onerror = () => setSpeakingIdx(null);
+    setSpeakingIdx(idx);
+    window.speechSynthesis.speak(utt);
+  };
+
+  const toggleMic = () => {
+    if (typeof window === "undefined") return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!SR) return;
+    if (micActive) {
+      recognitionRef.current?.stop();
+      recognitionRef.current = null;
+      setMicActive(false);
+      sendRef.current();
+      return;
+    }
+    const rec = new SR();
+    rec.lang = "en-US"; rec.interimResults = true; rec.continuous = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rec.onresult = (e: any) => {
+      let final = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) final += (e.results[i][0]?.transcript as string) ?? "";
+      }
+      if (final) setInput((prev) => prev ? prev.trimEnd() + " " + final.trim() : final.trim());
+    };
+    rec.onerror = () => { recognitionRef.current = null; setMicActive(false); };
+    rec.onend   = () => { if (recognitionRef.current) { recognitionRef.current = null; setMicActive(false); } };
+    rec.start(); recognitionRef.current = rec; setMicActive(true);
+  };
+  const sendRef = useRef(send);
+  useEffect(() => { sendRef.current = send; });
+
+  return (
+    <div className="flex flex-col gap-3">
+      {done && (
+        <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
+          <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+          <p className="text-xs font-semibold text-emerald-700">
+            Actuals captured! Continue to Revenue Drivers below to define your pricing model.
+          </p>
+        </div>
+      )}
+      <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-3 overflow-y-auto" style={{ maxHeight: 280 }}>
+        {msgs.map((m, i) => (
+          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+            {m.role === "assistant" && (
+              <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 mr-2 mt-0.5"
+                style={{ background: "linear-gradient(135deg,#064e3b,#059669)" }}>
+                <BarChart3 className="w-3 h-3 text-white" />
+              </div>
+            )}
+            <div className={`max-w-[85%] px-3 py-2 rounded-xl text-sm leading-relaxed ${
+              m.role === "user"
+                ? "text-white rounded-tr-sm"
+                : "bg-slate-50 border border-slate-100 text-slate-800 rounded-tl-sm"
+            }`} style={m.role === "user" ? { background: "linear-gradient(135deg,#059669,#10b981)" } : {}}>
+              {cleanAI(m.content)}
+            </div>
+            {m.role === "assistant" && (
+              <button onClick={() => speakMsg(m.content, i)}
+                className={`ml-1.5 mt-0.5 w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 self-start transition-all ${
+                  speakingIdx === i ? "text-emerald-600 bg-emerald-50" : "text-slate-300 hover:text-emerald-500 hover:bg-slate-50"
+                }`}>
+                <Volume2 className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        ))}
+        {typing && (
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: "linear-gradient(135deg,#064e3b,#059669)" }}>
+              <BarChart3 className="w-3 h-3 text-white" />
+            </div>
+            <div className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2">
+              <div className="flex gap-1">
+                {[0, 1, 2].map((i) => (
+                  <motion.div key={i} className="w-1.5 h-1.5 rounded-full bg-slate-300"
+                    animate={{ y: [0, -3, 0] }} transition={{ duration: 0.5, repeat: Infinity, delay: i * 0.12 }} />
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+        {error && (
+          <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2 flex items-center gap-2">
+            <span>⚠ {error}</span>
+            <button onClick={() => callActuals(msgs)} className="ml-auto font-semibold underline">Retry</button>
+          </div>
+        )}
+        <div ref={endRef} />
+      </div>
+      {!done && (
+        <div className="flex items-end gap-2">
+          <motion.button whileTap={{ scale: 0.95 }} onClick={toggleMic}
+            className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all ${
+              micActive
+                ? "bg-red-500 text-white shadow-lg shadow-red-500/30 animate-pulse"
+                : "border border-slate-200 text-slate-400 hover:border-emerald-400 hover:text-emerald-600 bg-white"
+            }`}>
+            {micActive ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+          </motion.button>
+          <textarea rows={2} value={input} onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+            disabled={typing}
+            placeholder={micActive ? "Listening… tap mic to stop & send" : "Enter your monthly revenue data… (Enter to send)"}
+            className={`flex-1 resize-none px-4 py-2.5 border rounded-xl text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 transition-all placeholder:text-slate-300 disabled:opacity-60 ${
+              micActive ? "border-red-300 focus:border-red-400 focus:ring-red-400/20"
+                        : "border-slate-200 focus:border-emerald-500 focus:ring-emerald-500/20"
+            }`} />
+          <motion.button whileTap={{ scale: 0.95 }} onClick={send} disabled={!input.trim() || typing}
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-white disabled:opacity-40"
+            style={{ background: "linear-gradient(135deg,#059669,#10b981)" }}>
+            <Send className="w-4 h-4" />
+          </motion.button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════ ImportPane ══ */
 function ImportPane({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s: RevenueStream) => void }) {
   const [raw,     setRaw]     = useState("");
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState("");
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => setRaw(ev.target?.result as string ?? "");
-    reader.readAsText(file);
-  };
 
   const processImport = async () => {
     if (!raw.trim()) return;
@@ -1944,7 +2146,7 @@ function ImportPane({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s:
       if (items) {
         onUpdate({ ...stream, items: [...stream.items, ...items], driverDone: true, driverMessages: msgs });
       } else {
-        setError("AI could not detect items. Try formatting your data more clearly.");
+        setError("AI could not detect items. Try re-formatting your data — each item on its own line works best.");
       }
     } catch (e) { setError(e instanceof Error ? e.message : "Error"); }
     finally { setLoading(false); }
@@ -1952,30 +2154,74 @@ function ImportPane({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s:
 
   return (
     <div className="space-y-3">
-      {/* Accepted formats */}
-      <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3">
-        <p className="text-xs font-semibold text-blue-700 mb-1.5">Paste or upload any of these:</p>
-        <div className="flex flex-wrap gap-1.5">
-          {["Product list CSV", "Price list", "Invoice lines", "POS export", "Excel rows", "WhatsApp orders", "M-Pesa statement", "Any text data"].map((t) => (
-            <span key={t} className="text-xs bg-white border border-blue-100 text-blue-600 px-2 py-0.5 rounded-full">{t}</span>
+
+      {/* How-to instructions */}
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-3">
+        <p className="text-xs font-bold text-slate-700 uppercase tracking-wider">How to use this panel</p>
+        <ol className="space-y-2.5">
+          {[
+            {
+              step: "1",
+              title: "Open your data source",
+              body: "Open the spreadsheet, price list, invoice, or app where your product or sales data lives — Excel, Google Sheets, WhatsApp, M-Pesa, a POS report, or even plain notes.",
+            },
+            {
+              step: "2",
+              title: "Select and copy the rows",
+              body: "Highlight the rows you want (Ctrl+C on Windows, Cmd+C on Mac). You don't need headers — raw rows are fine. The AI reads messy data.",
+            },
+            {
+              step: "3",
+              title: "Paste below",
+              body: "Click inside the text box below and paste (Ctrl+V / Cmd+V). Then hit \"Extract & Clean with AI\" — the AI will identify every item, group them by category, and fill in volume and price.",
+            },
+          ].map(({ step, title, body }) => (
+            <li key={step} className="flex gap-3">
+              <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0 mt-0.5"
+                style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
+                {step}
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-slate-700">{title}</p>
+                <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed">{body}</p>
+              </div>
+            </li>
           ))}
+        </ol>
+
+        {/* What the AI can read */}
+        <div className="border-t border-slate-200 pt-3">
+          <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2">What the AI can read</p>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+            {[
+              "Product name + price + quantity",
+              "Invoice or receipt lines",
+              "Google Sheets / Excel rows",
+              "WhatsApp order messages",
+              "POS or till-roll exports",
+              "M-Pesa / bank statement rows",
+              "Handwritten lists (typed out)",
+              "Any consistent text format",
+            ].map((t) => (
+              <div key={t} className="flex items-start gap-1.5">
+                <span className="text-emerald-500 text-[10px] mt-0.5 flex-shrink-0">✓</span>
+                <span className="text-[11px] text-slate-600">{t}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* File upload */}
-      <div className="flex items-center gap-3">
-        <button onClick={() => fileRef.current?.click()}
-          className="flex items-center gap-2 px-4 py-2.5 border border-dashed border-slate-300 rounded-xl text-xs font-medium text-slate-500 hover:border-cyan-400 hover:text-cyan-600 transition-colors">
-          <FileText className="w-4 h-4" /> Upload CSV / TXT file
-        </button>
-        <input ref={fileRef} type="file" accept=".csv,.txt,.tsv,.xls,.xlsx" className="hidden" onChange={handleFile} />
-        {raw && <span className="text-xs text-emerald-600 font-medium">✓ File loaded — {raw.split("\n").length} lines</span>}
-      </div>
-
       {/* Paste area */}
-      <textarea rows={6} value={raw} onChange={(e) => setRaw(e.target.value)}
-        placeholder={`Paste raw data here. Examples:\n\nInterior Wall Paint, 50 cans/month, $25 each\nPrimer, 20 units, $15\nBrush set, 80/month, $6\n\nOr paste CSV rows, invoice lines, product lists…`}
-        className="w-full resize-none px-4 py-3 border border-slate-200 rounded-xl text-sm text-slate-700 bg-white focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all placeholder:text-slate-300 font-mono" />
+      <textarea rows={7} value={raw} onChange={(e) => setRaw(e.target.value)}
+        placeholder={`Paste your data here — examples of what works:\n\nInterior White 4L | 120 units/month | $18.50\nPrimer 20L, 45/mo, $32\nBrush Set — 80 per month @ $6\nRoofing Sheets: 200 sheets, $14 each\n\nOr paste a full spreadsheet block, invoice lines, or any list.`}
+        className="w-full resize-none px-4 py-3 border border-slate-200 rounded-xl text-sm text-slate-700 bg-white focus:border-cyan-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 transition-all placeholder:text-slate-400 font-mono leading-relaxed" />
+
+      {raw.trim() && (
+        <p className="text-[11px] text-slate-400 pl-1">
+          {raw.trim().split("\n").filter(l => l.trim()).length} line{raw.trim().split("\n").filter(l => l.trim()).length !== 1 ? "s" : ""} ready to extract
+        </p>
+      )}
 
       {error && <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">{error}</p>}
 
@@ -1986,9 +2232,9 @@ function ImportPane({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s:
           <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg> AI is cleaning &amp; grouping items…</>
+          </svg> AI is extracting &amp; grouping items…</>
         ) : (
-          <><BrainCircuit className="w-4 h-4" /> Extract &amp; Clean Items with AI</>
+          <><BrainCircuit className="w-4 h-4" /> Extract &amp; Clean with AI</>
         )}
       </button>
     </div>
@@ -2054,6 +2300,7 @@ function ForecastView({
   onStartChange,
   currency,
   onEditDrivers,
+  actuals,
 }: {
   streams:          RevenueStream[];
   onUpdateStream:   (s: RevenueStream) => void;
@@ -2064,6 +2311,7 @@ function ForecastView({
   onStartChange?:   (year: number, month: number) => void;
   currency:         string | null;
   onEditDrivers?:   () => void;
+  actuals?:         ActualMonth[];   // historical revenue for "existing" businesses
 }) {
   const fmt = makeFmt(currency);
   const [view,           setView]           = useState<"annual" | "monthly" | "sensitivity">("annual");
@@ -2280,6 +2528,155 @@ function ForecastView({
           </div>
         ))}
       </div>
+
+      {/* ── Actuals + Forecast combined chart (existing business only) ── */}
+      {actuals && actuals.length > 0 && (() => {
+        // Build combined timeline: actuals (emerald) + forecast (cyan)
+        // actuals sorted oldest→newest; forecast starts at startYear/startMonth
+        const sortedActuals = [...actuals].sort((a, b) => a.yearMonth.localeCompare(b.yearMonth));
+        const forecastMonths = projection.slice(0, Math.min(projection.length, 24)); // cap at 24 for readability
+
+        // For the combined chart, show up to 12 months of actuals + up to 12 months of forecast
+        const showActuals  = sortedActuals.slice(-12);
+        const showForecast = forecastMonths.slice(0, 12);
+
+        const allValues = [
+          ...showActuals.map((a) => a.total),
+          ...showForecast.map((m) => m.total),
+        ];
+        const maxVal = Math.max(...allValues, 1);
+
+        const totalActualsRev    = showActuals.reduce((a, m) => a + m.total, 0);
+        const totalForecastRev   = showForecast.reduce((a, m) => a + m.total, 0);
+        const avgActual          = showActuals.length > 0 ? totalActualsRev / showActuals.length : 0;
+        const avgForecast        = showForecast.length > 0 ? totalForecastRev / showForecast.length : 0;
+        const growthVsActual     = avgActual > 0 ? ((avgForecast - avgActual) / avgActual) * 100 : null;
+
+        // Short month label from "YYYY-MM"
+        const shortLabel = (ym: string) => {
+          const [y, m] = ym.split("-").map(Number);
+          return `${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][(m - 1) % 12]} ${String(y).slice(2)}`;
+        };
+
+        return (
+          <div className="bg-white rounded-2xl border border-slate-100 px-5 pt-4 pb-4">
+            {/* Header */}
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <div>
+                <p className="text-xs font-bold text-slate-700 uppercase tracking-wider">Actuals + Forecast</p>
+                <p className="text-[10px] text-slate-400 mt-0.5">Historical revenue (emerald) → projected growth (cyan)</p>
+              </div>
+              <div className="flex items-center gap-3">
+                {growthVsActual !== null && (
+                  <div className={`flex items-center gap-1.5 rounded-full px-3 py-1 border ${
+                    growthVsActual >= 0
+                      ? "bg-cyan-50 border-cyan-100"
+                      : "bg-red-50 border-red-100"
+                  }`}>
+                    <TrendingUp className={`w-3 h-3 ${growthVsActual >= 0 ? "text-cyan-600" : "text-red-500"}`} />
+                    <span className={`text-[10px] font-bold ${growthVsActual >= 0 ? "text-cyan-700" : "text-red-600"}`}>
+                      {growthVsActual >= 0 ? "+" : ""}{growthVsActual.toFixed(1)}% vs actuals avg
+                    </span>
+                  </div>
+                )}
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-sm" style={{ background: "#059669" }} />
+                    <span className="text-[10px] text-slate-500">Actual</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 rounded-sm" style={{ background: "#0e7490" }} />
+                    <span className="text-[10px] text-slate-500">Forecast</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Combined bar chart */}
+            <div className="flex items-end gap-1" style={{ height: 80 }}>
+              {/* Actuals bars */}
+              {showActuals.map((a, i) => {
+                const pct = maxVal > 0 ? (a.total / maxVal) * 100 : 4;
+                return (
+                  <div key={`a-${i}`} className="flex-1 h-full flex flex-col items-stretch min-w-0" title={`${shortLabel(a.yearMonth)}: ${fmt(a.total)}`}>
+                    <div className="flex-1 flex items-end">
+                      <motion.div
+                        initial={{ height: 0 }}
+                        animate={{ height: `${Math.max(pct, 3)}%` }}
+                        transition={{ duration: 0.5, delay: i * 0.04, ease: EASE }}
+                        className="w-full rounded-t"
+                        style={{ background: "#059669", opacity: 0.85, minHeight: 4 }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Divider — "Today" */}
+              <div className="w-px self-stretch bg-slate-300 relative flex-shrink-0 mx-0.5" style={{ minWidth: 1 }}>
+                <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-[8px] font-bold text-slate-400 whitespace-nowrap">Now</span>
+              </div>
+
+              {/* Forecast bars */}
+              {showForecast.map((m, i) => {
+                const pct = maxVal > 0 ? (m.total / maxVal) * 100 : 4;
+                return (
+                  <div key={`f-${i}`} className="flex-1 h-full flex flex-col items-stretch min-w-0" title={`${m.yearMonth}: ${fmt(m.total)}`}>
+                    <div className="flex-1 flex items-end">
+                      <motion.div
+                        initial={{ height: 0 }}
+                        animate={{ height: `${Math.max(pct, 3)}%` }}
+                        transition={{ duration: 0.5, delay: (showActuals.length + i) * 0.04, ease: EASE }}
+                        className="w-full rounded-t"
+                        style={{ background: "linear-gradient(180deg,#0891b2,#0e7490)", opacity: 0.82, minHeight: 4 }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Axis labels — show only first, middle, divider, and last */}
+            <div className="flex items-center gap-1 mt-1.5">
+              {showActuals.length > 0 && (
+                <>
+                  <span className="text-[9px] text-slate-400 shrink-0">{shortLabel(showActuals[0].yearMonth)}</span>
+                  <div className="flex-1" />
+                  <span className="text-[9px] text-slate-400 shrink-0">{shortLabel(showActuals[showActuals.length - 1].yearMonth)}</span>
+                </>
+              )}
+              <div className="w-px mx-1 self-stretch bg-transparent" />
+              {showForecast.length > 0 && (
+                <>
+                  <span className="text-[9px] text-cyan-500 shrink-0">{showForecast[0].yearMonth}</span>
+                  <div className="flex-1" />
+                  <span className="text-[9px] text-cyan-500 shrink-0">{showForecast[showForecast.length - 1].yearMonth}</span>
+                </>
+              )}
+            </div>
+
+            {/* KPI summary row */}
+            <div className="flex gap-4 mt-3 pt-3 border-t border-slate-100 flex-wrap">
+              <div>
+                <p className="text-[10px] text-slate-400 uppercase tracking-wider">Avg Monthly (Actual)</p>
+                <p className="text-xs font-bold text-emerald-700">{fmt(avgActual)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-slate-400 uppercase tracking-wider">Avg Monthly (Forecast)</p>
+                <p className="text-xs font-bold text-cyan-700">{fmt(avgForecast)}</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-slate-400 uppercase tracking-wider">Actuals Period</p>
+                <p className="text-xs font-bold text-slate-700">{showActuals.length} months</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-slate-400 uppercase tracking-wider">Actual Total</p>
+                <p className="text-xs font-bold text-slate-700">{fmt(totalActualsRev)}</p>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Annual bar chart ── */}
       {years.length > 0 && grandTotal > 0 && (
@@ -3209,6 +3606,11 @@ function ApplyPageInner() {
   const [showStreamPicker, setShowStreamPicker] = useState(false);
   const [newStreamName,    setNewStreamName]    = useState("");
 
+  // Actuals — keyed by stream ID; only populated for "existing" businesses
+  const [actualsByStream,      setActualsByStream]      = useState<Record<string, ActualMonth[]>>({});
+  // Tracks which streams have completed their actuals collection phase
+  const [actualsPhaseByStream, setActualsPhaseByStream] = useState<Record<string, boolean>>({});
+
   // Forecast config — lifted so Phase 4 detection can set them directly
   const now0 = new Date();
   const [forecastHorizon,    setForecastHorizon]    = useState(5);
@@ -3342,6 +3744,16 @@ function ApplyPageInner() {
       setStreams(restored);
       // Mark already-done streams so the auto-advance effect never fires for them
       autoAdvancedRef.current = new Set(restored.filter((s) => s.driverDone).map((s) => s.id));
+
+      // Restore actuals (existing business only)
+      const restoredActuals: Record<string, ActualMonth[]> = {};
+      const restoredActualsPhase: Record<string, boolean>  = {};
+      for (const [streamId, rows] of Object.entries(state.actualsByStream ?? {})) {
+        restoredActuals[streamId] = rows.map((r) => ({ yearMonth: r.year_month, total: Number(r.revenue) }));
+        restoredActualsPhase[streamId] = true;  // actuals collected → show drivers phase
+      }
+      setActualsByStream(restoredActuals);
+      setActualsPhaseByStream(restoredActualsPhase);
 
       if (state.forecastConfig) {
         setForecastHorizon(state.forecastConfig.horizon_years);
@@ -3553,6 +3965,29 @@ function ApplyPageInner() {
   const updateStream = useCallback((updated: RevenueStream) => {
     setStreams((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
   }, []);
+
+  // ── Called by ActualsChat when [ACTUALS_DETECTED] fires (existing biz only) ──
+  const handleActualsSaved = useCallback(async (
+    streamId: string,
+    actualsData: ActualMonth[],
+    _msgs: ChatMessage[],
+  ) => {
+    // Update local state
+    setActualsByStream((prev) => ({ ...prev, [streamId]: actualsData }));
+    setActualsPhaseByStream((prev) => ({ ...prev, [streamId]: true }));
+    // Persist to DB
+    if (appId && userId && isDbId(streamId)) {
+      try {
+        const sb = createClient();
+        await saveActuals(sb, appId, streamId, userId, actualsData.map((a) => ({
+          yearMonth: a.yearMonth, revenue: a.total,
+        })));
+      } catch (e) {
+        console.error("[apply] actuals save error:", e);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appId, userId]);
 
   // ── Called by DriverChat the moment items are detected ──────────────────────
   // Saves items + driver conversation immediately (no debounce).
@@ -4808,7 +5243,59 @@ function ApplyPageInner() {
                     {/* Left: Input session */}
                     <div className="space-y-4">
 
-                      {/* Mode tabs */}
+                      {/* ── Actuals phase (existing business only) ── */}
+                      {situation === "existing" && !actualsPhaseByStream[currentStream.id] && (
+                        <div className="space-y-3">
+                          {/* Actuals phase header */}
+                          <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
+                            <BarChart3 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                            <div>
+                              <p className="text-xs font-bold text-emerald-800">Step 1 of 2 — Historical Actuals</p>
+                              <p className="text-[11px] text-emerald-600">Enter your actual monthly revenue for {currentStream.name}. The AI will guide you.</p>
+                            </div>
+                          </div>
+                          <ActualsChat
+                            stream={currentStream}
+                            onActualsSaved={handleActualsSaved}
+                          />
+                          {/* Show "Skip to Drivers" if user already has items */}
+                          {currentStream.items.length > 0 && (
+                            <button
+                              onClick={() => setActualsPhaseByStream((p) => ({ ...p, [currentStream.id]: true }))}
+                              className="text-xs text-slate-400 underline hover:text-slate-600 transition-colors w-full text-center">
+                              Skip actuals — go straight to Revenue Drivers
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* ── Actuals done banner + drivers heading (existing business) ── */}
+                      {situation === "existing" && actualsPhaseByStream[currentStream.id] && (
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2.5">
+                            <div className="flex items-center gap-2">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+                              <div>
+                                <p className="text-xs font-bold text-emerald-800">Actuals captured</p>
+                                <p className="text-[10px] text-emerald-600">
+                                  {(actualsByStream[currentStream.id] ?? []).length} months · {fmt((actualsByStream[currentStream.id] ?? []).reduce((a, m) => a + m.total, 0))} total
+                                </p>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => setActualsPhaseByStream((p) => ({ ...p, [currentStream.id]: false }))}
+                              className="text-[10px] text-emerald-600 hover:text-emerald-800 underline transition-colors">
+                              Edit actuals
+                            </button>
+                          </div>
+                          <p className="text-[11px] text-slate-500 px-1">
+                            <span className="font-semibold">Step 2 of 2 — Revenue Drivers</span> — enter the items, volumes, and prices that form the projection baseline.
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Mode tabs + driver inputs — only shown when not in actuals phase */}
+                      {(situation !== "existing" || actualsPhaseByStream[currentStream.id]) && (<>
                       <div className="flex gap-2 bg-slate-100 p-1 rounded-xl">
                         {([
                           { id: "chat"   as DriverMode, label: "AI Guided",      icon: BrainCircuit },
@@ -4965,6 +5452,7 @@ function ApplyPageInner() {
                           Complete driver inputs for all streams to unlock forecast generation.
                         </p>
                       )}
+                      </>)} {/* end: (situation !== "existing" || actualsPhaseByStream) */}
                     </div>
 
                     {/* ── Right: Live Revenue Model ── */}
@@ -5101,6 +5589,20 @@ function ApplyPageInner() {
                   onStartChange={(y, m) => { setForecastStartYear(y); setForecastStartMonth(m); }}
                   currency={currency}
                   onEditDrivers={() => go(2)}
+                  actuals={situation === "existing" && Object.keys(actualsByStream).length > 0
+                    ? (() => {
+                        // Aggregate all streams' actuals by month
+                        const byMonth: Record<string, number> = {};
+                        for (const rows of Object.values(actualsByStream)) {
+                          for (const r of rows) {
+                            byMonth[r.yearMonth] = (byMonth[r.yearMonth] ?? 0) + r.total;
+                          }
+                        }
+                        return Object.entries(byMonth)
+                          .sort((a, b) => a[0].localeCompare(b[0]))
+                          .map(([yearMonth, total]) => ({ yearMonth, total }));
+                      })()
+                    : undefined}
                 />
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
