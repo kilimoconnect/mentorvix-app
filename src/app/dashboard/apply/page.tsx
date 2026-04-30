@@ -5330,23 +5330,6 @@ function ApplyPageInner() {
                       )}
                     </div>
 
-                {/* ── Active stream context strip ── */}
-                <div className="flex items-center gap-3 bg-cyan-50 border border-cyan-200 rounded-xl px-4 py-2.5 mb-3">
-                  <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
-                    style={{ background: Meta.bg }}>
-                    <StreamIcon className="w-3.5 h-3.5" style={{ color: Meta.color }} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[10px] font-bold text-cyan-500 uppercase tracking-wider">Now adding items to</p>
-                    <p className="text-sm font-bold text-cyan-800 truncate">{currentStream.name}</p>
-                  </div>
-                  {streams.length > 1 && (
-                    <span className="text-[10px] font-semibold text-cyan-400 flex-shrink-0">
-                      {streamIdx + 1} / {streams.length}
-                    </span>
-                  )}
-                </div>
-
                 <motion.div key={`drivers-${currentStream.id}`} custom={dir} variants={slide} initial="enter" animate="center" exit="exit">
                   <div className="mb-4">
                     {/* H2 + subtitle */}
