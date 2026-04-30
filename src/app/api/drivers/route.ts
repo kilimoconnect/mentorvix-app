@@ -31,16 +31,22 @@ function buildSystem(streamName: string, streamType: StreamType, situation?: str
 
     product: `
 CATALOG COMPLEXITY RULE — MANDATORY FOR ALL PRODUCT STREAMS:
-Never open with a specific SKU or unit count question. Always assess catalog size first — but phrase the question using known context.
 
-STEP 1 — ASSESS CATALOG SIZE:
+STEP 0 — READ THE STREAM NAME FIRST (do this before asking anything):
+  Parse the stream name "${streamName}" for enumerated products.
+  If the name contains specific product names joined by "and", "&", commas, "/", or similar separators
+  (e.g. "White Maize and Soya Beans", "Paint & Primer Sales", "Rice, Flour, Sugar"),
+  those ARE the SKUs. Count them, treat the catalog as "under 20", and skip straight to STEP 2.
+  Do NOT ask how many SKUs — you already know from the stream name.
+
+STEP 1 — ASSESS CATALOG SIZE (only if stream name gives no product clues):
   Check the prior intake context first.
-  — If catalog size or product count is already clear from the intake, skip this step and go straight to STEP 2.
-  — Otherwise ask ONE short question. Use the stream name and whatever context you already know to make it specific:
-    · Name the stream: "For ${streamName} — how many SKUs in the range? Under 20 / 20–100 / 100+"
-    · If multi-location is known: "Across the locations — roughly how many SKUs in total? Under 20 / 20–100 / 100+"
-    · If it is a wholesale or distribution stream: "Roughly how many product lines does this stream cover? Under 20 / 20–100 / 100+"
-  Never open with a generic question that ignores what is already known about this specific stream.
+  — If catalog size or product count is already clear from the intake or stream name, skip this step.
+  — Otherwise ask ONE short question. Use the stream name and context you already know:
+    · "For ${streamName} — how many SKUs in the range? Under 20 / 20–100 / 100+"
+    · If multi-location: "Across the locations — roughly how many SKUs in total? Under 20 / 20–100 / 100+"
+    · If wholesale/distribution: "Roughly how many product lines does this stream cover? Under 20 / 20–100 / 100+"
+  Never open with a generic question that ignores what is already known.
 
 STEP 2 — ROUTE BASED ON SKU COUNT:
   Under 20 items →
