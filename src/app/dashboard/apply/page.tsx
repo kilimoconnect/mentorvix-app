@@ -2241,6 +2241,366 @@ function ActualsChat({ stream, onActualsSaved }: {
   );
 }
 
+/* ═══════════════════════════════════════ UnifiedJourneyChat ══
+   One continuous dialog: Intake → (Actuals if existing) → Drivers
+   for every stream, in sequence. Parent receives callbacks for each
+   detection event. No separate step changes needed.
+══════════════════════════════════════════════════════════════ */
+type JPhaseKind = "intake" | "actuals" | "drivers";
+interface JPhase { kind: JPhaseKind; streamIdx?: number; }
+type DItem =
+  | { id: number; t: "msg"; role: "user" | "assistant"; content: string }
+  | { id: number; t: "div"; text: string; color: "slate" | "emerald" | "cyan" };
+
+function UnifiedJourneyChat({
+  situation, appId, userId,
+  onStreamsDetected, onActualsSaved, onItemsCollected,
+  onForecastYears, onForecastStart, onComplete,
+}: {
+  situation:         string | null;
+  appId:             string | null;
+  userId:            string | null;
+  onStreamsDetected:  (streams: RevenueStream[], ctx: string) => void;
+  onActualsSaved:     (streamId: string, actuals: ActualMonth[], msgs: ChatMessage[]) => Promise<void>;
+  onItemsCollected:   (streamId: string, items: StreamItem[], msgs: ChatMessage[]) => Promise<void>;
+  onForecastYears:    (y: number) => void;
+  onForecastStart:    (year: number, month: number) => void;
+  onComplete:         () => void;
+}) {
+  // ── Refs: phase state (avoid stale closures) ─────────────────────────────
+  const queueRef     = useRef<JPhase[]>([{ kind: "intake" }]);
+  const idxRef       = useRef(0);
+  const streamsRef   = useRef<RevenueStream[]>([]);
+  const phMsgsRef    = useRef<ChatMessage[]>([]);
+  const intakeCtxRef = useRef("");
+  const msgIdRef     = useRef(0);
+  const sendRef      = useRef<() => void>(() => {});
+
+  // ── Display state ─────────────────────────────────────────────────────────
+  const [items,     setItems]     = useState<DItem[]>([]);
+  const [typing,    setTyping]    = useState(false);
+  const [error,     setError]     = useState("");
+  const [input,     setInput]     = useState("");
+  const [isDone,    setIsDone]    = useState(false);
+  const [micActive, setMicActive] = useState(false);
+  const [speakIdx,  setSpeakIdx]  = useState<number | null>(null);
+  const endRef         = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<any>(null); // eslint-disable-line @typescript-eslint/no-explicit-any
+  const voiceRef       = useRef<SpeechSynthesisVoice | null>(null);
+
+  const nid     = () => ++msgIdRef.current;
+  const pushMsg = (role: "user" | "assistant", content: string) =>
+    setItems(prev => [...prev, { id: nid(), t: "msg", role, content }]);
+  const pushDiv = (text: string, color: "slate" | "emerald" | "cyan") =>
+    setItems(prev => [...prev, { id: nid(), t: "div", text, color }]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.speechSynthesis) resolveVoice(voiceRef);
+  }, []);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [items, typing]);
+  // Auto-start intake on mount
+  useEffect(() => { runPhase([]); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Core dispatcher ───────────────────────────────────────────────────────
+  async function runPhase(history: ChatMessage[]) {
+    const phase = queueRef.current[idxRef.current];
+    if (!phase) return;
+    setTyping(true); setError("");
+    try {
+      if (phase.kind === "intake")  await doIntake(history);
+      if (phase.kind === "actuals") await doActuals(history, phase.streamIdx!);
+      if (phase.kind === "drivers") await doDrivers(history, phase.streamIdx!);
+    } catch (e) { setError(e instanceof Error ? e.message : "Connection error"); }
+    finally     { setTyping(false); }
+  }
+
+  // ── Intake ────────────────────────────────────────────────────────────────
+  async function doIntake(history: ChatMessage[]) {
+    const res  = await fetch("/api/intake", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: history, situation }),
+    });
+    const data = await res.json() as { text?: string; error?: string };
+    if (data.error) throw new Error(data.error);
+    const text     = data.text ?? "";
+    const detected = parseStreams(text);
+    if (detected) {
+      const clean = text.slice(0, text.indexOf("[STREAMS_DETECTED]")).trim() ||
+        `I've mapped ${detected.length} revenue stream${detected.length !== 1 ? "s" : ""}. Let me now collect the data for each one.`;
+      pushMsg("assistant", clean);
+      const allMsgs = [...history, { role: "assistant" as const, content: clean }];
+      intakeCtxRef.current = allMsgs.map(m => `${m.role}: ${m.content}`).join("\n");
+
+      // DB save — merge DB UUIDs back into local RevenueStream objects
+      let saved: RevenueStream[] = detected;
+      if (appId && userId) {
+        try {
+          const sb = createClient();
+          const dbStreams = await saveStreams(sb, appId, userId, detected.map((s, i) => ({
+            name: s.name, type: s.type, confidence: s.confidence,
+            monthly_growth_pct: s.monthlyGrowthPct, sub_new_per_month: s.subNewPerMonth,
+            sub_churn_pct: s.subChurnPct, rental_occupancy_pct: s.rentalOccupancyPct,
+            driver_done: s.driverDone, position: i,
+          })));
+          // Apply real DB UUIDs to the local stream objects
+          saved = detected.map((s, i) => ({ ...s, id: dbStreams[i]?.id ?? s.id }));
+          const nm = detected.map(s => s.name).slice(0, 2).join(" & ")
+            + (detected.length > 2 ? ` +${detected.length - 2}` : "");
+          await saveIntakeConversation(sb, appId, userId, allMsgs, null, true);
+          await updateApplicationFlags(sb, appId, { intake_done: true, name: nm });
+        } catch (e) { console.error("[unified] intake save:", e); }
+      }
+      streamsRef.current = saved;
+      onStreamsDetected(saved, intakeCtxRef.current);
+
+      // Build queue: intake → [actuals_i → drivers_i] per stream
+      const q: JPhase[] = [{ kind: "intake" }];
+      saved.forEach((_, i) => {
+        if (situation === "existing") q.push({ kind: "actuals", streamIdx: i });
+        q.push({ kind: "drivers", streamIdx: i });
+      });
+      queueRef.current = q;
+      advance(q, 1, saved);
+    } else {
+      pushMsg("assistant", text);
+      phMsgsRef.current = [...history, { role: "assistant" as const, content: text }];
+    }
+  }
+
+  // ── Actuals ───────────────────────────────────────────────────────────────
+  async function doActuals(history: ChatMessage[], si: number) {
+    const stream = streamsRef.current[si];
+    const res  = await fetch("/api/actuals", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: history, streamName: stream.name }),
+    });
+    const data = await res.json() as { text?: string; error?: string };
+    if (data.error) throw new Error(data.error);
+    const text    = data.text ?? "";
+    const actuals = parseActuals(text);
+    if (actuals) {
+      const clean = text.slice(0, text.indexOf("[ACTUALS_DETECTED]")).trim() ||
+        `Actuals captured — ${actuals.length} months for ${stream.name}.`;
+      pushMsg("assistant", clean);
+      await onActualsSaved(stream.id, actuals, []).catch(e => console.error("[unified] actuals save:", e));
+      advance(queueRef.current, idxRef.current + 1, streamsRef.current);
+    } else {
+      pushMsg("assistant", text);
+      phMsgsRef.current = [...history, { role: "assistant" as const, content: text }];
+    }
+  }
+
+  // ── Drivers ───────────────────────────────────────────────────────────────
+  async function doDrivers(history: ChatMessage[], si: number) {
+    const stream  = streamsRef.current[si];
+    const queue   = queueRef.current;
+    const isFirst = queue.findIndex(p => p.kind === "drivers") === idxRef.current;
+    const res  = await fetch("/api/drivers", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: history,
+        stream: { name: stream.name, type: stream.type },
+        situation, isFirstStream: isFirst,
+        intakeContext: intakeCtxRef.current,
+      }),
+    });
+    const data  = await res.json() as { text?: string; error?: string };
+    if (data.error) throw new Error(data.error);
+    const text  = data.text ?? "";
+    const itms  = parseItems(text);
+    if (itms) {
+      const clean = text.slice(0, text.indexOf("[ITEMS_DETECTED]")).trim() ||
+        `${itms.length} item${itms.length !== 1 ? "s" : ""} captured for ${stream.name}.`;
+      pushMsg("assistant", clean);
+      const fy = parseForecastYears(text);
+      const fs = parseForecastStart(text);
+      if (fy) onForecastYears(fy);
+      if (fs) onForecastStart(fs.year, fs.month);
+      const msgs = [...history, { role: "assistant" as const, content: clean }];
+      await onItemsCollected(stream.id, itms, msgs).catch(e => console.error("[unified] items save:", e));
+      const nextIdx = idxRef.current + 1;
+      if (nextIdx >= queue.length) {
+        pushDiv("✓ All streams configured — generating forecast…", "emerald");
+        setIsDone(true);
+        setTimeout(onComplete, 900);
+      } else {
+        advance(queue, nextIdx, streamsRef.current);
+      }
+    } else {
+      pushMsg("assistant", text);
+      phMsgsRef.current = [...history, { role: "assistant" as const, content: text }];
+    }
+  }
+
+  // ── Advance to next phase ─────────────────────────────────────────────────
+  function advance(queue: JPhase[], nextIdx: number, streams: RevenueStream[]) {
+    const next   = queue[nextIdx];
+    const stream = next?.streamIdx !== undefined ? streams[next.streamIdx] : null;
+    if (next?.kind === "actuals" && stream)
+      pushDiv(`Historical actuals — ${stream.name}`, "emerald");
+    else if (next?.kind === "drivers" && stream)
+      pushDiv(`Revenue drivers — ${stream.name}`, "cyan");
+    idxRef.current    = nextIdx;
+    phMsgsRef.current = [];
+    setTimeout(() => runPhase([]), 500);
+  }
+
+  // ── Send ──────────────────────────────────────────────────────────────────
+  const send = () => {
+    const text = input.trim();
+    if (!text || typing || isDone) return;
+    pushMsg("user", text);
+    const next = [...phMsgsRef.current, { role: "user" as const, content: text }];
+    phMsgsRef.current = next;
+    setInput("");
+    runPhase(next);
+  };
+  useEffect(() => { sendRef.current = send; });
+
+  // ── Speak ─────────────────────────────────────────────────────────────────
+  const speakMsg = async (text: string, idx: number) => {
+    if (typeof window === "undefined" || !window.speechSynthesis) return;
+    if (speakIdx === idx) { window.speechSynthesis.cancel(); setSpeakIdx(null); return; }
+    window.speechSynthesis.cancel();
+    const voice = await resolveVoice(voiceRef);
+    const utt = new SpeechSynthesisUtterance(text);
+    if (voice) utt.voice = voice;
+    utt.lang = "en-US"; utt.rate = 1.0;
+    utt.onend = () => setSpeakIdx(null); utt.onerror = () => setSpeakIdx(null);
+    setSpeakIdx(idx); window.speechSynthesis.speak(utt);
+  };
+
+  // ── Mic ───────────────────────────────────────────────────────────────────
+  const toggleMic = () => {
+    if (typeof window === "undefined") return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!SR) return;
+    if (micActive) {
+      recognitionRef.current?.stop(); recognitionRef.current = null;
+      setMicActive(false); sendRef.current(); return;
+    }
+    const rec = new SR();
+    rec.lang = "en-US"; rec.interimResults = true; rec.continuous = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rec.onresult = (e: any) => {
+      let final = "";
+      for (let i = e.resultIndex; i < e.results.length; i++)
+        if (e.results[i].isFinal) final += (e.results[i][0]?.transcript as string) ?? "";
+      if (final) setInput(prev => prev ? prev.trimEnd() + " " + final.trim() : final.trim());
+    };
+    rec.onerror = () => { recognitionRef.current = null; setMicActive(false); };
+    rec.onend   = () => { if (recognitionRef.current) { recognitionRef.current = null; setMicActive(false); } };
+    rec.start(); recognitionRef.current = rec; setMicActive(true);
+  };
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Message list */}
+      <div className="flex-1 overflow-y-auto space-y-3 bg-white rounded-2xl border border-slate-100 p-4"
+        style={{ minHeight: 320, maxHeight: "calc(100vh - 320px)" }}>
+        {items.map(item => {
+          if (item.t === "div") return (
+            <div key={item.id} className="flex items-center gap-2 py-1.5">
+              <div className={`flex-1 h-px ${
+                item.color === "emerald" ? "bg-emerald-100"
+                : item.color === "cyan"    ? "bg-cyan-100"
+                :                           "bg-slate-100"}`} />
+              <span className={`text-[10px] font-bold uppercase tracking-wider whitespace-nowrap px-2 ${
+                item.color === "emerald" ? "text-emerald-500"
+                : item.color === "cyan"    ? "text-cyan-500"
+                :                           "text-slate-400"}`}>
+                {item.text}
+              </span>
+              <div className={`flex-1 h-px ${
+                item.color === "emerald" ? "bg-emerald-100"
+                : item.color === "cyan"    ? "bg-cyan-100"
+                :                           "bg-slate-100"}`} />
+            </div>
+          );
+          return (
+            <div key={item.id} className={`flex ${item.role === "user" ? "justify-end" : "justify-start"}`}>
+              {item.role === "assistant" && (
+                <div className="w-7 h-7 rounded-xl flex items-center justify-center flex-shrink-0 mr-2 mt-0.5"
+                  style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
+                  <BrainCircuit className="w-3.5 h-3.5 text-white" />
+                </div>
+              )}
+              <div className={`max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${
+                item.role === "user"
+                  ? "text-white rounded-tr-sm"
+                  : "bg-white border border-slate-100 text-slate-800 rounded-tl-sm shadow-sm"
+              }`} style={item.role === "user" ? { background: "linear-gradient(135deg,#0e7490,#0891b2)" } : {}}>
+                {cleanAI(item.content)}
+              </div>
+              {item.role === "assistant" && (
+                <button onClick={() => speakMsg(item.content, item.id)}
+                  className={`ml-1.5 mt-1 w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 self-start transition-all ${
+                    speakIdx === item.id ? "text-cyan-600 bg-cyan-50" : "text-slate-300 hover:text-cyan-500 hover:bg-slate-50"
+                  }`}>
+                  <Volume2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          );
+        })}
+        {typing && (
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-xl flex items-center justify-center"
+              style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
+              <BrainCircuit className="w-3.5 h-3.5 text-white" />
+            </div>
+            <div className="bg-white border border-slate-100 rounded-2xl px-4 py-3 shadow-sm">
+              <div className="flex gap-1">
+                {[0,1,2].map(i => (
+                  <motion.div key={i} className="w-1.5 h-1.5 rounded-full bg-slate-300"
+                    animate={{ y: [0,-4,0] }} transition={{ duration: 0.6, repeat: Infinity, delay: i*0.15 }} />
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+        {error && (
+          <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3 flex items-center gap-2">
+            <span>⚠ {error}</span>
+            <button onClick={() => runPhase(phMsgsRef.current)} className="ml-auto font-semibold underline">Retry</button>
+          </div>
+        )}
+        <div ref={endRef} />
+      </div>
+
+      {/* Input */}
+      {!isDone && (
+        <div className="flex items-end gap-2">
+          <motion.button whileTap={{ scale: 0.95 }} onClick={toggleMic}
+            className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 transition-all ${
+              micActive
+                ? "bg-red-500 text-white shadow-lg shadow-red-500/30 animate-pulse"
+                : "border border-slate-200 text-slate-400 hover:border-cyan-400 hover:text-cyan-600 bg-white"
+            }`}>
+            {micActive ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+          </motion.button>
+          <textarea rows={2} value={input} onChange={e => setInput(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+            disabled={typing}
+            placeholder={micActive ? "Listening… tap mic to stop & send" : "Answer, or paste your data directly here…"}
+            className={`flex-1 resize-none px-4 py-3 border rounded-2xl text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 transition-all placeholder:text-slate-300 disabled:opacity-60 ${
+              micActive ? "border-red-300 focus:ring-red-400/20" : "border-slate-200 focus:border-cyan-500 focus:ring-cyan-500/20"
+            }`} />
+          <motion.button whileTap={{ scale: 0.95 }} onClick={send} disabled={!input.trim() || typing}
+            className="w-11 h-11 rounded-2xl flex items-center justify-center text-white shadow-md disabled:opacity-40 flex-shrink-0"
+            style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
+            <Send className="w-4 h-4" />
+          </motion.button>
+        </div>
+      )}
+      <p className="text-[11px] text-slate-300 text-center">Shift+Enter for new line · Enter to send · Or paste data directly</p>
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════ ImportPane ══ */
 function ImportPane({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s: RevenueStream) => void }) {
   const [raw,     setRaw]     = useState("");
@@ -4140,6 +4500,38 @@ function ApplyPageInner() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appId, userId]);
 
+  // ── Called by UnifiedJourneyChat when [ITEMS_DETECTED] fires ────────────────
+  const handleUnifiedItemsCollected = useCallback(async (
+    streamId: string,
+    items: StreamItem[],
+    msgs: ChatMessage[],
+  ) => {
+    // Update local state
+    setStreams(prev => prev.map(s =>
+      s.id === streamId ? { ...s, items: [...s.items, ...items], driverDone: true } : s
+    ));
+    // Persist to DB
+    if (!appId || !userId || !isDbId(streamId)) return;
+    try {
+      const sb = createClient();
+      await saveStreamItems(sb, streamId, userId, items.map((it, pos) => ({
+        name: it.name, category: it.category,
+        volume: it.volume, price: it.price,
+        unit: it.unit, note: it.note ?? undefined,
+        seasonalityPreset: it.seasonalityPreset, position: pos,
+      })));
+      if (msgs.length > 0)
+        await saveDriverConversation(sb, appId, userId, streamId, msgs, null, true);
+      setStreams(prev => {
+        const updated = prev.map(s => s.id === streamId ? { ...s, driverDone: true } : s);
+        if (updated.every(s => s.driverDone || s.items.length > 0))
+          updateApplicationFlags(sb, appId, { drivers_done: true }).catch(console.error);
+        return updated;
+      });
+    } catch (e) { console.error("[apply] unified items save:", e); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appId, userId]);
+
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   const currentStream   = streams[streamIdx];
@@ -4571,31 +4963,19 @@ function ApplyPageInner() {
               </motion.div>
             )}
 
-            {/* ══ STEP 0: Revenue Mapping Interview ══ */}
+            {/* ══ STEP 0: Unified Revenue Collection Journey ══ */}
             {situationDone && step === 0 && (() => {
-              const userMsgCount = messages.filter(m => m.role === "user").length;
-              const mappingProgress = streams.length > 0 ? 85 : Math.min(75, userMsgCount * 15 + 10);
               const situationMeta = SITUATIONS.find(s => s.id === situation);
-              const likelyModels = SITUATION_LIKELY_MODELS[situation ?? "existing"] ?? [];
-              const analystNote  = SITUATION_ANALYST_NOTES[situation ?? "existing"] ?? "";
-              const examples     = SITUATION_EXAMPLES[situation ?? "existing"] ?? [];
-
-              const sendQuick = (text: string) => {
-                const updated = [...messages, { role: "user" as const, content: text }];
-                setMessages(updated); callIntake(updated);
-              };
 
               return (
-                <motion.div key="intake" custom={dir} variants={slide} initial="enter" animate="center" exit="exit"
-                  className="flex gap-5" style={{ height: "calc(100vh - 180px)", maxHeight: 640 }}>
+                <motion.div key="journey" custom={dir} variants={slide} initial="enter" animate="center" exit="exit"
+                  className="flex gap-5" style={{ height: "calc(100vh - 180px)", maxHeight: 680 }}>
 
-                  {/* ── Left: Chat panel ── */}
+                  {/* ── Left: Unified chat ── */}
                   <div className="flex flex-col flex-1 min-w-0">
-
-                    {/* Session header */}
                     <div className="mb-3">
                       <button
-                        onClick={() => { setSituationDone(false); setNameDone(true); setMessages([]); setStreams([]); }}
+                        onClick={() => { setSituationDone(false); setNameDone(true); setStreams([]); }}
                         className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600 transition-colors mb-2.5">
                         <ArrowLeft className="w-3 h-3" /> Change context
                       </button>
@@ -4605,242 +4985,79 @@ function ApplyPageInner() {
                           <BrainCircuit className="w-5 h-5 text-white" />
                         </div>
                         <div>
-                          <p className="text-sm font-bold text-slate-900">Revenue Mapping Interview</p>
-                          <p className="text-xs text-slate-400">AI-led revenue model discovery</p>
+                          <p className="text-sm font-bold text-slate-900">Revenue Collection</p>
+                          <p className="text-xs text-slate-400">
+                            Streams · {situation === "existing" ? "Actuals · " : ""}Drivers — one conversation
+                          </p>
                         </div>
                       </div>
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-[11px] text-slate-400">
-                        <span className="flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block" />
-                          Autosave active
-                        </span>
-                        <span className="text-slate-200">·</span>
-                        <span>Stage: Revenue Discovery</span>
-                        <span className="text-slate-200">·</span>
-                        <span>Est. 2–4 min</span>
-                      </div>
                     </div>
 
-                    {/* Messages */}
-                    <div className="flex-1 overflow-y-auto space-y-4 pr-1 pb-2">
-                      {messages.map((m, i) => (
-                        <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.3, ease: EASE }}>
-                          <div className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-                            {m.role === "assistant" && (
-                              <div className="w-7 h-7 rounded-xl flex items-center justify-center flex-shrink-0 mr-2 mt-0.5"
-                                style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
-                                <BrainCircuit className="w-3.5 h-3.5 text-white" />
-                              </div>
-                            )}
-                            <div className={`max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${
-                              m.role === "user"
-                                ? "text-white rounded-tr-sm"
-                                : "bg-white border border-slate-100 text-slate-800 rounded-tl-sm shadow-sm"
-                            }`} style={m.role === "user" ? { background: "linear-gradient(135deg,#0e7490,#0891b2)" } : {}}>
-                              {cleanAI(m.content)}
-                            </div>
-                            {m.role === "assistant" && (
-                              <button onClick={() => speakMessage(m.content, i)}
-                                title={speakingIdx === i ? "Stop" : "Read aloud"}
-                                className={`ml-1.5 mt-1 w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 transition-all self-start ${
-                                  speakingIdx === i ? "text-cyan-600 bg-cyan-50" : "text-slate-300 hover:text-cyan-500 hover:bg-slate-50"
-                                }`}>
-                                <Volume2 className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                          </div>
-
-                          {/* Quick replies — shown below the first AI message only */}
-                          {m.role === "assistant" && i === 0 && userMsgCount === 0 && !aiTyping && (
-                            <div className="flex flex-wrap gap-2 mt-3 pl-9">
-                              {["Retail products", "Services / consulting", "Subscription model", "Mixed revenue", "Not sure yet"].map((opt) => (
-                                <button key={opt} onClick={() => sendQuick(opt)}
-                                  className="text-xs px-3 py-1.5 rounded-full border border-slate-200 bg-white hover:border-cyan-400 hover:text-cyan-600 text-slate-500 transition-all">
-                                  {opt}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </motion.div>
-                      ))}
-
-                      {aiTyping && (
-                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-xl flex items-center justify-center"
-                            style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
-                            <BrainCircuit className="w-3.5 h-3.5 text-white" />
-                          </div>
-                          <div className="bg-white border border-slate-100 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm">
-                            <div className="flex items-center gap-1">
-                              {[0, 1, 2].map((dot) => (
-                                <motion.div key={dot} className="w-1.5 h-1.5 rounded-full bg-slate-300"
-                                  animate={{ y: [0, -4, 0] }} transition={{ duration: 0.6, repeat: Infinity, delay: dot * 0.15 }} />
-                              ))}
-                            </div>
-                          </div>
-                        </motion.div>
-                      )}
-
-                      {chatError && (
-                        <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl px-4 py-3">
-                          <span>⚠ {chatError}</span>
-                          <button onClick={() => callIntake(messages)} className="ml-auto font-semibold underline">Retry</button>
-                        </div>
-                      )}
-                      <div ref={endRef} />
-                    </div>
-
-                    {/* Input area */}
-                    <div className="mt-3 flex items-end gap-2">
-                      <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
-                        onClick={toggleMic} title={micActive ? "Stop & send" : "Speak your answer"}
-                        className={`w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0 transition-all ${
-                          micActive
-                            ? "bg-red-500 text-white shadow-lg shadow-red-500/30 animate-pulse"
-                            : "border border-slate-200 text-slate-400 hover:border-cyan-400 hover:text-cyan-600 bg-white"
-                        }`}>
-                        {micActive ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-                      </motion.button>
-
-                      <textarea ref={inputRef} rows={2} value={input} onChange={(e) => setInput(e.target.value)}
-                        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendIntake(); } }}
-                        disabled={aiTyping}
-                        placeholder={micActive ? "Listening…" : "Describe how the business earns revenue…"}
-                        className={`flex-1 resize-none px-4 py-3 border rounded-2xl text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 transition-all placeholder:text-slate-300 disabled:opacity-60 ${
-                          micActive
-                            ? "border-red-300 focus:border-red-400 focus:ring-red-400/20"
-                            : "border-slate-200 focus:border-cyan-500 focus:ring-cyan-500/20"
-                        }`} />
-
-                      <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} onClick={sendIntake}
-                        disabled={!input.trim() || aiTyping}
-                        className="w-11 h-11 rounded-2xl flex items-center justify-center text-white shadow-md disabled:opacity-40 flex-shrink-0"
-                        style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
-                        <Send className="w-4 h-4" />
-                      </motion.button>
-                    </div>
-                    <p className="text-[11px] text-slate-300 text-center mt-2">Shift+Enter for new line · Enter to send</p>
+                    <UnifiedJourneyChat
+                      situation={situation}
+                      appId={appId}
+                      userId={userId}
+                      onStreamsDetected={(detected) => setStreams(detected)}
+                      onActualsSaved={handleActualsSaved}
+                      onItemsCollected={handleUnifiedItemsCollected}
+                      onForecastYears={setForecastHorizon}
+                      onForecastStart={(y, m) => { setForecastStartYear(y); setForecastStartMonth(m); }}
+                      onComplete={() => go(3)}
+                    />
                   </div>
 
-                  {/* ── Right: Intelligence rail ── */}
+                  {/* ── Right: Live intelligence rail ── */}
                   <div className="hidden lg:flex flex-col w-56 flex-shrink-0 gap-3 overflow-y-auto pb-2">
-
-                    {/* Revenue Intelligence card */}
                     <div className="bg-white rounded-2xl border border-slate-200 shadow-[0_2px_16px_rgba(0,0,0,0.07)] p-4">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">
-                        Revenue Intelligence
-                      </p>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">Revenue Intelligence</p>
                       <div className="space-y-3.5">
-
-                        {/* Business Context */}
                         <div>
                           <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Business Context</p>
                           <p className="text-xs font-semibold" style={{ color: situationMeta?.color ?? "#64748b" }}>
                             {situationMeta?.title ?? "—"}
                           </p>
                         </div>
-
-                        {/* Detected Streams */}
                         <div>
-                          <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Detected Streams</p>
+                          <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Revenue Streams</p>
                           <p className="text-xs font-bold text-slate-800">
-                            {streams.length === 0 ? "0 — awaiting inputs" : `${streams.length} identified`}
+                            {streams.length === 0 ? "Discovering…" : `${streams.length} identified`}
                           </p>
                         </div>
-
-                        {/* Likely Models / Stream Types */}
-                        <div>
-                          <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">
-                            {streams.length > 0 ? "Stream Types" : "Likely Models"}
-                          </p>
-                          <div className="flex flex-wrap gap-1">
-                            {streams.length > 0
-                              ? detectedTypes.map(t => (
-                                  <span key={t} className="text-[10px] font-medium px-1.5 py-0.5 rounded-full"
-                                    style={{ background: STREAM_META[t].bg, color: STREAM_META[t].color }}>
-                                    {STREAM_META[t].label}
-                                  </span>
-                                ))
-                              : likelyModels.map(m => (
-                                  <span key={m} className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500">
-                                    {m}
-                                  </span>
-                                ))
-                            }
+                        {streams.length > 0 && (
+                          <div className="space-y-1.5">
+                            {streams.map(s => {
+                              const M = STREAM_META[s.type]; const SI = M.icon;
+                              const done = s.driverDone || s.items.length > 0;
+                              return (
+                                <div key={s.id} className="flex items-center gap-2">
+                                  <div className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0"
+                                    style={{ background: M.bg }}>
+                                    <SI className="w-2.5 h-2.5" style={{ color: M.color }} />
+                                  </div>
+                                  <span className="text-[11px] text-slate-600 truncate flex-1">{s.name}</span>
+                                  {done && <CheckCircle2 className="w-3 h-3 text-emerald-500 flex-shrink-0" />}
+                                </div>
+                              );
+                            })}
                           </div>
-                        </div>
-
-                        {/* Confidence */}
-                        <div className="flex items-center justify-between">
-                          <p className="text-[10px] text-slate-400 uppercase tracking-wider">Confidence</p>
-                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
-                            streams.length >= 3
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-100"
-                              : streams.length >= 1
-                              ? "bg-amber-50 text-amber-700 border-amber-100"
-                              : "bg-red-50 text-red-600 border-red-100"
-                          }`}>
-                            {streams.length >= 3 ? "High" : streams.length >= 1 ? "Medium" : "Low"}
-                          </span>
-                        </div>
-
-                        {/* Progress bar */}
-                        <div>
-                          <div className="flex items-center justify-between mb-1.5">
-                            <p className="text-[10px] text-slate-400 uppercase tracking-wider">Progress</p>
-                            <p className="text-[10px] font-semibold text-slate-600">{mappingProgress}%</p>
+                        )}
+                        {streams.length > 0 && (
+                          <div>
+                            <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Progress</p>
+                            <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+                              <motion.div className="h-full rounded-full"
+                                style={{ background: "linear-gradient(90deg,#059669,#10b981)" }}
+                                animate={{ width: `${Math.round(streams.filter(s => s.driverDone || s.items.length > 0).length / streams.length * 100)}%` }}
+                                transition={{ duration: 0.6 }} />
+                            </div>
+                            <p className="text-[10px] text-slate-400 mt-1">
+                              {streams.filter(s => s.driverDone || s.items.length > 0).length}/{streams.length} streams configured
+                            </p>
                           </div>
-                          <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                            <motion.div className="h-full rounded-full"
-                              style={{ background: "linear-gradient(90deg,#0e7490,#0891b2)" }}
-                              animate={{ width: `${mappingProgress}%` }}
-                              transition={{ duration: 0.6, ease: "easeOut" }} />
-                          </div>
-                        </div>
-
-                        {/* Next Goal */}
-                        <div>
-                          <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Next Goal</p>
-                          <p className="text-xs font-medium text-slate-700">
-                            {streams.length === 0
-                              ? "Identify revenue streams"
-                              : streams.length < 2
-                              ? "Map pricing & volume"
-                              : "Confirm all streams found"}
-                          </p>
-                        </div>
-
+                        )}
                       </div>
                     </div>
-
-                    {/* Analyst Notes — collapsible */}
-                    <details className="bg-slate-50 border border-slate-200 rounded-2xl p-3 group">
-                      <summary className="text-[10px] font-bold uppercase tracking-widest text-slate-400 cursor-pointer select-none list-none flex items-center justify-between">
-                        Analyst Notes
-                        <span className="text-slate-300 group-open:rotate-180 transition-transform text-xs">▾</span>
-                      </summary>
-                      <p className="mt-2 text-[11px] text-slate-500 leading-relaxed">{analystNote}</p>
-                    </details>
-
-                    {/* Example answers — context-specific, shown early in conversation */}
-                    {userMsgCount <= 1 && (
-                      <div className="bg-white border border-slate-200 rounded-2xl p-3">
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">
-                          Example Answers
-                        </p>
-                        <div className="space-y-2">
-                          {examples.map((ex) => (
-                            <button key={ex} onClick={() => sendQuick(ex)}
-                              className="w-full text-left text-[10px] text-slate-500 hover:text-cyan-700 transition-colors leading-relaxed">
-                              "{ex}"
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                  </div>{/* /intelligence rail */}
+                  </div>
 
                 </motion.div>
               );
