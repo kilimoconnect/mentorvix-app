@@ -1933,6 +1933,8 @@ function ActualsChat({ stream, onActualsSaved }: {
   stream: RevenueStream;
   onActualsSaved: (streamId: string, actuals: ActualMonth[], msgs: ChatMessage[]) => Promise<void>;
 }) {
+  const [mode,        setMode]        = useState<"paste" | "chat">("paste");
+  const [raw,         setRaw]         = useState("");
   const [msgs,        setMsgs]        = useState<ChatMessage[]>([]);
   const [input,       setInput]       = useState("");
   const [typing,      setTyping]      = useState(false);
@@ -1940,6 +1942,7 @@ function ActualsChat({ stream, onActualsSaved }: {
   const [done,        setDone]        = useState(false);
   const [micActive,   setMicActive]   = useState(false);
   const [speakingIdx, setSpeakingIdx] = useState<number | null>(null);
+  const chatInitRef     = useRef(false);
   const endRef          = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef  = useRef<any>(null);
@@ -1949,10 +1952,15 @@ function ActualsChat({ stream, onActualsSaved }: {
     if (typeof window !== "undefined" && window.speechSynthesis) resolveVoice(cachedVoiceRef);
   }, []);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs, typing]);
+
+  // Initialise chat on demand — only when user switches to chat mode
   useEffect(() => {
-    if (msgs.length === 0 && !typing) callActuals([]);
+    if (mode === "chat" && msgs.length === 0 && !typing && !chatInitRef.current) {
+      chatInitRef.current = true;
+      callActuals([]);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [mode]);
 
   const callActuals = async (history: ChatMessage[]) => {
     setTyping(true); setError("");
@@ -1977,6 +1985,33 @@ function ActualsChat({ stream, onActualsSaved }: {
         );
       } else {
         setMsgs([...history, { role: "assistant" as const, content: text }]);
+      }
+    } catch (e) { setError(e instanceof Error ? e.message : "Error"); }
+    finally { setTyping(false); }
+  };
+
+  const processPaste = async () => {
+    if (!raw.trim()) return;
+    setTyping(true); setError("");
+    const prompt = `Here is my monthly revenue data for "${stream.name}". Extract all months:\n\n${raw}`;
+    const history: ChatMessage[] = [{ role: "user", content: prompt }];
+    try {
+      const res = await fetch("/api/actuals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ messages: history, streamName: stream.name }),
+      });
+      const data = await res.json() as { text?: string; error?: string };
+      if (data.error) throw new Error(data.error);
+      const text = data.text ?? "";
+      const actuals = parseActuals(text);
+      if (actuals) {
+        setDone(true);
+        onActualsSaved(stream.id, actuals, history).catch(
+          (e) => console.error("[ActualsChat] save error:", e)
+        );
+      } else {
+        setError("AI could not detect monthly revenue. Try one month per line — e.g. \"2025-01 | 45000\".");
       }
     } catch (e) { setError(e instanceof Error ? e.message : "Error"); }
     finally { setTyping(false); }
@@ -2036,6 +2071,28 @@ function ActualsChat({ stream, onActualsSaved }: {
 
   return (
     <div className="flex flex-col gap-3">
+
+      {/* Mode tabs — hidden once done */}
+      {!done && (
+        <div className="flex gap-2 bg-slate-100 p-1 rounded-xl">
+          {([
+            { id: "paste" as const, label: "Paste Data",  icon: Clipboard    },
+            { id: "chat"  as const, label: "AI Guided",   icon: BrainCircuit },
+          ]).map(({ id, label, icon: Icon }) => (
+            <button key={id} onClick={() => { setMode(id); setError(""); }}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all ${
+                mode === id
+                  ? "bg-white text-emerald-700 shadow-sm"
+                  : "text-slate-500 hover:text-slate-700"
+              }`}>
+              <Icon className="w-3.5 h-3.5" />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Done banner */}
       {done && (
         <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3">
           <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />
@@ -2044,79 +2101,141 @@ function ActualsChat({ stream, onActualsSaved }: {
           </p>
         </div>
       )}
-      <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-3 overflow-y-auto" style={{ maxHeight: 280 }}>
-        {msgs.map((m, i) => (
-          <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-            {m.role === "assistant" && (
-              <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 mr-2 mt-0.5"
-                style={{ background: "linear-gradient(135deg,#064e3b,#059669)" }}>
-                <BarChart3 className="w-3 h-3 text-white" />
-              </div>
-            )}
-            <div className={`max-w-[85%] px-3 py-2 rounded-xl text-sm leading-relaxed ${
-              m.role === "user"
-                ? "text-white rounded-tr-sm"
-                : "bg-slate-50 border border-slate-100 text-slate-800 rounded-tl-sm"
-            }`} style={m.role === "user" ? { background: "linear-gradient(135deg,#059669,#10b981)" } : {}}>
-              {cleanAI(m.content)}
-            </div>
-            {m.role === "assistant" && (
-              <button onClick={() => speakMsg(m.content, i)}
-                className={`ml-1.5 mt-0.5 w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 self-start transition-all ${
-                  speakingIdx === i ? "text-emerald-600 bg-emerald-50" : "text-slate-300 hover:text-emerald-500 hover:bg-slate-50"
-                }`}>
-                <Volume2 className="w-3 h-3" />
-              </button>
-            )}
-          </div>
-        ))}
-        {typing && (
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: "linear-gradient(135deg,#064e3b,#059669)" }}>
-              <BarChart3 className="w-3 h-3 text-white" />
-            </div>
-            <div className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2">
-              <div className="flex gap-1">
-                {[0, 1, 2].map((i) => (
-                  <motion.div key={i} className="w-1.5 h-1.5 rounded-full bg-slate-300"
-                    animate={{ y: [0, -3, 0] }} transition={{ duration: 0.5, repeat: Infinity, delay: i * 0.12 }} />
-                ))}
-              </div>
+
+      {/* ── Paste mode ── */}
+      {mode === "paste" && !done && (
+        <div className="space-y-3">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 space-y-2">
+            <p className="text-[11px] font-bold text-emerald-800 uppercase tracking-wide">How to paste actuals</p>
+            <p className="text-[11px] text-emerald-700 leading-relaxed">
+              Copy your monthly revenue from a spreadsheet, accounting report, or any source and paste below. The AI reads any format.
+            </p>
+            <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 pt-0.5">
+              {[
+                "2025-01 | 45,000",
+                "Jan 2025 — 45 000",
+                "January: $45,000",
+                "45000 (Jan)",
+              ].map((ex) => (
+                <div key={ex} className="flex items-center gap-1.5">
+                  <span className="text-emerald-400 text-[10px] flex-shrink-0">→</span>
+                  <span className="text-[10px] text-emerald-800 font-mono">{ex}</span>
+                </div>
+              ))}
             </div>
           </div>
-        )}
-        {error && (
-          <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2 flex items-center gap-2">
-            <span>⚠ {error}</span>
-            <button onClick={() => callActuals(msgs)} className="ml-auto font-semibold underline">Retry</button>
-          </div>
-        )}
-        <div ref={endRef} />
-      </div>
-      {!done && (
-        <div className="flex items-end gap-2">
-          <motion.button whileTap={{ scale: 0.95 }} onClick={toggleMic}
-            className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all ${
-              micActive
-                ? "bg-red-500 text-white shadow-lg shadow-red-500/30 animate-pulse"
-                : "border border-slate-200 text-slate-400 hover:border-emerald-400 hover:text-emerald-600 bg-white"
-            }`}>
-            {micActive ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-          </motion.button>
-          <textarea rows={2} value={input} onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-            disabled={typing}
-            placeholder={micActive ? "Listening… tap mic to stop & send" : "Enter your monthly revenue data… (Enter to send)"}
-            className={`flex-1 resize-none px-4 py-2.5 border rounded-xl text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 transition-all placeholder:text-slate-300 disabled:opacity-60 ${
-              micActive ? "border-red-300 focus:border-red-400 focus:ring-red-400/20"
-                        : "border-slate-200 focus:border-emerald-500 focus:ring-emerald-500/20"
-            }`} />
-          <motion.button whileTap={{ scale: 0.95 }} onClick={send} disabled={!input.trim() || typing}
-            className="w-10 h-10 rounded-xl flex items-center justify-center text-white disabled:opacity-40"
+
+          <textarea
+            rows={8}
+            value={raw}
+            onChange={(e) => setRaw(e.target.value)}
+            placeholder={`Paste monthly revenue here — any format:\n\n2025-01 | 45,000\n2025-02 | 52,000\n2025-03 | 48,500\n\nOr copy directly from Excel / Google Sheets.`}
+            className="w-full resize-none px-4 py-3 border border-slate-200 rounded-xl text-sm text-slate-700 bg-white focus:border-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 transition-all placeholder:text-slate-400 font-mono leading-relaxed"
+          />
+
+          {raw.trim() && (
+            <p className="text-[11px] text-slate-400 pl-1">
+              {raw.trim().split("\n").filter(l => l.trim()).length} line{raw.trim().split("\n").filter(l => l.trim()).length !== 1 ? "s" : ""} ready to extract
+            </p>
+          )}
+
+          {error && (
+            <p className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2">{error}</p>
+          )}
+
+          <button onClick={processPaste} disabled={!raw.trim() || typing}
+            className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
             style={{ background: "linear-gradient(135deg,#059669,#10b981)" }}>
-            <Send className="w-4 h-4" />
-          </motion.button>
+            {typing ? (
+              <><svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg> Extracting actuals…</>
+            ) : (
+              <><BrainCircuit className="w-4 h-4" /> Extract Actuals with AI</>
+            )}
+          </button>
         </div>
+      )}
+
+      {/* ── Chat mode ── */}
+      {mode === "chat" && (
+        <>
+          <div className="bg-white rounded-2xl border border-slate-100 p-4 space-y-3 overflow-y-auto" style={{ maxHeight: 280 }}>
+            {msgs.map((m, i) => (
+              <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+                {m.role === "assistant" && (
+                  <div className="w-6 h-6 rounded-lg flex items-center justify-center flex-shrink-0 mr-2 mt-0.5"
+                    style={{ background: "linear-gradient(135deg,#064e3b,#059669)" }}>
+                    <BarChart3 className="w-3 h-3 text-white" />
+                  </div>
+                )}
+                <div className={`max-w-[85%] px-3 py-2 rounded-xl text-sm leading-relaxed ${
+                  m.role === "user"
+                    ? "text-white rounded-tr-sm"
+                    : "bg-slate-50 border border-slate-100 text-slate-800 rounded-tl-sm"
+                }`} style={m.role === "user" ? { background: "linear-gradient(135deg,#059669,#10b981)" } : {}}>
+                  {cleanAI(m.content)}
+                </div>
+                {m.role === "assistant" && (
+                  <button onClick={() => speakMsg(m.content, i)}
+                    className={`ml-1.5 mt-0.5 w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0 self-start transition-all ${
+                      speakingIdx === i ? "text-emerald-600 bg-emerald-50" : "text-slate-300 hover:text-emerald-500 hover:bg-slate-50"
+                    }`}>
+                    <Volume2 className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+            ))}
+            {typing && (
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-lg flex items-center justify-center" style={{ background: "linear-gradient(135deg,#064e3b,#059669)" }}>
+                  <BarChart3 className="w-3 h-3 text-white" />
+                </div>
+                <div className="bg-slate-50 border border-slate-100 rounded-xl px-3 py-2">
+                  <div className="flex gap-1">
+                    {[0, 1, 2].map((i) => (
+                      <motion.div key={i} className="w-1.5 h-1.5 rounded-full bg-slate-300"
+                        animate={{ y: [0, -3, 0] }} transition={{ duration: 0.5, repeat: Infinity, delay: i * 0.12 }} />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            {error && (
+              <div className="text-xs text-red-600 bg-red-50 border border-red-100 rounded-xl px-3 py-2 flex items-center gap-2">
+                <span>⚠ {error}</span>
+                <button onClick={() => callActuals(msgs)} className="ml-auto font-semibold underline">Retry</button>
+              </div>
+            )}
+            <div ref={endRef} />
+          </div>
+          {!done && (
+            <div className="flex items-end gap-2">
+              <motion.button whileTap={{ scale: 0.95 }} onClick={toggleMic}
+                className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all ${
+                  micActive
+                    ? "bg-red-500 text-white shadow-lg shadow-red-500/30 animate-pulse"
+                    : "border border-slate-200 text-slate-400 hover:border-emerald-400 hover:text-emerald-600 bg-white"
+                }`}>
+                {micActive ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+              </motion.button>
+              <textarea rows={2} value={input} onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+                disabled={typing}
+                placeholder={micActive ? "Listening… tap mic to stop & send" : "Enter your monthly revenue data… (Enter to send)"}
+                className={`flex-1 resize-none px-4 py-2.5 border rounded-xl text-sm text-slate-800 bg-white focus:outline-none focus:ring-2 transition-all placeholder:text-slate-300 disabled:opacity-60 ${
+                  micActive ? "border-red-300 focus:border-red-400 focus:ring-red-400/20"
+                            : "border-slate-200 focus:border-emerald-500 focus:ring-emerald-500/20"
+                }`} />
+              <motion.button whileTap={{ scale: 0.95 }} onClick={send} disabled={!input.trim() || typing}
+                className="w-10 h-10 rounded-xl flex items-center justify-center text-white disabled:opacity-40"
+                style={{ background: "linear-gradient(135deg,#059669,#10b981)" }}>
+                <Send className="w-4 h-4" />
+              </motion.button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
