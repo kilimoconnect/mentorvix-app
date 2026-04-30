@@ -3169,7 +3169,8 @@ function ForecastView({
 function ApplyPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const targetAppId = searchParams.get("id"); // optional — open a specific application
+  const targetAppId = searchParams.get("id");       // open a specific application
+  const forceNew    = searchParams.get("new") === "1"; // always create a fresh one
   const [step, setStep] = useState(0);
   const [dir,  setDir]  = useState(1);
   // Shared save-in-progress flag — used at every step transition
@@ -3400,6 +3401,17 @@ function ApplyPageInner() {
           } else {
             app = data as DbApplication;
           }
+        } else if (forceNew) {
+          // User explicitly chose "New Project" — always insert a fresh record
+          const { data, error } = await sb
+            .from("applications")
+            .insert({ user_id: user.id })
+            .select()
+            .single();
+          if (error || !data) throw new Error(error?.message ?? "Failed to create application");
+          app = data as DbApplication;
+          // Replace URL so a page refresh opens this app by ID, not re-creates
+          router.replace(`/dashboard/apply?id=${app.id}`);
         } else {
           app = await getOrCreateApplication(sb, user.id);
         }

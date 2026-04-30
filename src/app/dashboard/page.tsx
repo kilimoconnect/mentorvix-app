@@ -919,7 +919,14 @@ export default function DashboardPage() {
               className="bg-white rounded-2xl border border-slate-100 shadow-sm p-5">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-sm font-semibold text-slate-800">Recent Activity</h3>
-                <Link href="/dashboard/documents" className="text-xs font-semibold hover:underline" style={{ color: "#0e7490" }}>View all</Link>
+                <div className="flex items-center gap-2">
+                  <Link href="/dashboard/documents" className="text-xs font-semibold hover:underline" style={{ color: "#0e7490" }}>View all</Link>
+                  <Link href="/dashboard/apply?new=1"
+                    className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg text-white transition-colors"
+                    style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}>
+                    <FilePlus2 className="w-3.5 h-3.5" /> New Project
+                  </Link>
+                </div>
               </div>
               <div className="space-y-3">
                 {appsLoading ? (
@@ -986,9 +993,10 @@ export default function DashboardPage() {
                   ))
                 )}
                 <motion.div whileHover={{ borderColor: "#0e7490" }}>
-                  <Link href="/dashboard/apply"
+                  <Link
+                    href={recentProjects.length > 0 ? "/dashboard/apply?new=1" : "/dashboard/apply"}
                     className="flex items-center justify-center gap-2 w-full py-3 rounded-xl border border-dashed border-slate-200 text-sm font-medium text-slate-400 hover:text-cyan-600 transition-colors">
-                    <FilePlus2 className="w-4 h-4" /> {recentProjects.length > 0 ? "Continue working" : "Start a new project"}
+                    <FilePlus2 className="w-4 h-4" /> {recentProjects.length > 0 ? "Start a new project" : "Start your first project"}
                   </Link>
                 </motion.div>
               </div>
