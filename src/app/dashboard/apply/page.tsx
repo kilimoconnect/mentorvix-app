@@ -17,7 +17,7 @@ import {
   ArrowLeft, ArrowRight, Plus, Trash2, Edit3, Check, X,
   BrainCircuit, BarChart3, TrendingUp, ShoppingBag, Briefcase,
   Repeat, Landmark, Zap, CheckCircle2, RefreshCw, Send,
-  ChevronDown, ChevronUp, Info, Upload, Pencil,
+  ChevronDown, ChevronUp, Info, Pencil, Clipboard,
   Calendar, ChevronRight, ScrollText, Users,
   Rocket, Store, Wrench, RefreshCcw, Banknote,
   Mic, MicOff, Volume2,
@@ -2163,7 +2163,7 @@ function ImportPane({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s:
             {
               step: "1",
               title: "Open your data source",
-              body: "Open the spreadsheet, price list, invoice, or app where your product or sales data lives — Excel, Google Sheets, WhatsApp, M-Pesa, a POS report, or even plain notes.",
+              body: "Open the spreadsheet, price list, or report where your product or sales data lives — Excel, Google Sheets, a CSV export, or any structured list.",
             },
             {
               step: "2",
@@ -2197,11 +2197,11 @@ function ImportPane({ stream, onUpdate }: { stream: RevenueStream; onUpdate: (s:
               "Product name + price + quantity",
               "Invoice or receipt lines",
               "Google Sheets / Excel rows",
-              "WhatsApp order messages",
-              "POS or till-roll exports",
-              "M-Pesa / bank statement rows",
-              "Handwritten lists (typed out)",
-              "Any consistent text format",
+              "CSV or tab-separated exports",
+              "POS or sales report exports",
+              "Price lists or catalogues",
+              "Any structured text format",
+              "Column headers optional",
             ].map((t) => (
               <div key={t} className="flex items-start gap-1.5">
                 <span className="text-emerald-500 text-[10px] mt-0.5 flex-shrink-0">✓</span>
@@ -5299,7 +5299,7 @@ function ApplyPageInner() {
                       <div className="flex gap-2 bg-slate-100 p-1 rounded-xl">
                         {([
                           { id: "chat"   as DriverMode, label: "AI Guided",      icon: BrainCircuit },
-                          { id: "import" as DriverMode, label: "Paste Data",     icon: Upload },
+                          { id: "import" as DriverMode, label: "Paste Data",     icon: Clipboard },
                           { id: "manual" as DriverMode, label: "Manual Entry",   icon: Pencil },
                         ]).map(({ id, label, icon: Icon }) => (
                           <button key={id} onClick={() => setDriverMode(id)}
