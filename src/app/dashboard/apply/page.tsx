@@ -5210,6 +5210,19 @@ function ApplyPageInner() {
                 <>
                 {/* ── Stream tabs — static, outside animation so they don't slide away on switch ── */}
                 <div className="mb-3 space-y-2">
+                      {/* Label: explain the select-to-configure pattern */}
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                          {streams.length > 1
+                            ? "Tap a stream tab → add its items below"
+                            : "Revenue stream"}
+                        </p>
+                        {streams.length > 1 && (
+                          <span className="text-[10px] text-slate-400 font-semibold">
+                            {streams.filter(s => s.driverDone || s.items.length > 0).length}/{streams.length} configured
+                          </span>
+                        )}
+                      </div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-x-auto">
                           {streams.map((s, i) => {
@@ -5316,6 +5329,23 @@ function ApplyPageInner() {
                         </div>
                       )}
                     </div>
+
+                {/* ── Active stream context strip ── */}
+                <div className="flex items-center gap-3 bg-cyan-50 border border-cyan-200 rounded-xl px-4 py-2.5 mb-3">
+                  <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
+                    style={{ background: Meta.bg }}>
+                    <StreamIcon className="w-3.5 h-3.5" style={{ color: Meta.color }} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] font-bold text-cyan-500 uppercase tracking-wider">Now adding items to</p>
+                    <p className="text-sm font-bold text-cyan-800 truncate">{currentStream.name}</p>
+                  </div>
+                  {streams.length > 1 && (
+                    <span className="text-[10px] font-semibold text-cyan-400 flex-shrink-0">
+                      {streamIdx + 1} / {streams.length}
+                    </span>
+                  )}
+                </div>
 
                 <motion.div key={`drivers-${currentStream.id}`} custom={dir} variants={slide} initial="enter" animate="center" exit="exit">
                   <div className="mb-4">
