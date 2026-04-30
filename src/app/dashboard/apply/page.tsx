@@ -5208,57 +5208,89 @@ function ApplyPageInner() {
 
               return (
                 <>
-                {/* ── Stream tabs — static, outside animation so they don't slide away on switch ── */}
-                <div className="mb-3 space-y-2">
-                      {/* Label: explain the select-to-configure pattern */}
+                {/* ── Stream selector ── */}
+                <div className="mb-4 space-y-3">
+                      {/* Header row */}
                       <div className="flex items-center justify-between">
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                          {streams.length > 1
-                            ? "Tap a stream tab → add its items below"
-                            : "Revenue stream"}
+                        <p className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">
+                          {streams.length > 1 ? "Select a stream to configure" : "Revenue stream"}
                         </p>
-                        {streams.length > 1 && (
-                          <span className="text-[10px] text-slate-400 font-semibold">
-                            {streams.filter(s => s.driverDone || s.items.length > 0).length}/{streams.length} configured
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-x-auto">
-                          {streams.map((s, i) => {
-                            const done = s.driverDone || s.items.length > 0;
-                            const active = i === streamIdx;
-                            return (
-                              <button key={s.id}
-                                onClick={() => { setStreamIdx(i); setShowStreamPicker(false); }}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap shrink-0 ${
-                                  active
-                                    ? "bg-cyan-600 text-white shadow-sm"
-                                    : done
-                                      ? "bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100"
-                                      : "bg-slate-100 text-slate-500 hover:bg-slate-200 border border-slate-200"
-                                }`}>
-                                {done && !active && <CheckCircle2 className="w-3 h-3 shrink-0" />}
-                                <span className="truncate max-w-[140px]">{s.name}</span>
-                                {active && s.items.length > 0 && (
-                                  <span className="ml-0.5 text-[10px] opacity-75">{s.items.length}</span>
-                                )}
-                              </button>
-                            );
-                          })}
-                          <button
-                            onClick={() => setShowStreamPicker((v) => !v)}
-                            className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all whitespace-nowrap shrink-0 border border-dashed ${
-                              showStreamPicker ? "border-cyan-400 text-cyan-600 bg-cyan-50" : "border-slate-300 text-slate-400 hover:border-cyan-400 hover:text-cyan-600"
-                            }`}>
-                            <Plus className="w-3.5 h-3.5" /> Add Stream
-                          </button>
+                        <div className="flex items-center gap-2">
+                          {streams.length > 1 && (
+                            <span className="text-[11px] font-semibold text-slate-400">
+                              {streams.filter(s => s.driverDone || s.items.length > 0).length}/{streams.length} done
+                            </span>
+                          )}
+                          {streams.some(s => streamMRR(s) > 0) && (
+                            <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2.5 py-0.5 rounded-full">
+                              {fmt(streams.reduce((a, s) => a + streamMRR(s), 0))}/mo
+                            </span>
+                          )}
                         </div>
-                        {streams.some(s => streamMRR(s) > 0) && (
-                          <span className="text-xs font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-full flex-shrink-0">
-                            {fmt(streams.reduce((a, s) => a + streamMRR(s), 0))}/mo total
-                          </span>
-                        )}
+                      </div>
+
+                      {/* Stream cards */}
+                      <div className="flex flex-col gap-2">
+                        {streams.map((s, i) => {
+                          const sMeta = STREAM_META[s.type];
+                          const SIcon = sMeta.icon;
+                          const done   = s.driverDone || s.items.length > 0;
+                          const active = i === streamIdx;
+                          const mrr    = streamMRR(s);
+                          return (
+                            <button key={s.id}
+                              onClick={() => { setStreamIdx(i); setShowStreamPicker(false); }}
+                              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border-2 text-left transition-all ${
+                                active
+                                  ? "border-cyan-500 bg-cyan-50 shadow-md shadow-cyan-100"
+                                  : done
+                                    ? "border-emerald-200 bg-emerald-50 hover:border-emerald-400"
+                                    : "border-slate-200 bg-white hover:border-cyan-300 hover:bg-slate-50"
+                              }`}>
+                              {/* Icon */}
+                              <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                                active ? "bg-cyan-100" : ""
+                              }`} style={!active ? { background: sMeta.bg } : {}}>
+                                <SIcon className="w-4 h-4" style={{ color: active ? "#0891b2" : sMeta.color }} />
+                              </div>
+                              {/* Name + meta */}
+                              <div className="flex-1 min-w-0">
+                                <p className={`text-sm font-bold truncate ${
+                                  active ? "text-cyan-800" : done ? "text-emerald-800" : "text-slate-700"
+                                }`}>{s.name}</p>
+                                <p className={`text-[11px] mt-0.5 ${
+                                  active ? "text-cyan-500" : done ? "text-emerald-500" : "text-slate-400"
+                                }`}>
+                                  {active
+                                    ? "Configuring now →"
+                                    : done
+                                      ? `${s.items.length} item${s.items.length !== 1 ? "s" : ""}${mrr > 0 ? ` · ${fmt(mrr)}/mo` : ""}`
+                                      : sMeta.label}
+                                </p>
+                              </div>
+                              {/* Status badge */}
+                              {done && !active && (
+                                <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full flex-shrink-0">
+                                  <CheckCircle2 className="w-3 h-3" /> Done
+                                </span>
+                              )}
+                              {active && (
+                                <ChevronRight className="w-4 h-4 text-cyan-400 flex-shrink-0" />
+                              )}
+                            </button>
+                          );
+                        })}
+
+                        {/* Add Stream button */}
+                        <button
+                          onClick={() => setShowStreamPicker((v) => !v)}
+                          className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-2 border-dashed text-sm font-semibold transition-all ${
+                            showStreamPicker
+                              ? "border-cyan-400 text-cyan-600 bg-cyan-50"
+                              : "border-slate-300 text-slate-400 hover:border-cyan-400 hover:text-cyan-600 hover:bg-slate-50"
+                          }`}>
+                          <Plus className="w-4 h-4" /> Add Revenue Stream
+                        </button>
                       </div>
                       {/* Inline stream type picker */}
                       {showStreamPicker && (
