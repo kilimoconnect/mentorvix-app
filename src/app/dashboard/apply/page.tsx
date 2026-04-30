@@ -478,6 +478,40 @@ function groupByYear(months: ProjMonth[]) {
     }));
 }
 
+/**
+ * groupByFY — group projection months by financial year.
+ * fyEndMonth: 0=Jan … 11=Dec — the last month of the financial year.
+ * e.g. fyEndMonth=2 → FY runs Apr–Mar; fyEndMonth=11 → Jan–Dec (calendar year).
+ * The fyYear label is the calendar year in which the FY ends.
+ */
+function groupByFY(
+  months: ProjMonth[],
+  fyEndMonth: number,
+  projStartYear: number,
+  projStartMonth: number,
+) {
+  const map = new Map<number, ProjMonth[]>();
+  months.forEach((m) => {
+    const absMonth = projStartMonth + m.index;
+    const calMonth = absMonth % 12;                                   // 0-indexed calendar month
+    const calYear  = projStartYear + Math.floor(absMonth / 12);
+    // FY ends in calYear when calMonth ≤ fyEndMonth, else FY ends next year
+    const fyYear   = calMonth <= fyEndMonth ? calYear : calYear + 1;
+    if (!map.has(fyYear)) map.set(fyYear, []);
+    map.get(fyYear)!.push(m);
+  });
+  return Array.from(map.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([fyYear, ms], i) => ({
+      year:       i + 1,        // 1-based period index (used for fallback)
+      fyYear,                   // the calendar year in which this FY ends
+      months:     ms,
+      total:      ms.reduce((a, b) => a + b.total, 0),
+      startLabel: ms[0].yearMonth,
+      endLabel:   ms[ms.length - 1].yearMonth,
+    }));
+}
+
 /* ═══════════════════════════════════════ parsing ══ */
 function parseItems(text: string): StreamItem[] | null {
   const idx = text.indexOf("[ITEMS_DETECTED]");
@@ -2033,13 +2067,24 @@ function ForecastView({
   const [view,           setView]           = useState<"annual" | "monthly" | "sensitivity">("annual");
   const [selectedYear,   setSelectedYear]   = useState(1);
   const [expandedStreams, setExpandedStreams] = useState<Set<string>>(new Set());
+  // -1 = rolling Year 1/2/… grouping (default); 0–11 = financial year ending that calendar month
+  const [fyEndMonth, setFyEndMonth] = useState<number>(-1);
 
-  const MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const MONTH_NAMES      = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const MONTH_NAMES_FULL = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
   const startDate  = new Date(startYear, startMonth, 1);
   const totalMths  = horizonYears * 12;
   const projection = projectRevenue(streams, totalMths, startDate);
-  const years      = groupByYear(projection);
+
+  // Group into annual periods — rolling or by financial year
+  const years = fyEndMonth < 0
+    ? groupByYear(projection)
+    : groupByFY(projection, fyEndMonth, startYear, startMonth);
+
+  // Label helpers — "Year 1" vs "FY 2026"
+  const yearLabel      = (y: typeof years[0]) => fyEndMonth >= 0 && "fyYear" in y ? `FY ${y.fyYear}` : `Year ${y.year}`;
+  const yearLabelShort = (y: typeof years[0]) => fyEndMonth >= 0 && "fyYear" in y ? `FY${(y as {fyYear:number}).fyYear}` : `Yr ${y.year}`;
   const grandTotal = years.reduce((a, y) => a + y.total, 0);
   const totalMRR   = streams.reduce((a, s) => a + streamMRR(s), 0);
   const totalItems = streams.reduce((a, s) => a + s.items.length, 0);
@@ -2142,6 +2187,19 @@ function ForecastView({
                 <option key={y} value={y}>{y} {y === 1 ? "year" : "years"}</option>
               ))}
             </select>
+            <span className="text-xs text-slate-300">·</span>
+            <span className="text-xs text-slate-500">FY ends</span>
+            <select
+              value={fyEndMonth}
+              onChange={(e) => { setFyEndMonth(Number(e.target.value)); setSelectedYear(1); }}
+              className="text-xs font-semibold text-slate-700 bg-slate-100 border-0 rounded-md px-2 py-0.5 cursor-pointer focus:outline-none focus:ring-1 focus:ring-cyan-500 appearance-none pr-5"
+              style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236b7280' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 4px center" }}
+            >
+              <option value={-1}>Rolling (Yr 1, 2…)</option>
+              {MONTH_NAMES.map((m, i) => (
+                <option key={i} value={i}>{m}</option>
+              ))}
+            </select>
           </div>
           <div className="flex bg-slate-100 rounded-lg p-0.5">
             {(["annual", "monthly", "sensitivity"] as const).map((v) => (
@@ -2177,7 +2235,7 @@ function ForecastView({
           { label: "Items",      val: `${totalItems} item${totalItems !== 1 ? "s" : ""}` },
           { label: "Currency",   val: currency ?? "—" },
           { label: "Scenario",   val: GROWTH_PRESETS[dominantScenario].label, highlight: dominantScenario === "growth" ? "emerald" : dominantScenario === "conservative" ? "amber" : "cyan" },
-          { label: "Confidence", val: "Medium", highlight: "amber" },
+          { label: "FY Year End", val: fyEndMonth >= 0 ? `${MONTH_NAMES_FULL[fyEndMonth]} · ${MONTH_NAMES[(fyEndMonth + 1) % 12]} – ${MONTH_NAMES[fyEndMonth]}` : "Rolling" },
         ].map(({ label, val, highlight }, i) => (
           <div key={label} className={`flex items-center gap-1.5 ${i > 0 ? "sm:border-l sm:border-slate-200 sm:pl-5" : ""}`}>
             <span className="text-[10px] text-slate-400 uppercase tracking-wider">{label}</span>
@@ -2240,7 +2298,7 @@ function ForecastView({
                 <div className="flex gap-3 mt-1.5">
                   {years.map((y) => (
                     <div key={y.year} className="flex-1 text-center min-w-0">
-                      <span className="text-[10px] font-semibold text-slate-500 whitespace-nowrap">Yr {y.year}</span>
+                      <span className="text-[10px] font-semibold text-slate-500 whitespace-nowrap">{yearLabelShort(y)}</span>
                     </div>
                   ))}
                 </div>
@@ -2391,7 +2449,7 @@ function ForecastView({
                   </th>
                   {years.map((y) => (
                     <TH key={y.year} cls="text-white">
-                      Year {y.year}<span className="block text-[9px] font-normal opacity-60">{y.startLabel} – {y.endLabel}</span>
+                      {yearLabel(y)}<span className="block text-[9px] font-normal opacity-60">{y.startLabel} – {y.endLabel}</span>
                     </TH>
                   ))}
                   <TH cls="text-cyan-300 border-l border-white/10">Grand Total</TH>
@@ -2443,7 +2501,7 @@ function ForecastView({
                       </tr>
                       {/* Item drilldown rows — read actual per-item revenue from projection */}
                       {isExpanded && s.items.map((it) => {
-                        const getItemYearRev = (yr: ReturnType<typeof groupByYear>[0]) =>
+                        const getItemYearRev = (yr: typeof years[0]) =>
                           yr.months.reduce((sum, m) => {
                             const cat = m.byStream.find((b) => b.id === s.id)?.byCategory[it.category || "Other"];
                             return sum + (cat?.items.find((x) => x.id === it.id)?.rev ?? 0);
@@ -2527,7 +2585,7 @@ function ForecastView({
                     ? "bg-white text-slate-800 border-slate-200"
                     : "text-slate-400 border-transparent hover:text-slate-600"
                 }`}>
-                Yr {y.year}
+                {yearLabelShort(y)}
               </button>
             ))}
           </div>
@@ -2538,7 +2596,7 @@ function ForecastView({
                 <p className="text-[10px] text-slate-400">
                   Monthly breakdown · {selectedYearData.months.length} months · {streams.length} revenue stream{streams.length !== 1 ? "s" : ""}
                 </p>
-                <p className="text-[10px] font-semibold text-slate-600">Year total: <span style={{ color: "#0e7490" }}>{fmt(selectedYearData.total)}</span></p>
+                <p className="text-[10px] font-semibold text-slate-600">{yearLabel(selectedYearData)} total: <span style={{ color: "#0e7490" }}>{fmt(selectedYearData.total)}</span></p>
               </div>
               <div className="overflow-x-auto">
                 <table className="border-collapse" style={{ minWidth: "max-content", width: "100%" }}>
@@ -2555,7 +2613,7 @@ function ForecastView({
                         </th>
                       ))}
                       <th className="px-3 py-2 text-right text-[10px] font-bold text-cyan-200 border-l border-white/20">
-                        Yr {selectedYear}
+                        {selectedYearData ? yearLabelShort(selectedYearData) : `Yr ${selectedYear}`}
                       </th>
                     </tr>
                     {/* Month header row */}
@@ -2740,7 +2798,7 @@ function ForecastView({
                     annualPriceGrowthPct: (s.annualPriceGrowthPct ?? 0) * row.priceMult,
                   }));
                   const adjProj  = projectRevenue(adjStreams, totalMths, startDate);
-                  const adjYears = groupByYear(adjProj);
+                  const adjYears = fyEndMonth < 0 ? groupByYear(adjProj) : groupByFY(adjProj, fyEndMonth, startYear, startMonth);
                   const adjTotal = adjYears.reduce((a, y) => a + y.total, 0);
                   const adjCagr  = adjYears.length > 1 && (adjYears[0]?.total ?? 0) > 0
                     ? ((Math.pow(adjYears[adjYears.length - 1].total / adjYears[0].total, 1 / (adjYears.length - 1)) - 1) * 100)
