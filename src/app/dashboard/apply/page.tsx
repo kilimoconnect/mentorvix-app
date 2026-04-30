@@ -5299,7 +5299,7 @@ function ApplyPageInner() {
                       <div className="flex gap-2 bg-slate-100 p-1 rounded-xl">
                         {([
                           { id: "chat"   as DriverMode, label: "AI Guided",      icon: BrainCircuit },
-                          { id: "import" as DriverMode, label: "Import / Paste", icon: Upload },
+                          { id: "import" as DriverMode, label: "Paste Data",     icon: Upload },
                           { id: "manual" as DriverMode, label: "Manual Entry",   icon: Pencil },
                         ]).map(({ id, label, icon: Icon }) => (
                           <button key={id} onClick={() => setDriverMode(id)}
@@ -5311,14 +5311,6 @@ function ApplyPageInner() {
                         ))}
                       </div>
 
-                      {/* Import info banner */}
-                      {driverMode === "import" && (
-                        <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 space-y-1">
-                          <p className="text-xs font-semibold text-slate-700">Upload or paste a product / sales list</p>
-                          <p className="text-[11px] text-slate-500">Accepted: Excel, CSV, or pasted table data.</p>
-                          <p className="text-[11px] text-slate-400">We&apos;ll extract categories, units, and pricing automatically.</p>
-                        </div>
-                      )}
 
                       {/* Manual entry info */}
                       {driverMode === "manual" && currentStream.items.length === 0 && (
