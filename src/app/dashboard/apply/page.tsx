@@ -2051,6 +2051,7 @@ function ForecastView({
   onHorizonChange,
   startYear,
   startMonth,
+  onStartChange,
   currency,
   onEditDrivers,
 }: {
@@ -2060,6 +2061,7 @@ function ForecastView({
   onHorizonChange?: (years: number) => void;
   startYear:        number;
   startMonth:       number;
+  onStartChange?:   (year: number, month: number) => void;
   currency:         string | null;
   onEditDrivers?:   () => void;
 }) {
@@ -2073,8 +2075,20 @@ function ForecastView({
   const MONTH_NAMES      = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const MONTH_NAMES_FULL = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
-  const startDate  = new Date(startYear, startMonth, 1);
-  const totalMths  = horizonYears * 12;
+  const startDate = new Date(startYear, startMonth, 1);
+
+  // Rolling: always exactly N×12 months (always complete).
+  // FY mode: extend past N×12 so the last FY period ends on its natural month boundary.
+  //   e.g. start=Oct, FY ends Dec, 3 years → 27 months (Oct 2026 – Dec 2028, 3 full FYs).
+  const totalMths = (() => {
+    if (fyEndMonth < 0) return horizonYears * 12;
+    // Which FY does the very first projection month belong to?
+    const fyYearFirst = startMonth <= fyEndMonth ? startYear : startYear + 1;
+    // The N-th FY ends at fyEndMonth in (fyYearFirst + N - 1)
+    const lastFyEndYear = fyYearFirst + horizonYears - 1;
+    return Math.max((lastFyEndYear - startYear) * 12 + (fyEndMonth - startMonth) + 1, 1);
+  })();
+
   const projection = projectRevenue(streams, totalMths, startDate);
 
   // Group into annual periods — rolling or by financial year
@@ -2174,7 +2188,26 @@ function ForecastView({
           <div className="flex items-center gap-2 flex-wrap">
             <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
             <span className="text-xs text-slate-500">Starting</span>
-            <span className="text-xs font-semibold text-slate-700">{MONTH_NAMES[startMonth]} {startYear}</span>
+            {/* Month picker */}
+            <select
+              value={startMonth}
+              onChange={(e) => onStartChange?.(startYear, Number(e.target.value))}
+              className="text-xs font-semibold text-slate-700 bg-slate-100 border-0 rounded-md px-2 py-0.5 cursor-pointer focus:outline-none focus:ring-1 focus:ring-cyan-500 appearance-none pr-5"
+              style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236b7280' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 4px center" }}
+            >
+              {MONTH_NAMES.map((m, i) => <option key={i} value={i}>{m}</option>)}
+            </select>
+            {/* Year picker */}
+            <select
+              value={startYear}
+              onChange={(e) => onStartChange?.(Number(e.target.value), startMonth)}
+              className="text-xs font-semibold text-slate-700 bg-slate-100 border-0 rounded-md px-2 py-0.5 cursor-pointer focus:outline-none focus:ring-1 focus:ring-cyan-500 appearance-none pr-5"
+              style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236b7280' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 4px center" }}
+            >
+              {Array.from({ length: 11 }, (_, i) => new Date().getFullYear() - 2 + i).map((y) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
             <span className="text-xs text-slate-300">·</span>
             <span className="text-xs text-slate-500">Horizon</span>
             <select
@@ -2217,8 +2250,12 @@ function ForecastView({
         {[
           { label: "Current Monthly Revenue",             val: fmt(totalMRR),                              sub: "Baseline MRR" },
           { label: `Cumulative ${horizonYears}-Year Revenue`, val: fmt(grandTotal),                        sub: "Total projection" },
-          { label: "First-Year Revenue",                  val: fmt(years[0]?.total ?? 0),                  sub: "Months 1 – 12" },
-          { label: "Final-Year Revenue",                  val: fmt(years[years.length - 1]?.total ?? 0),   sub: `Year ${horizonYears}` },
+          { label: fyEndMonth >= 0 && "fyYear" in (years[0] ?? {}) ? `${yearLabel(years[0])} Revenue` : "First-Year Revenue",
+            val: fmt(years[0]?.total ?? 0),
+            sub: fyEndMonth >= 0 ? `${years[0]?.startLabel ?? ""} – ${years[0]?.endLabel ?? ""}` : "Months 1 – 12" },
+          { label: fyEndMonth >= 0 && "fyYear" in (years[years.length-1] ?? {}) ? `${yearLabel(years[years.length-1])} Revenue` : "Final-Year Revenue",
+            val: fmt(years[years.length - 1]?.total ?? 0),
+            sub: fyEndMonth >= 0 ? `${years[years.length-1]?.startLabel ?? ""} – ${years[years.length-1]?.endLabel ?? ""}` : `Year ${horizonYears}` },
         ].map(({ label, val, sub }) => (
           <div key={label} className="bg-white rounded-xl border border-slate-100 px-4 py-3">
             <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-1 leading-tight">{label}</p>
@@ -5049,6 +5086,7 @@ function ApplyPageInner() {
                   onHorizonChange={setForecastHorizon}
                   startYear={forecastStartYear}
                   startMonth={forecastStartMonth}
+                  onStartChange={(y, m) => { setForecastStartYear(y); setForecastStartMonth(m); }}
                   currency={currency}
                   onEditDrivers={() => go(2)}
                 />
