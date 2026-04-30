@@ -5209,82 +5209,57 @@ function ApplyPageInner() {
               return (
                 <>
                 {/* ── Stream selector ── */}
-                <div className="mb-4 space-y-3">
+                <div className="mb-4 space-y-2.5">
                       {/* Header row */}
                       <div className="flex items-center justify-between">
-                        <p className="text-[11px] font-bold text-slate-500 uppercase tracking-widest">
+                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                           {streams.length > 1 ? "Select a stream to configure" : "Revenue stream"}
                         </p>
                         <div className="flex items-center gap-2">
                           {streams.length > 1 && (
-                            <span className="text-[11px] font-semibold text-slate-400">
+                            <span className="text-[10px] font-semibold text-slate-400">
                               {streams.filter(s => s.driverDone || s.items.length > 0).length}/{streams.length} done
                             </span>
                           )}
                           {streams.some(s => streamMRR(s) > 0) && (
-                            <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2.5 py-0.5 rounded-full">
+                            <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full">
                               {fmt(streams.reduce((a, s) => a + streamMRR(s), 0))}/mo
                             </span>
                           )}
                         </div>
                       </div>
 
-                      {/* Stream cards */}
-                      <div className="flex flex-col gap-2">
+                      {/* Stream pills — wrap naturally */}
+                      <div className="flex flex-wrap gap-2">
                         {streams.map((s, i) => {
                           const sMeta = STREAM_META[s.type];
                           const SIcon = sMeta.icon;
                           const done   = s.driverDone || s.items.length > 0;
                           const active = i === streamIdx;
-                          const mrr    = streamMRR(s);
                           return (
                             <button key={s.id}
                               onClick={() => { setStreamIdx(i); setShowStreamPicker(false); }}
-                              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl border-2 text-left transition-all ${
+                              className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-sm font-semibold border transition-all ${
                                 active
-                                  ? "border-cyan-500 bg-cyan-50 shadow-md shadow-cyan-100"
+                                  ? "bg-cyan-600 text-white border-cyan-600 shadow-md shadow-cyan-100"
                                   : done
-                                    ? "border-emerald-200 bg-emerald-50 hover:border-emerald-400"
-                                    : "border-slate-200 bg-white hover:border-cyan-300 hover:bg-slate-50"
+                                    ? "bg-white text-emerald-700 border-emerald-300 hover:border-emerald-500 hover:bg-emerald-50"
+                                    : "bg-white text-slate-600 border-slate-200 hover:border-cyan-300 hover:text-cyan-700 hover:bg-cyan-50"
                               }`}>
-                              {/* Icon */}
-                              <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                                active ? "bg-cyan-100" : ""
-                              }`} style={!active ? { background: sMeta.bg } : {}}>
-                                <SIcon className="w-4 h-4" style={{ color: active ? "#0891b2" : sMeta.color }} />
-                              </div>
-                              {/* Name + meta */}
-                              <div className="flex-1 min-w-0">
-                                <p className={`text-sm font-bold truncate ${
-                                  active ? "text-cyan-800" : done ? "text-emerald-800" : "text-slate-700"
-                                }`}>{s.name}</p>
-                                <p className={`text-[11px] mt-0.5 ${
-                                  active ? "text-cyan-500" : done ? "text-emerald-500" : "text-slate-400"
-                                }`}>
-                                  {active
-                                    ? "Configuring now →"
-                                    : done
-                                      ? `${s.items.length} item${s.items.length !== 1 ? "s" : ""}${mrr > 0 ? ` · ${fmt(mrr)}/mo` : ""}`
-                                      : sMeta.label}
-                                </p>
-                              </div>
-                              {/* Status badge */}
+                              <SIcon className="w-3.5 h-3.5 flex-shrink-0"
+                                style={{ color: active ? "white" : done ? "#059669" : sMeta.color }} />
+                              <span className="truncate max-w-[180px]">{s.name}</span>
                               {done && !active && (
-                                <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full flex-shrink-0">
-                                  <CheckCircle2 className="w-3 h-3" /> Done
-                                </span>
-                              )}
-                              {active && (
-                                <ChevronRight className="w-4 h-4 text-cyan-400 flex-shrink-0" />
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
                               )}
                             </button>
                           );
                         })}
 
-                        {/* Add Stream button */}
+                        {/* Add Stream button — inline with pills */}
                         <button
                           onClick={() => setShowStreamPicker((v) => !v)}
-                          className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl border-2 border-dashed text-sm font-semibold transition-all ${
+                          className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold border border-dashed transition-all ${
                             showStreamPicker
                               ? "border-cyan-400 text-cyan-600 bg-cyan-50"
                               : "border-slate-300 text-slate-400 hover:border-cyan-400 hover:text-cyan-600 hover:bg-slate-50"
