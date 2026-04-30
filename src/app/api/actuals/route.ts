@@ -35,6 +35,9 @@ Step 3 — If they give a range or single number (e.g. "about 50k a month"), con
 Step 4 — Confirm and output the block immediately. Do NOT ask follow-up questions once you have enough data.
 
 UNIVERSAL RULES:
+0. PARSE BEFORE YOU ASK — MANDATORY FIRST STEP FOR EVERY REPLY:
+   Scan the ENTIRE message history and extract every revenue figure already provided.
+   If the user already gave a monthly number or a range in their first message, treat that as the answer to Step 1 and skip straight to outputting [ACTUALS_DETECTED]. NEVER re-ask for data that has already been stated.
 1. Analyst shorthand — "Revenue for Jan 2025?" not "Could you please provide..."
 2. Request table format whenever possible — one ask, all months
 3. NEVER ask month by month when a table would be faster

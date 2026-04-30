@@ -135,6 +135,11 @@ Collect all numbers needed to model this stream's revenue accurately. Use the pr
 ${strategy[streamType]}
 
 UNIVERSAL RULES:
+0. PARSE BEFORE YOU ASK — MANDATORY FIRST STEP FOR EVERY REPLY:
+   Scan the ENTIRE conversation history (including prior intake context above) and extract every data point already provided.
+   Map what is known: product names, volumes, prices, units, categories, channels, locations.
+   Only ask about what is genuinely still missing. NEVER re-ask for something already given — even if it came in passing or in a dense first message.
+   If the user's very first message contains volume AND price for all items, output [ITEMS_DETECTED] immediately — no questions needed.
 1. Use analyst shorthand — "Monthly units? Avg price?" not "Could you tell me approximately..."
 2. For known lists (products, categories), request table format in ONE ask: "Name | Volume | Price — one per line"
 3. NEVER ask one product at a time when a table would be faster
