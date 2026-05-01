@@ -9,8 +9,8 @@ import {
   getOrCreateApplication, saveStreams, saveStreamItems,
   saveIntakeConversation, saveDriverConversation, saveForecastConfig,
   saveProjectionSnapshot, loadApplicationState, updateApplicationFlags,
-  saveActuals,
-  type DbApplication, type ApplicationState,
+  saveActuals, saveOperatingExpenses, saveBusinessProfile,
+  type DbApplication, type ApplicationState, type DbBusinessProfile,
 } from "@/lib/supabase/revenue";
 import { CURRENCIES, getCurrencySymbol, makeFmt } from "@/lib/utils/currency";
 import {
@@ -129,7 +129,7 @@ type DriverMode = "chat" | "import" | "manual";
 type SeasonalityPreset = "none" | "q4_peak" | "q1_slow" | "summer_peak" | "end_of_year" | "construction" | "custom";
 
 interface ChatMessage { role: "user" | "assistant"; content: string; }
-interface StreamItem  { id: string; name: string; category: string; volume: number; price: number; unit: string; note?: string; seasonalityPreset?: SeasonalityPreset; }
+interface StreamItem  { id: string; name: string; category: string; volume: number; price: number; costPrice?: number; unit: string; note?: string; seasonalityPreset?: SeasonalityPreset; }
 
 /** Per-category or per-item growth/seasonality/event override. null = inherit from stream. */
 interface GrowthOverride {
@@ -523,10 +523,12 @@ function parseItems(text: string): StreamItem[] | null {
     const nextTag = jsonPart.search(/\[FORECAST_YEARS\]|\[FORECAST_START\]/);
     if (nextTag !== -1) jsonPart = jsonPart.slice(0, nextTag).trim();
     const arr = JSON.parse(jsonPart) as
-      { name: string; category?: string; volume?: number; price?: number; unit?: string; note?: string }[];
+      { name: string; category?: string; volume?: number; price?: number; cost_price?: number; unit?: string; note?: string }[];
     return arr.map((a) => ({
       id: uid(), name: a.name, category: a.category ?? "General",
-      volume: a.volume ?? 0, price: a.price ?? 0, unit: a.unit ?? "unit", note: a.note,
+      volume: a.volume ?? 0, price: a.price ?? 0,
+      costPrice: typeof a.cost_price === "number" ? a.cost_price : undefined,
+      unit: a.unit ?? "unit", note: a.note,
     }));
   } catch { return null; }
 }
@@ -2246,7 +2248,7 @@ function ActualsChat({ stream, onActualsSaved }: {
    for every stream, in sequence. Parent receives callbacks for each
    detection event. No separate step changes needed.
 ══════════════════════════════════════════════════════════════ */
-type JPhaseKind = "intake" | "actuals" | "drivers";
+type JPhaseKind = "intake" | "actuals" | "drivers" | "expenses" | "bizprofile";
 interface JPhase { kind: JPhaseKind; streamIdx?: number; }
 type DItem =
   | { id: number; t: "msg"; role: "user" | "assistant"; content: string }
@@ -2266,6 +2268,7 @@ function UnifiedJourneyChat({
   onForecastYears:    (y: number) => void;
   onForecastStart:    (year: number, month: number) => void;
   onComplete:         () => void;
+  // callbacks handled internally — expenses and bizprofile saved directly from component
 }) {
   // ── Refs: phase state (avoid stale closures) ─────────────────────────────
   const queueRef     = useRef<JPhase[]>([{ kind: "intake" }]);
@@ -2307,9 +2310,11 @@ function UnifiedJourneyChat({
     if (!phase) return;
     setTyping(true); setError("");
     try {
-      if (phase.kind === "intake")  await doIntake(history);
-      if (phase.kind === "actuals") await doActuals(history, phase.streamIdx!);
-      if (phase.kind === "drivers") await doDrivers(history, phase.streamIdx!);
+      if (phase.kind === "intake")     await doIntake(history);
+      if (phase.kind === "actuals")    await doActuals(history, phase.streamIdx!);
+      if (phase.kind === "drivers")    await doDrivers(history, phase.streamIdx!);
+      if (phase.kind === "expenses")   await doExpenses(history);
+      if (phase.kind === "bizprofile") await doBizProfile(history);
     } catch (e) { setError(e instanceof Error ? e.message : "Connection error"); }
     finally     { setTyping(false); }
   }
@@ -2353,12 +2358,14 @@ function UnifiedJourneyChat({
       streamsRef.current = saved;
       onStreamsDetected(saved, intakeCtxRef.current);
 
-      // Build queue: intake → [actuals_i → drivers_i] per stream
+      // Build queue: intake → [actuals? → drivers] per stream → expenses → bizprofile
       const q: JPhase[] = [{ kind: "intake" }];
       saved.forEach((_, i) => {
         if (situation === "existing") q.push({ kind: "actuals", streamIdx: i });
         q.push({ kind: "drivers", streamIdx: i });
       });
+      q.push({ kind: "expenses" });
+      q.push({ kind: "bizprofile" });
       queueRef.current = q;
       advance(q, 1, saved);
     } else {
@@ -2418,14 +2425,68 @@ function UnifiedJourneyChat({
       if (fs) onForecastStart(fs.year, fs.month);
       const msgs = [...history, { role: "assistant" as const, content: clean }];
       await onItemsCollected(stream.id, itms, msgs).catch(e => console.error("[unified] items save:", e));
-      const nextIdx = idxRef.current + 1;
-      if (nextIdx >= queue.length) {
-        pushDiv("✓ All streams configured — generating forecast…", "emerald");
-        setIsDone(true);
-        setTimeout(onComplete, 900);
-      } else {
-        advance(queue, nextIdx, streamsRef.current);
-      }
+      advance(queue, idxRef.current + 1, streamsRef.current);
+    } else {
+      pushMsg("assistant", text);
+      phMsgsRef.current = [...history, { role: "assistant" as const, content: text }];
+    }
+  }
+
+  // ── Expenses ──────────────────────────────────────────────────────────────
+  async function doExpenses(history: ChatMessage[]) {
+    const res  = await fetch("/api/expenses", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: history, intakeContext: intakeCtxRef.current }),
+    });
+    const data = await res.json() as { text?: string; error?: string };
+    if (data.error) throw new Error(data.error);
+    const text = data.text ?? "";
+    const tag  = "[EXPENSES_DETECTED]";
+    const tagIdx = text.indexOf(tag);
+    if (tagIdx !== -1) {
+      const clean = text.slice(0, tagIdx).trim() || "Operating expenses captured.";
+      pushMsg("assistant", clean);
+      try {
+        const jsonStr = text.slice(tagIdx + tag.length).trim();
+        const expenses = JSON.parse(jsonStr) as { category: string; monthly_amount: number; note?: string }[];
+        if (appId && userId) {
+          const sb = createClient();
+          await saveOperatingExpenses(sb, appId, userId, expenses);
+        }
+      } catch (e) { console.error("[unified] expenses parse/save:", e); }
+      advance(queueRef.current, idxRef.current + 1, streamsRef.current);
+    } else {
+      pushMsg("assistant", text);
+      phMsgsRef.current = [...history, { role: "assistant" as const, content: text }];
+    }
+  }
+
+  // ── Business Profile ──────────────────────────────────────────────────────
+  async function doBizProfile(history: ChatMessage[]) {
+    const res  = await fetch("/api/bizprofile", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: history, situation, intakeContext: intakeCtxRef.current }),
+    });
+    const data = await res.json() as { text?: string; error?: string };
+    if (data.error) throw new Error(data.error);
+    const text = data.text ?? "";
+    const tag  = "[BIZPROFILE_DETECTED]";
+    const tagIdx = text.indexOf(tag);
+    if (tagIdx !== -1) {
+      const clean = text.slice(0, tagIdx).trim() || "Business profile captured.";
+      pushMsg("assistant", clean);
+      try {
+        const jsonStr = text.slice(tagIdx + tag.length).trim();
+        const profile = JSON.parse(jsonStr) as Omit<DbBusinessProfile, "id" | "application_id" | "user_id" | "created_at" | "updated_at">;
+        if (appId && userId) {
+          const sb = createClient();
+          await saveBusinessProfile(sb, appId, userId, profile);
+        }
+      } catch (e) { console.error("[unified] bizprofile parse/save:", e); }
+      // Done — all phases complete
+      pushDiv("✓ All data collected — generating your financial forecast…", "emerald");
+      setIsDone(true);
+      setTimeout(onComplete, 900);
     } else {
       pushMsg("assistant", text);
       phMsgsRef.current = [...history, { role: "assistant" as const, content: text }];
@@ -2440,6 +2501,17 @@ function UnifiedJourneyChat({
       pushDiv(`Historical actuals — ${stream.name}`, "emerald");
     else if (next?.kind === "drivers" && stream)
       pushDiv(`Revenue drivers — ${stream.name}`, "cyan");
+    else if (next?.kind === "expenses")
+      pushDiv("Operating expenses", "slate");
+    else if (next?.kind === "bizprofile")
+      pushDiv("Business profile & loan details", "slate");
+    else if (!next) {
+      // queue exhausted (should not happen — bizprofile is always last)
+      pushDiv("✓ All data collected — generating your financial forecast…", "emerald");
+      setIsDone(true);
+      setTimeout(onComplete, 900);
+      return;
+    }
     idxRef.current    = nextIdx;
     phMsgsRef.current = [];
     setTimeout(() => runPhase([]), 500);
@@ -4516,7 +4588,7 @@ function ApplyPageInner() {
       const sb = createClient();
       await saveStreamItems(sb, streamId, userId, items.map((it, pos) => ({
         name: it.name, category: it.category,
-        volume: it.volume, price: it.price,
+        volume: it.volume, price: it.price, costPrice: it.costPrice,
         unit: it.unit, note: it.note ?? undefined,
         seasonalityPreset: it.seasonalityPreset, position: pos,
       })));

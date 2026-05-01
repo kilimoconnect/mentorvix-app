@@ -78,10 +78,46 @@ export interface DbStreamItem {
   category: string;
   volume: number;
   price: number;
+  cost_price: number | null;           // COGS per unit — NULL = unknown
   unit: string;
   note: string | null;
   seasonality_preset: string | null;   // SeasonalityPreset key — NULL = inherit from stream
   position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbOperatingExpense {
+  id: string;
+  application_id: string;
+  user_id: string;
+  category: string;
+  monthly_amount: number;
+  note: string | null;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbBusinessProfile {
+  id: string;
+  application_id: string;
+  user_id: string;
+  employee_count: number | null;
+  employee_cost_monthly: number | null;
+  premises_type: "owned" | "rented" | "shared" | "none" | null;
+  premises_monthly_cost: number | null;
+  existing_loans_total: number | null;
+  existing_monthly_repayment: number | null;
+  loan_amount_requested: number | null;
+  loan_purpose: string | null;
+  loan_term_months: number | null;
+  collateral_description: string | null;
+  business_reg_number: string | null;
+  years_operating: number | null;
+  business_description: string | null;
+  target_market: string | null;
+  competitive_advantage: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -420,6 +456,7 @@ export async function saveStreamItems(
     category: string;
     volume: number;
     price: number;
+    costPrice?: number | null;
     unit: string;
     note?: string;
     seasonalityPreset?: string;
@@ -438,6 +475,7 @@ export async function saveStreamItems(
     category: it.category,
     volume: it.volume,
     price: it.price,
+    cost_price: it.costPrice ?? null,
     unit: it.unit,
     note: it.note ?? null,
     seasonality_preset: it.seasonalityPreset ?? null,
@@ -680,4 +718,95 @@ export async function loadApplicationState(
     latestSnapshot: (snapshotRes.data ?? null) as DbProjectionSnapshot | null,
     actualsByStream,
   };
+}
+
+/* ─────────────────────────────────────────── operating expenses ── */
+
+export interface OpExInput {
+  category: string;
+  monthly_amount: number;
+  note?: string;
+  position?: number;
+}
+
+/**
+ * Upsert operating expenses for an application.
+ * Each category is unique per application — existing rows are updated.
+ */
+export async function saveOperatingExpenses(
+  supabase: SupabaseClient,
+  applicationId: string,
+  userId: string,
+  expenses: OpExInput[],
+): Promise<DbOperatingExpense[]> {
+  const rows = expenses.map((e, i) => ({
+    application_id: applicationId,
+    user_id: userId,
+    category: e.category,
+    monthly_amount: e.monthly_amount,
+    note: e.note ?? null,
+    position: e.position ?? i,
+  }));
+
+  const { data, error } = await supabase
+    .from("operating_expenses")
+    .upsert(rows, { onConflict: "application_id,category" })
+    .select();
+
+  if (error) throw new Error(`saveOperatingExpenses: ${error.message}`);
+  return (data ?? []) as DbOperatingExpense[];
+}
+
+export async function loadOperatingExpenses(
+  supabase: SupabaseClient,
+  applicationId: string,
+): Promise<DbOperatingExpense[]> {
+  const { data, error } = await supabase
+    .from("operating_expenses")
+    .select("*")
+    .eq("application_id", applicationId)
+    .order("position");
+  if (error) throw new Error(`loadOperatingExpenses: ${error.message}`);
+  return (data ?? []) as DbOperatingExpense[];
+}
+
+/* ─────────────────────────────────────────── business profile ── */
+
+export type BusinessProfileInput = Partial<Omit<DbBusinessProfile,
+  "id" | "application_id" | "user_id" | "created_at" | "updated_at">>;
+
+/**
+ * Upsert the business profile for an application.
+ * Only non-undefined fields are written — partial updates are safe.
+ */
+export async function saveBusinessProfile(
+  supabase: SupabaseClient,
+  applicationId: string,
+  userId: string,
+  profile: BusinessProfileInput,
+): Promise<DbBusinessProfile> {
+  const { data, error } = await supabase
+    .from("business_profiles")
+    .upsert(
+      { application_id: applicationId, user_id: userId, ...profile },
+      { onConflict: "application_id" },
+    )
+    .select()
+    .single();
+
+  if (error) throw new Error(`saveBusinessProfile: ${error.message}`);
+  return data as DbBusinessProfile;
+}
+
+export async function loadBusinessProfile(
+  supabase: SupabaseClient,
+  applicationId: string,
+): Promise<DbBusinessProfile | null> {
+  const { data, error } = await supabase
+    .from("business_profiles")
+    .select("*")
+    .eq("application_id", applicationId)
+    .maybeSingle();
+  if (error) throw new Error(`loadBusinessProfile: ${error.message}`);
+  return (data ?? null) as DbBusinessProfile | null;
 }

@@ -30,25 +30,27 @@ function buildSystem(streamName: string, streamType: StreamType, situation?: str
   const typeNeeds: Record<StreamType, string> = {
     product: `
 WHAT TO EXTRACT for product streams:
-- Item/SKU names (extract from stream name if enumerated there — e.g. "White Maize and Soya Beans" → two items)
+- Item/SKU names (extract from stream name if enumerated — e.g. "White Maize and Soya Beans" → two items)
 - Monthly volume per item (units, kg, litres, bags, etc.)
 - Selling price per unit
+- Cost price per unit / purchase cost (what the business pays to acquire or produce each unit — needed for gross margin)
 If the stream name already lists specific products, those ARE the items — do not ask how many SKUs.
-For many items (20+), collect at category level: category name, monthly volume, average price.
+For many items (20+), collect at category level. Ask for table: "Product | Monthly volume | Selling price | Cost price"
 If the user gives all data in one message, output [ITEMS_DETECTED] immediately.`,
 
     service: `
 WHAT TO EXTRACT for service streams:
 - Service types offered
 - Monthly client/job volume per service type
-- Average fee per service type
-Extract service types from stream name and context before asking anything.`,
+- Average fee per service type (selling price)
+- Direct cost per job/session if applicable (subcontractor, materials — for gross margin)`,
 
     subscription: `
 WHAT TO EXTRACT for subscription streams:
 - Plan/tier names
 - Active subscriber count per tier
 - Monthly fee per tier
+- Direct cost per subscriber per month (hosting, fulfilment cost — if applicable)
 - New subscribers per month (if given)
 - Churn rate % (if given)`,
 
@@ -57,24 +59,28 @@ WHAT TO EXTRACT for rental streams:
 - Unit/asset types available for rent
 - Number of units per type
 - Monthly rate per unit
+- Direct cost per unit per month (maintenance, cleaning, management fee — if applicable)
 - Occupancy % (if given, otherwise assume 100% or ask once)`,
 
     marketplace: `
 WHAT TO EXTRACT for marketplace/commission streams:
 - Transaction type(s)
 - Monthly transaction value (GMV)
-- Commission or take rate %`,
+- Commission or take rate %
+- Direct cost of facilitating transactions (payment fees, platform costs — if applicable)`,
 
     contract: `
 WHAT TO EXTRACT for contract streams:
 - Contract/agreement types
 - Number of active contracts
 - Average monthly value per contract
+- Direct cost of fulfilling each contract (materials, labour — for gross margin)
 - Duration and renewal rate (if given)`,
 
     custom: `
 WHAT TO EXTRACT for conversion/repackaging streams:
 - Input material and monthly volume purchased
+- Cost per input unit (purchase price)
 - Output units and how many per input unit
 - Selling price per output unit
 - Wastage % (if given)
@@ -121,8 +127,9 @@ Ask A first, wait for the answer, then ask B. Include both in the output block.
 OUTPUT — when ready, output ONLY this block, nothing before or after:
 [ITEMS_DETECTED]
 [
-  {"name":"item name","category":"category","volume":50,"price":25.00,"unit":"unit","note":"optional context"}
-]${isFirstStream ? `
+  {"name":"item name","category":"category","volume":50,"price":25.00,"cost_price":18.00,"unit":"unit","note":"optional context"}
+]
+(cost_price = direct cost per unit for gross margin calculation. Omit if genuinely unknown — do not guess.)${isFirstStream ? `
 [FORECAST_YEARS]
 5
 [FORECAST_START]
