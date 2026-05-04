@@ -6037,15 +6037,6 @@ function ApplyPageInner() {
 
                       {/* Navigation */}
                       <div className="flex gap-3 pt-1">
-                        <button
-                          onClick={() => {
-                            if (streamIdx > 0) { setStreamIdx(streamIdx - 1); }
-                            else { go(1); }
-                          }}
-                          className="flex items-center gap-2 px-5 py-3.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
-                          <ArrowLeft className="w-4 h-4" /> Back
-                        </button>
-
                         {streamIdx < streams.length - 1 ? (
                           <button onClick={() => { setStreamIdx(streamIdx + 1); }}
                             className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-semibold text-white shadow-lg shadow-cyan-500/20"
