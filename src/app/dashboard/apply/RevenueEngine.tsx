@@ -6,7 +6,7 @@ import React, {
 import { Mic, MicOff, Send as SendIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
-  saveStreams, saveStreamItems, updateStream,
+  saveStreams, updateStream,
   saveIntakeConversation, saveDriverConversation,
   updateApplicationFlags,
 } from "@/lib/supabase/revenue";
@@ -1464,18 +1464,13 @@ export function RevenueEngine({
 
   /* ── save items to DB ── */
   async function dbSaveItems(streamId: string, streamName: string, items: ParsedItem[]): Promise<void> {
-    /* Always notify page first — forecast needs items even if DB save fails */
+    /* Delegate entirely to the page's onItemsSaved callback.
+       The page holds real DB UUIDs (synced via onStreamsDetected before the
+       driver chat starts) and creates a fresh Supabase client, so it is the
+       single authoritative writer.  Calling saveStreamItems here AND in the
+       callback caused a race: both DELETE simultaneously before either INSERT
+       landed, producing duplicate rows (4 items instead of 2). */
     onItemsSavedRef.current(streamId, streamName, items);
-    const _userId = userIdRef.current;
-    if (!_userId) return;
-    try {
-      await saveStreamItems(sb, streamId, _userId, items.map(it => ({
-        name: it.name, category: it.category, volume: it.volume,
-        price: it.price, costPrice: it.costPrice, unit: it.unit, note: it.note,
-      })));
-    } catch (e) {
-      console.error("saveStreamItems error", e);
-    }
   }
 
   /* ── stream phase advancement ── */
