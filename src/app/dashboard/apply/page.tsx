@@ -12,6 +12,7 @@ import {
   saveActuals, saveOperatingExpenses, saveBusinessProfile,
   type DbApplication, type ApplicationState, type DbBusinessProfile,
 } from "@/lib/supabase/revenue";
+import { RevenueEngine } from "./RevenueEngine";
 import { CURRENCIES, getCurrencySymbol, makeFmt } from "@/lib/utils/currency";
 import {
   ArrowLeft, ArrowRight, Plus, Trash2, Edit3, Check, X,
@@ -5036,104 +5037,54 @@ function ApplyPageInner() {
             )}
 
             {/* ══ STEP 0: Unified Revenue Collection Journey ══ */}
-            {situationDone && step === 0 && (() => {
-              const situationMeta = SITUATIONS.find(s => s.id === situation);
-
-              return (
-                <motion.div key="journey" custom={dir} variants={slide} initial="enter" animate="center" exit="exit"
-                  className="flex gap-5" style={{ height: "calc(100vh - 180px)", maxHeight: 680 }}>
-
-                  {/* ── Left: Unified chat ── */}
-                  <div className="flex flex-col flex-1 min-w-0">
-                    <div className="mb-3">
-                      <button
-                        onClick={() => { setSituationDone(false); setNameDone(true); setStreams([]); }}
-                        className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600 transition-colors mb-2.5">
-                        <ArrowLeft className="w-3 h-3" /> Change context
-                      </button>
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0"
-                          style={{ background: "linear-gradient(135deg,#042f3d,#0e7490)" }}>
-                          <BrainCircuit className="w-5 h-5 text-white" />
-                        </div>
-                        <div>
-                          <p className="text-sm font-bold text-slate-900">Revenue Collection</p>
-                          <p className="text-xs text-slate-400">
-                            Streams · {situation === "existing" ? "Actuals · " : ""}Drivers — one conversation
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-
-                    <UnifiedJourneyChat
-                      situation={situation}
-                      appId={appId}
-                      userId={userId}
-                      onStreamsDetected={(detected) => setStreams(detected)}
-                      onActualsSaved={handleActualsSaved}
-                      onItemsCollected={handleUnifiedItemsCollected}
-                      onForecastYears={setForecastHorizon}
-                      onForecastStart={(y, m) => { setForecastStartYear(y); setForecastStartMonth(m); }}
-                      onComplete={() => go(3)}
-                    />
-                  </div>
-
-                  {/* ── Right: Live intelligence rail ── */}
-                  <div className="hidden lg:flex flex-col w-56 flex-shrink-0 gap-3 overflow-y-auto pb-2">
-                    <div className="bg-white rounded-2xl border border-slate-200 shadow-[0_2px_16px_rgba(0,0,0,0.07)] p-4">
-                      <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">Revenue Intelligence</p>
-                      <div className="space-y-3.5">
-                        <div>
-                          <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Business Context</p>
-                          <p className="text-xs font-semibold" style={{ color: situationMeta?.color ?? "#64748b" }}>
-                            {situationMeta?.title ?? "—"}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Revenue Streams</p>
-                          <p className="text-xs font-bold text-slate-800">
-                            {streams.length === 0 ? "Discovering…" : `${streams.length} identified`}
-                          </p>
-                        </div>
-                        {streams.length > 0 && (
-                          <div className="space-y-1.5">
-                            {streams.map(s => {
-                              const M = STREAM_META[s.type]; const SI = M.icon;
-                              const done = s.driverDone || s.items.length > 0;
-                              return (
-                                <div key={s.id} className="flex items-center gap-2">
-                                  <div className="w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0"
-                                    style={{ background: M.bg }}>
-                                    <SI className="w-2.5 h-2.5" style={{ color: M.color }} />
-                                  </div>
-                                  <span className="text-[11px] text-slate-600 truncate flex-1">{s.name}</span>
-                                  {done && <CheckCircle2 className="w-3 h-3 text-emerald-500 flex-shrink-0" />}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                        {streams.length > 0 && (
-                          <div>
-                            <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-1">Progress</p>
-                            <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                              <motion.div className="h-full rounded-full"
-                                style={{ background: "linear-gradient(90deg,#059669,#10b981)" }}
-                                animate={{ width: `${Math.round(streams.filter(s => s.driverDone || s.items.length > 0).length / streams.length * 100)}%` }}
-                                transition={{ duration: 0.6 }} />
-                            </div>
-                            <p className="text-[10px] text-slate-400 mt-1">
-                              {streams.filter(s => s.driverDone || s.items.length > 0).length}/{streams.length} streams configured
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                </motion.div>
-              );
-            })()}
+            {situationDone && step === 0 && (
+              <motion.div key="revenue-engine" custom={dir} variants={slide} initial="enter" animate="center" exit="exit">
+                <div className="mb-3 flex items-center gap-2">
+                  <button
+                    onClick={() => { setSituationDone(false); setNameDone(true); setStreams([]); }}
+                    className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-slate-600 transition-colors">
+                    <ArrowLeft className="w-3 h-3" /> Change context
+                  </button>
+                </div>
+                <RevenueEngine
+                  situation={situation}
+                  appId={appId}
+                  userId={userId}
+                  onStreamsDetected={(detected) => {
+                    // Map WorkingStream[] to the page's RevenueStream[]
+                    setStreams(detected.map(ws => ({
+                      id: ws.id, name: ws.name, type: ws.type, confidence: ws.confidence,
+                      items: ws.items.map(it => ({
+                        id: it.id, name: it.name, category: it.category,
+                        volume: it.volume, price: it.price, costPrice: it.costPrice,
+                        unit: it.unit, note: it.note,
+                      })),
+                      scenario: "base" as const,
+                      volumeGrowthPct: ws.growth?.monthlyVolumePct ?? 0,
+                      annualPriceGrowthPct: ws.growth?.annualPricePct ?? 0,
+                      monthlyGrowthPct: (ws.growth?.monthlyVolumePct ?? 0) + (ws.growth?.annualPricePct ?? 0) / 12,
+                      subNewPerMonth: 0, subChurnPct: 0, rentalOccupancyPct: 100,
+                      seasonalityPreset: (ws.seasonality?.preset ?? "none") as SeasonalityPreset,
+                      seasonalityMultipliers: ws.seasonality?.multipliers ?? Array(12).fill(1),
+                      expansionMonth: null, expansionMultiplier: 1.5,
+                      overrides: [], driverMessages: [], driverDone: ws.status === "completed",
+                    })));
+                  }}
+                  onItemsSaved={(streamId, items) => {
+                    setStreams(prev => prev.map(s =>
+                      s.id === streamId ? { ...s, items: items.map(it => ({
+                        id: it.id, name: it.name, category: it.category,
+                        volume: it.volume, price: it.price, costPrice: it.costPrice,
+                        unit: it.unit, note: it.note,
+                      })), driverDone: true } : s
+                    ));
+                  }}
+                  onForecastYears={setForecastHorizon}
+                  onForecastStart={(y, m) => { setForecastStartYear(y); setForecastStartMonth(m); }}
+                  onComplete={() => go(3)}
+                />
+              </motion.div>
+            )}
 
 
             {/* ══ STEP 1: Structure Review ══ */}
