@@ -5062,6 +5062,7 @@ function ApplyPageInner() {
                   situation={situation}
                   appId={appId}
                   userId={userId}
+                  currency={currency}
                   onStreamsDetected={(detected) => {
                     // Map WorkingStream[] to the page's RevenueStream[]
                     setStreams(detected.map(ws => ({

@@ -10,6 +10,7 @@ import {
   saveIntakeConversation, saveDriverConversation,
   updateApplicationFlags,
 } from "@/lib/supabase/revenue";
+import { makeFmt } from "@/lib/utils/currency";
 
 /* ─────────────────────────────────── types ── */
 
@@ -88,6 +89,7 @@ interface RevenueEngineProps {
   situation:         string | null;
   appId:             string | null;
   userId:            string | null;
+  currency:          string | null;
   onStreamsDetected:  (streams: WorkingStream[]) => void;
   onItemsSaved:      (streamId: string, items: ParsedItem[]) => void;
   onForecastYears:   (y: number) => void;
@@ -453,14 +455,13 @@ function PasteDataCard({ streamName, onExtract }: PasteDataCardProps) {
 /* ── ConfirmItemsCard ── */
 interface ConfirmItemsCardProps {
   items: ParsedItem[];
+  currency: string | null;
   onConfirm: () => void;
   onEdit: () => void;
 }
-function ConfirmItemsCard({ items, onConfirm, onEdit }: ConfirmItemsCardProps) {
+function ConfirmItemsCard({ items, currency, onConfirm, onEdit }: ConfirmItemsCardProps) {
   const totalMonthlyRev = items.reduce((s, it) => s + it.volume * it.price, 0);
-  const fmt = (n: number) => n >= 1_000_000
-    ? `${(n / 1_000_000).toFixed(1)}M`
-    : n >= 1_000 ? `${(n / 1_000).toFixed(0)}K` : n.toFixed(0);
+  const fmt = makeFmt(currency);
   const hasCost = items.some(it => it.costPrice != null);
 
   return (
@@ -749,10 +750,12 @@ function ConfirmSeasonalityCard({ profile, onConfirm, onEdit }: ConfirmSeasonali
 /* ── StreamSummaryCard ── */
 interface StreamSummaryCardProps {
   stream: WorkingStream;
+  currency: string | null;
   onConfirm: () => void;
   onEdit: () => void;
 }
-function StreamSummaryCard({ stream, onConfirm, onEdit }: StreamSummaryCardProps) {
+function StreamSummaryCard({ stream, currency, onConfirm, onEdit }: StreamSummaryCardProps) {
+  const fmt = makeFmt(currency);
   const monthlyRevenue = stream.items.reduce((sum, it) => sum + it.volume * it.price, 0);
   const seasonPreset = stream.seasonality ? SEASONALITY_PRESETS[stream.seasonality.preset]?.label : "None";
   return (
@@ -765,7 +768,7 @@ function StreamSummaryCard({ stream, onConfirm, onEdit }: StreamSummaryCardProps
         <dt className="text-slate-500">Items</dt>
         <dd className="text-slate-800 font-medium">{stream.items.length}</dd>
         <dt className="text-slate-500">Monthly Revenue</dt>
-        <dd className="text-slate-800 font-medium">${monthlyRevenue.toLocaleString()}</dd>
+        <dd className="text-slate-800 font-medium">{fmt(monthlyRevenue)}</dd>
         <dt className="text-slate-500">Growth</dt>
         <dd className="text-slate-800 font-medium capitalize">{stream.growth?.trend ?? "—"}</dd>
         <dt className="text-slate-500">Seasonality</dt>
@@ -782,10 +785,12 @@ function StreamSummaryCard({ stream, onConfirm, onEdit }: StreamSummaryCardProps
 /* ── ConfirmModelCard ── */
 interface ConfirmModelCardProps {
   streams: WorkingStream[];
+  currency: string | null;
   onConfirm: () => void;
   onEdit: () => void;
 }
-function ConfirmModelCard({ streams, onConfirm, onEdit }: ConfirmModelCardProps) {
+function ConfirmModelCard({ streams, currency, onConfirm, onEdit }: ConfirmModelCardProps) {
+  const fmt = makeFmt(currency);
   const totalRevenue = streams.reduce(
     (sum, s) => sum + s.items.reduce((ss, it) => ss + it.volume * it.price, 0), 0
   );
@@ -811,7 +816,7 @@ function ConfirmModelCard({ streams, onConfirm, onEdit }: ConfirmModelCardProps)
                 <tr key={s.id} className="border-b border-slate-50 hover:bg-slate-50">
                   <td className="py-1.5 px-2 font-medium">{s.name}</td>
                   <td className="py-1.5 px-2">{s.items.length}</td>
-                  <td className="py-1.5 px-2">${rev.toLocaleString()}</td>
+                  <td className="py-1.5 px-2">{fmt(rev)}</td>
                 </tr>
               );
             })}
@@ -819,7 +824,7 @@ function ConfirmModelCard({ streams, onConfirm, onEdit }: ConfirmModelCardProps)
           <tfoot>
             <tr className="border-t-2 border-slate-200">
               <td className="py-2 px-2 font-semibold text-slate-700" colSpan={2}>Total Monthly Revenue</td>
-              <td className="py-2 px-2 font-semibold text-slate-800">${totalRevenue.toLocaleString()}</td>
+              <td className="py-2 px-2 font-semibold text-slate-800">{fmt(totalRevenue)}</td>
             </tr>
           </tfoot>
         </table>
@@ -888,9 +893,10 @@ function ProgressPanel({ streams }: ProgressPanelProps) {
 /* ─────────────────────────────────── feed renderer ── */
 interface FeedRendererProps {
   feed: FeedItem[];
+  currency: string | null;
   onCardAction: (id: number, action: string, payload?: unknown) => void;
 }
-function FeedRenderer({ feed, onCardAction }: FeedRendererProps) {
+function FeedRenderer({ feed, currency, onCardAction }: FeedRendererProps) {
   return (
     <>
       {feed.map(item => {
@@ -976,6 +982,7 @@ function FeedRenderer({ feed, onCardAction }: FeedRendererProps) {
               <div key={item.id} className="max-w-[90%]">
                 <ConfirmItemsCard
                   items={card.items}
+                  currency={currency}
                   onConfirm={() => onCardAction(item.id, "confirm_items")}
                   onEdit={() => onCardAction(item.id, "edit_items")}
                 />
@@ -1026,6 +1033,7 @@ function FeedRenderer({ feed, onCardAction }: FeedRendererProps) {
               <div key={item.id} className="max-w-[90%]">
                 <StreamSummaryCard
                   stream={card.stream}
+                  currency={currency}
                   onConfirm={() => onCardAction(item.id, "confirm_stream_summary")}
                   onEdit={() => onCardAction(item.id, "edit_stream_summary")}
                 />
@@ -1037,6 +1045,7 @@ function FeedRenderer({ feed, onCardAction }: FeedRendererProps) {
               <div key={item.id} className="max-w-[90%]">
                 <ConfirmModelCard
                   streams={card.streams}
+                  currency={currency}
                   onConfirm={() => onCardAction(item.id, "confirm_model")}
                   onEdit={() => onCardAction(item.id, "edit_model")}
                 />
@@ -1056,6 +1065,7 @@ export function RevenueEngine({
   situation,
   appId,
   userId,
+  currency,
   onStreamsDetected,
   onItemsSaved,
   onForecastYears,
@@ -1782,7 +1792,7 @@ export function RevenueEngine({
           className="flex-1 overflow-y-auto space-y-3 pb-4 pr-1"
           style={{ height: "calc(100vh - 280px)" }}
         >
-          <FeedRenderer feed={feed} onCardAction={handleCardAction} />
+          <FeedRenderer feed={feed} currency={currency} onCardAction={handleCardAction} />
           <div ref={feedEndRef} />
         </div>
 
