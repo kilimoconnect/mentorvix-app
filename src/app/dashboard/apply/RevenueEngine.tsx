@@ -11,6 +11,10 @@ import {
   updateApplicationFlags,
 } from "@/lib/supabase/revenue";
 import { makeFmt } from "@/lib/utils/currency";
+import {
+  BarChart, Bar, Cell, XAxis, YAxis, ReferenceLine,
+  ResponsiveContainer, Tooltip,
+} from "recharts";
 
 /* ─────────────────────────────────── types ── */
 
@@ -31,7 +35,7 @@ interface GrowthProfile {
   annualPricePct: number;
 }
 
-type SeasonalityPreset = "none" | "q4_peak" | "q1_slow" | "summer_peak" | "end_of_year" | "construction";
+type SeasonalityPreset = "none" | "q4_peak" | "q1_slow" | "summer_peak" | "end_of_year" | "construction" | "custom";
 
 interface SeasonalityProfile {
   variation: "none" | "mild" | "strong";
@@ -106,7 +110,10 @@ const SEASONALITY_PRESETS: Record<SeasonalityPreset, { label: string; multiplier
   summer_peak:  { label: "Summer Peak",             multipliers: [0.80,0.82,0.90,1.00,1.08,1.20,1.28,1.22,1.10,0.98,0.90,0.72] },
   end_of_year:  { label: "Year-End Corporate",      multipliers: [0.88,0.88,0.92,0.95,1.00,1.00,0.92,0.95,1.05,1.10,1.18,1.17] },
   construction: { label: "Dry Season Peak",         multipliers: [1.15,1.18,1.20,1.10,1.05,0.85,0.80,0.82,0.90,1.00,1.05,0.90] },
+  custom:       { label: "Custom",                  multipliers: Array(12).fill(1) },
 };
+
+const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
 const STREAM_META: Record<StreamType, { label: string; color: string; bg: string }> = {
   product:      { label: "Product Sales",            color: "#0e7490", bg: "#f0f9ff" },
@@ -647,6 +654,33 @@ function ConfirmGrowthCard({ profile, onConfirm, onAdjust }: ConfirmGrowthCardPr
   );
 }
 
+/* ── SeasonalityChart ── shared between SeasonalityCard and ConfirmSeasonalityCard */
+function SeasonalityChart({ multipliers, height = 110 }: { multipliers: number[]; height?: number }) {
+  const data = multipliers.map((v, i) => ({
+    month: MONTHS_SHORT[i],
+    pct:   Math.round(v * 100),
+  }));
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={data} margin={{ top: 4, right: 4, left: -28, bottom: 0 }} barCategoryGap="20%">
+        <XAxis dataKey="month" tick={{ fontSize: 9, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+        <YAxis domain={[0, 200]} tick={{ fontSize: 9, fill: "#cbd5e1" }} tickFormatter={v => `${v}%`} axisLine={false} tickLine={false} tickCount={5} />
+        <Tooltip
+          formatter={(v) => [`${v}%`, "Index"]}
+          contentStyle={{ fontSize: 11, borderRadius: 8, border: "1px solid #e2e8f0", padding: "4px 10px" }}
+          cursor={{ fill: "#f1f5f9" }}
+        />
+        <ReferenceLine y={100} stroke="#e2e8f0" strokeDasharray="4 2" />
+        <Bar dataKey="pct" radius={[3, 3, 0, 0]}>
+          {data.map((entry, i) => (
+            <Cell key={i} fill={entry.pct >= 100 ? "#0891b2" : "#f59e0b"} />
+          ))}
+        </Bar>
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
 /* ── SeasonalityCard ── */
 interface SeasonalityCardProps {
   streamType: StreamType;
@@ -654,7 +688,9 @@ interface SeasonalityCardProps {
 }
 function SeasonalityCard({ onConfirm }: SeasonalityCardProps) {
   const [variation, setVariation] = useState<SeasonalityProfile["variation"] | null>(null);
-  const [preset, setPreset] = useState<SeasonalityPreset>("none");
+  const [preset, setPreset]       = useState<SeasonalityPreset>("q4_peak");
+  /* custom multipliers — 12 months, default 1.0 */
+  const [custom, setCustom] = useState<number[]>(Array(12).fill(1));
 
   const presetOptions: Array<{ value: SeasonalityPreset; label: string }> = [
     { value: "q4_peak",      label: "Q4 Retail Peak" },
@@ -662,61 +698,126 @@ function SeasonalityCard({ onConfirm }: SeasonalityCardProps) {
     { value: "summer_peak",  label: "Summer Peak" },
     { value: "end_of_year",  label: "Year-End Corporate" },
     { value: "construction", label: "Dry Season Peak" },
+    { value: "custom",       label: "Custom ✏️" },
   ];
+
+  const activeMultipliers = preset === "custom" ? custom : SEASONALITY_PRESETS[preset].multipliers;
 
   function handleConfirm() {
     if (!variation) return;
     const effectivePreset: SeasonalityPreset = variation === "none" ? "none" : preset;
-    onConfirm({
-      variation,
-      preset: effectivePreset,
-      multipliers: SEASONALITY_PRESETS[effectivePreset].multipliers,
-    });
+    const mults = effectivePreset === "none" ? Array(12).fill(1)
+      : effectivePreset === "custom" ? custom
+      : SEASONALITY_PRESETS[effectivePreset].multipliers;
+    onConfirm({ variation, preset: effectivePreset, multipliers: mults });
+  }
+
+  function setMonthMultiplier(monthIdx: number, value: number) {
+    setCustom(prev => prev.map((v, i) => i === monthIdx ? value : v));
   }
 
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-      <p className="text-slate-700 text-sm font-medium mb-4">Do sales for this stream vary by month?</p>
-      <div className="flex flex-wrap gap-3 mb-5">
-        {([
-          { v: "none" as const,   label: "No variation" },
-          { v: "mild" as const,   label: "Mild variation" },
-          { v: "strong" as const, label: "Strong variation" },
-        ]).map(opt => (
-          <button
-            key={opt.v}
-            onClick={() => setVariation(opt.v)}
-            className={`px-4 py-2 border rounded-full text-sm font-medium transition-colors ${
-              variation === opt.v
-                ? "bg-cyan-600 border-cyan-600 text-white"
-                : "border-cyan-300 text-cyan-700 hover:bg-cyan-50"
-            }`}
-          >
-            {opt.label}
-          </button>
-        ))}
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="px-5 pt-4 pb-3 border-b border-slate-100">
+        <p className="text-sm font-semibold text-slate-800">Does revenue vary by month?</p>
+        <p className="text-xs text-slate-400 mt-0.5">Select the variation level, then pick or draw your pattern.</p>
       </div>
-      {variation && variation !== "none" && (
-        <div className="mb-4">
-          <label className="block text-xs text-slate-500 mb-1">Seasonality pattern</label>
-          <select
-            value={preset}
-            onChange={e => setPreset(e.target.value as SeasonalityPreset)}
-            className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-300"
-          >
-            {presetOptions.map(o => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
+
+      <div className="px-5 py-4 space-y-4">
+        {/* Variation level */}
+        <div className="flex flex-wrap gap-2">
+          {([
+            { v: "none"   as const, label: "No variation" },
+            { v: "mild"   as const, label: "Mild" },
+            { v: "strong" as const, label: "Strong" },
+          ]).map(opt => (
+            <button
+              key={opt.v}
+              onClick={() => setVariation(opt.v)}
+              className={`px-4 py-1.5 border rounded-full text-sm font-medium transition-all ${
+                variation === opt.v
+                  ? "bg-cyan-600 border-cyan-600 text-white shadow-sm"
+                  : "border-slate-200 text-slate-600 hover:border-cyan-300 hover:bg-cyan-50"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
-      )}
+
+        {/* Pattern selector — only when variation is not none */}
+        {variation && variation !== "none" && (
+          <>
+            <div>
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Seasonality Pattern</p>
+              <div className="grid grid-cols-3 gap-2">
+                {presetOptions.map(o => (
+                  <button
+                    key={o.value}
+                    onClick={() => setPreset(o.value)}
+                    className={`px-3 py-2 rounded-xl text-xs font-semibold border transition-all text-left ${
+                      preset === o.value
+                        ? "bg-cyan-600 border-cyan-600 text-white"
+                        : "border-slate-200 text-slate-600 hover:border-cyan-300 hover:bg-slate-50"
+                    }`}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Chart preview */}
+            <div className="bg-slate-50 rounded-xl px-3 pt-3 pb-1 border border-slate-100">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                  {preset === "custom" ? "Your Custom Pattern" : SEASONALITY_PRESETS[preset].label}
+                </p>
+                <p className="text-[10px] text-slate-400">Blue = above baseline · Amber = below</p>
+              </div>
+              <SeasonalityChart multipliers={activeMultipliers} height={100} />
+            </div>
+
+            {/* Custom month sliders */}
+            {preset === "custom" && (
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+                  Set each month — 1.0 = baseline, 1.5 = 50% higher, 0.7 = 30% lower
+                </p>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+                  {MONTHS_SHORT.map((month, i) => (
+                    <div key={month} className="flex items-center gap-2">
+                      <span className="text-[11px] font-semibold text-slate-500 w-7 flex-shrink-0">{month}</span>
+                      <input
+                        type="range"
+                        min={0.3} max={2.5} step={0.05}
+                        value={custom[i]}
+                        onChange={e => setMonthMultiplier(i, parseFloat(e.target.value))}
+                        className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer"
+                        style={{ accentColor: custom[i] >= 1 ? "#0891b2" : "#f59e0b" }}
+                      />
+                      <span className="text-[11px] font-mono font-bold w-8 text-right flex-shrink-0"
+                        style={{ color: custom[i] >= 1 ? "#0891b2" : "#f59e0b" }}>
+                        {custom[i].toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
       {variation && (
-        <button
-          onClick={handleConfirm}
-          className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors"
-        >
-          Confirm Seasonality
-        </button>
+        <div className="px-5 pb-4">
+          <button
+            onClick={handleConfirm}
+            className="w-full py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-bold hover:bg-emerald-700 transition-colors shadow-sm shadow-emerald-200"
+          >
+            Confirm Seasonality →
+          </button>
+        </div>
       )}
     </div>
   );
@@ -729,19 +830,57 @@ interface ConfirmSeasonalityCardProps {
   onEdit: () => void;
 }
 function ConfirmSeasonalityCard({ profile, onConfirm, onEdit }: ConfirmSeasonalityCardProps) {
-  const presetLabel = SEASONALITY_PRESETS[profile.preset]?.label ?? profile.preset;
+  const presetLabel = profile.preset === "custom" ? "Custom Pattern"
+    : (SEASONALITY_PRESETS[profile.preset]?.label ?? profile.preset);
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 border-l-4 border-l-red-400">
-      <h3 className="font-semibold text-slate-800 mb-4">Seasonality Profile</h3>
-      <dl className="grid grid-cols-2 gap-y-2 text-sm mb-5">
-        <dt className="text-slate-500">Variation</dt>
-        <dd className="text-slate-800 font-medium capitalize">{profile.variation}</dd>
-        <dt className="text-slate-500">Pattern</dt>
-        <dd className="text-slate-800 font-medium">{presetLabel}</dd>
-      </dl>
-      <div className="flex gap-3">
-        <button onClick={onConfirm} className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors">Confirm</button>
-        <button onClick={onEdit} className="px-4 py-2 border border-slate-300 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors">Edit</button>
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden">
+      {/* header */}
+      <div className="bg-gradient-to-r from-violet-50 to-indigo-50 border-b border-violet-100 px-5 py-3.5 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-violet-500" />
+          <p className="text-sm font-bold text-slate-800">Seasonality Confirmed</p>
+        </div>
+        <span className="text-[11px] font-semibold text-violet-700 bg-white border border-violet-100 px-2 py-0.5 rounded-full capitalize">
+          {presetLabel}
+        </span>
+      </div>
+
+      {/* chart */}
+      {profile.variation !== "none" && (
+        <div className="px-5 pt-4 pb-2 bg-slate-50">
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Monthly Revenue Index</p>
+          <SeasonalityChart multipliers={profile.multipliers} height={90} />
+          <p className="text-[10px] text-slate-400 text-right mt-1">Blue = above baseline · Amber = below baseline</p>
+        </div>
+      )}
+
+      {/* summary row */}
+      <div className="px-5 py-3 flex items-center gap-4 text-xs text-slate-600 border-t border-slate-100">
+        <span className="capitalize"><span className="font-semibold">Variation:</span> {profile.variation}</span>
+        {profile.variation !== "none" && (() => {
+          const max = Math.max(...profile.multipliers);
+          const min = Math.min(...profile.multipliers);
+          const peakMonth = MONTHS_SHORT[profile.multipliers.indexOf(max)];
+          const slowMonth = MONTHS_SHORT[profile.multipliers.indexOf(min)];
+          return (
+            <>
+              <span><span className="font-semibold text-cyan-700">Peak:</span> {peakMonth} ({Math.round(max*100)}%)</span>
+              <span><span className="font-semibold text-amber-600">Slow:</span> {slowMonth} ({Math.round(min*100)}%)</span>
+            </>
+          );
+        })()}
+      </div>
+
+      {/* footer */}
+      <div className="px-5 pb-4 flex gap-2.5 border-t border-slate-100 pt-3">
+        <button onClick={onEdit}
+          className="px-4 py-2 rounded-xl text-sm font-semibold border border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50 transition-all">
+          Edit
+        </button>
+        <button onClick={onConfirm}
+          className="flex-1 py-2 rounded-xl text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm shadow-emerald-200 transition-all">
+          Confirm Seasonality →
+        </button>
       </div>
     </div>
   );
