@@ -221,17 +221,21 @@ export default function DriversPage() {
 
   /* ── Per-item seasonality picker state ─────────────────────── */
   const [openItemPicker, setOpenItemPicker] = useState<string | null>(null);
+  // Pending (un-confirmed) preset selection inside the modal
+  const [pendingPreset,  setPendingPreset]  = useState<SeasonalityPreset | null>(null);
   // Custom seasonality editor
   const [customMults, setCustomMults] = useState<number[]>(Array(12).fill(1) as number[]);
   const [customMode,  setCustomMode]  = useState<string | null>(null);
 
   const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-  const openPicker = (itemId: string, existingMults?: number[] | null) => {
+  const openPicker = (itemId: string, existingMults?: number[] | null, currentPreset?: string | null) => {
     if (openItemPicker === itemId) { setOpenItemPicker(null); setCustomMode(null); return; }
     setOpenItemPicker(itemId);
     setCustomMode(null);
     setCustomMults(existingMults ?? Array(12).fill(1) as number[]);
+    // Initialise pending to the item's current preset so the chart preview shows immediately
+    setPendingPreset((currentPreset ?? null) as SeasonalityPreset | null);
   };
 
   const closePicker = () => { setOpenItemPicker(null); setCustomMode(null); };
@@ -252,9 +256,15 @@ export default function DriversPage() {
         : s
     ));
     try {
+      // Only persist seasonality_multipliers for custom patterns — named presets derive
+      // their monthly factors from SEASONALITY_PRESETS at runtime, so storing null here
+      // would fail silently if migration 009 hasn't been applied yet.
       const patch: Record<string, unknown> = { seasonality_preset: preset };
-      if (multipliers !== undefined) patch.seasonality_multipliers = multipliers;
-      await sb.from("stream_items").update(patch).eq("id", itemId);
+      if (preset === "custom" && multipliers != null) {
+        patch.seasonality_multipliers = multipliers;
+      }
+      const { error } = await sb.from("stream_items").update(patch).eq("id", itemId);
+      if (error) console.error("[drivers] updateItemSeason DB error:", error);
     } catch (e) {
       console.error("[drivers] updateItemSeason:", e);
     }
@@ -622,7 +632,7 @@ export default function DriversPage() {
                                   <td className="py-2 pr-3 text-right tabular-nums">{fmt(it.price)}</td>
                                   <td className="py-2 pr-3">
                                     <button
-                                      onClick={() => openPicker(it.id, it.seasonality_multipliers as number[] | null)}
+                                      onClick={() => openPicker(it.id, it.seasonality_multipliers as number[] | null, it.seasonality_preset)}
                                       className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-colors whitespace-nowrap ${
                                         it.seasonality_preset && it.seasonality_preset !== "none"
                                           ? "text-cyan-700 bg-cyan-50 border-cyan-200 hover:bg-cyan-100"
@@ -693,14 +703,28 @@ export default function DriversPage() {
         }
         if (!activeItem) return null;
 
-        const previewMults =
+        // Resolve preview multipliers from the PENDING selection (not the saved item preset)
+        const activeStream = streams.find((s) => s.id === activeStreamId);
+        const previewMults: number[] | null =
           customMode === openItemPicker
             ? customMults
-            : activeItem.seasonality_preset === "custom"
+            : pendingPreset === "custom"
               ? ((activeItem.seasonality_multipliers as number[] | null) ?? Array(12).fill(1) as number[])
-              : activeItem.seasonality_preset && activeItem.seasonality_preset !== "none"
-                ? SEASONALITY_PRESETS[activeItem.seasonality_preset as SeasonalityPreset]?.months
-                : null;
+              : pendingPreset === null
+                ? (activeStream?.seasonalityMultipliers ?? null)       // stream default pattern
+                : pendingPreset === "none"
+                  ? Array(12).fill(1) as number[]
+                  : SEASONALITY_PRESETS[pendingPreset]?.months ?? null;
+
+        // Label for the right-panel header
+        const pendingLabel =
+          pendingPreset === null   ? "Stream default"
+          : pendingPreset === "custom" ? "Custom"
+          : SEASONALITY_PRESETS[pendingPreset]?.label ?? pendingPreset;
+
+        // Whether the pending selection differs from what's currently saved
+        const currentSaved = (activeItem.seasonality_preset ?? null) as SeasonalityPreset | null;
+        const hasChange = pendingPreset !== currentSaved;
 
         return (
           <>
@@ -715,7 +739,7 @@ export default function DriversPage() {
                 <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
                   <div>
                     <p className="text-sm font-bold text-slate-800">{activeItem.name}</p>
-                    <p className="text-xs text-slate-400 mt-0.5">Choose a seasonality pattern for this item</p>
+                    <p className="text-xs text-slate-400 mt-0.5">Select a pattern then click <strong>Done</strong> to apply</p>
                   </div>
                   <button
                     onClick={closePicker}
@@ -729,69 +753,99 @@ export default function DriversPage() {
 
                     {/* Left: scrollable preset list */}
                     <div className="w-64 shrink-0 border-r border-slate-100 overflow-y-auto py-3 px-3 space-y-0.5">
+
+                      {/* Stream default */}
                       <button
-                        onClick={() => { updateItemSeason(openItemPicker, activeStreamId, null, null); closePicker(); }}
-                        className={`w-full text-left px-3 py-2.5 rounded-xl transition-colors ${
-                          !activeItem.seasonality_preset || activeItem.seasonality_preset === "none"
-                            ? "bg-cyan-50 text-cyan-700 font-semibold" : "text-slate-600 hover:bg-slate-50"
+                        onClick={() => setPendingPreset(null)}
+                        className={`w-full text-left px-3 py-2.5 rounded-xl transition-colors flex items-start justify-between gap-2 ${
+                          pendingPreset === null ? "bg-cyan-50 text-cyan-700" : "text-slate-600 hover:bg-slate-50"
                         }`}
                       >
-                        <span className="text-sm">Stream default</span>
-                        <span className="block text-xs text-slate-400 font-normal mt-0.5">Inherit the stream&apos;s pattern</span>
+                        <span>
+                          <span className="text-sm font-medium block">Stream default</span>
+                          <span className="text-xs text-slate-400 font-normal">Inherit the stream&apos;s pattern</span>
+                        </span>
+                        {pendingPreset === null && <Check size={14} className="text-cyan-600 mt-0.5 shrink-0" />}
                       </button>
 
+                      {/* Named presets */}
                       {(Object.keys(SEASONALITY_PRESETS) as SeasonalityPreset[])
                         .filter((p) => p !== "custom")
                         .map((p) => (
                           <button key={p}
-                            onClick={() => { updateItemSeason(openItemPicker, activeStreamId, p, null); closePicker(); }}
-                            className={`w-full text-left px-3 py-2.5 rounded-xl transition-colors ${
-                              activeItem!.seasonality_preset === p ? "bg-cyan-50 text-cyan-700 font-semibold" : "text-slate-600 hover:bg-slate-50"
+                            onClick={() => setPendingPreset(p)}
+                            className={`w-full text-left px-3 py-2.5 rounded-xl transition-colors flex items-start justify-between gap-2 ${
+                              pendingPreset === p ? "bg-cyan-50 text-cyan-700" : "text-slate-600 hover:bg-slate-50"
                             }`}
                           >
-                            <span className="text-sm">{SEASONALITY_PRESETS[p].label}</span>
-                            <span className="block text-xs text-slate-400 font-normal mt-0.5">{SEASONALITY_PRESETS[p].desc}</span>
+                            <span>
+                              <span className="text-sm font-medium block">{SEASONALITY_PRESETS[p].label}</span>
+                              <span className="text-xs text-slate-400 font-normal leading-tight">{SEASONALITY_PRESETS[p].desc}</span>
+                            </span>
+                            {pendingPreset === p && <Check size={14} className="text-cyan-600 mt-0.5 shrink-0" />}
                           </button>
                         ))}
 
+                      {/* Custom */}
                       <button
                         onClick={() => {
-                          setCustomMults((activeItem!.seasonality_multipliers as number[] | null) ?? Array(12).fill(1) as number[]);
+                          setCustomMults((activeItem.seasonality_multipliers as number[] | null) ?? Array(12).fill(1) as number[]);
                           setCustomMode(openItemPicker);
                         }}
-                        className={`w-full text-left px-3 py-2.5 rounded-xl transition-colors ${
-                          activeItem.seasonality_preset === "custom" ? "bg-cyan-50 text-cyan-700 font-semibold" : "text-slate-600 hover:bg-slate-50"
+                        className={`w-full text-left px-3 py-2.5 rounded-xl transition-colors flex items-start justify-between gap-2 ${
+                          pendingPreset === "custom" ? "bg-cyan-50 text-cyan-700" : "text-slate-600 hover:bg-slate-50"
                         }`}
                       >
-                        <span className="text-sm">Custom ✦</span>
-                        <span className="block text-xs text-slate-400 font-normal mt-0.5">Set your own monthly multipliers</span>
+                        <span>
+                          <span className="text-sm font-medium block">Custom ✦</span>
+                          <span className="text-xs text-slate-400 font-normal">Set your own monthly multipliers</span>
+                        </span>
+                        {pendingPreset === "custom" && <Check size={14} className="text-cyan-600 mt-0.5 shrink-0" />}
                       </button>
                     </div>
 
-                    {/* Right: chart preview */}
-                    <div className="flex-1 flex flex-col justify-center px-8 py-6">
-                      {previewMults ? (
-                        <>
-                          <p className="text-sm font-semibold text-slate-700 mb-1">
-                            {activeItem.seasonality_preset && activeItem.seasonality_preset !== "none"
-                              ? SEASONALITY_PRESETS[activeItem.seasonality_preset as SeasonalityPreset]?.label ?? activeItem.seasonality_preset
-                              : "Current pattern"}
-                          </p>
-                          {activeItem.seasonality_preset && activeItem.seasonality_preset !== "none" && (
-                            <p className="text-xs text-slate-400 mb-4">
-                              {SEASONALITY_PRESETS[activeItem.seasonality_preset as SeasonalityPreset]?.desc}
-                            </p>
-                          )}
-                          <SeasonalityBarChart multipliers={previewMults} height={180} />
-                        </>
-                      ) : (
-                        <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
-                          <div className="w-14 h-14 rounded-2xl bg-slate-50 flex items-center justify-center">
-                            <BarChart3 size={24} className="text-slate-200" />
+                    {/* Right: chart preview + Done button */}
+                    <div className="flex-1 flex flex-col px-8 py-6 min-h-0">
+                      <div className="flex-1 flex flex-col justify-center">
+                        {previewMults ? (
+                          <>
+                            <p className="text-sm font-semibold text-slate-700 mb-1">{pendingLabel}</p>
+                            {pendingPreset && pendingPreset !== "none" && pendingPreset !== "custom" && (
+                              <p className="text-xs text-slate-400 mb-4">{SEASONALITY_PRESETS[pendingPreset]?.desc}</p>
+                            )}
+                            {pendingPreset === null && (
+                              <p className="text-xs text-slate-400 mb-4">Using the stream&apos;s seasonality pattern</p>
+                            )}
+                            <SeasonalityBarChart multipliers={previewMults} height={180} />
+                          </>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
+                            <div className="w-14 h-14 rounded-2xl bg-slate-50 flex items-center justify-center">
+                              <BarChart3 size={24} className="text-slate-200" />
+                            </div>
+                            <p className="text-sm text-slate-400">Select a preset on the left to preview its pattern</p>
                           </div>
-                          <p className="text-sm text-slate-400">Select a preset on the left to preview its pattern</p>
-                        </div>
-                      )}
+                        )}
+                      </div>
+
+                      {/* Done / Cancel */}
+                      <div className="flex gap-3 pt-5 border-t border-slate-100 mt-5 shrink-0">
+                        <button
+                          onClick={closePicker}
+                          className="flex-1 text-sm font-medium py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
+                        >Cancel</button>
+                        <button
+                          onClick={() => {
+                            updateItemSeason(openItemPicker, activeStreamId, pendingPreset, null);
+                            closePicker();
+                          }}
+                          disabled={!hasChange}
+                          className="flex-1 text-sm font-semibold py-2.5 rounded-xl text-white transition-colors disabled:opacity-40"
+                          style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}
+                        >
+                          {hasChange ? "Done — Apply" : "No changes"}
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -822,7 +876,11 @@ export default function DriversPage() {
                         className="flex-1 text-sm font-medium py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
                       >← Back to presets</button>
                       <button
-                        onClick={() => { updateItemSeason(openItemPicker, activeStreamId, "custom", customMults); closePicker(); }}
+                        onClick={() => {
+                          updateItemSeason(openItemPicker, activeStreamId, "custom", customMults);
+                          setPendingPreset("custom");
+                          closePicker();
+                        }}
                         className="flex-1 text-sm font-semibold py-2.5 rounded-xl text-white transition-colors"
                         style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}
                       >Apply Custom Pattern</button>
