@@ -85,7 +85,8 @@ export interface DbStreamItem {
   cost_price: number | null;           // COGS per unit — NULL = unknown
   unit: string;
   note: string | null;
-  seasonality_preset: string | null;   // SeasonalityPreset key — NULL = inherit from stream
+  seasonality_preset: string | null;        // SeasonalityPreset key — NULL = inherit from stream
+  seasonality_multipliers: number[] | null; // 12-element array for "custom" preset; NULL otherwise
   position: number;
   created_at: string;
   updated_at: string;
@@ -463,7 +464,8 @@ export async function saveStreamItems(
     costPrice?: number | null;
     unit: string;
     note?: string;
-    seasonalityPreset?: string;
+    seasonalityPreset?: string | null;
+    seasonalityMultipliers?: number[] | null;
     position?: number;
   }>,
 ): Promise<DbStreamItem[]> {
@@ -492,8 +494,9 @@ export async function saveStreamItems(
       position:  it.position ?? i,
     };
     // Only include migration-gated columns when they have a real value
-    if (it.costPrice != null)        row.cost_price          = it.costPrice;
-    if (it.seasonalityPreset != null) row.seasonality_preset  = it.seasonalityPreset;
+    if (it.costPrice != null)              row.cost_price               = it.costPrice;
+    if (it.seasonalityPreset != null)      row.seasonality_preset       = it.seasonalityPreset;
+    if (it.seasonalityMultipliers != null) row.seasonality_multipliers  = it.seasonalityMultipliers;
     return row;
   });
 

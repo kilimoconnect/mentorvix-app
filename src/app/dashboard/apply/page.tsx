@@ -138,7 +138,7 @@ type SeasonalityPreset = "none" | "q4_peak" | "q1_slow" | "summer_peak" | "end_o
   | "custom";
 
 interface ChatMessage { role: "user" | "assistant"; content: string; }
-interface StreamItem  { id: string; name: string; category: string; volume: number; price: number; costPrice?: number; unit: string; note?: string; seasonalityPreset?: SeasonalityPreset; }
+interface StreamItem  { id: string; name: string; category: string; volume: number; price: number; costPrice?: number; unit: string; note?: string; seasonalityPreset?: SeasonalityPreset; seasonalityMultipliers?: number[]; }
 
 /** Per-category or per-item growth/seasonality/event override. null = inherit from stream. */
 interface GrowthOverride {
@@ -411,11 +411,14 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
         const catOvr  = ovrs.find((o) => o.scope === "category" && (o.targetId || "General") === normCat);
         const ovr = itemOvr ?? catOvr ?? null;
         // Item-level seasonality preset is highest priority (but "none" means flat, not "inherit")
+        // "custom" uses the item's own seasonalityMultipliers (persisted via DB migration 009)
         const itemSeasonMults: number[] | null =
           it.seasonalityPreset
             ? (it.seasonalityPreset === "none"
                 ? Array(12).fill(1) as number[]
-                : SEASONALITY_PRESETS[it.seasonalityPreset]?.months ?? null)
+                : it.seasonalityPreset === "custom"
+                  ? (it.seasonalityMultipliers ?? Array(12).fill(1) as number[])
+                  : SEASONALITY_PRESETS[it.seasonalityPreset]?.months ?? null)
             : null;
         return {
           volPct:      ovr?.volumeGrowthPct      ?? s.volumeGrowthPct      ?? 0,
@@ -1022,10 +1025,53 @@ function AdvancedGrowthModal({
       launchMonth: b.launch !== "" ? Math.max(0, parseInt(b.launch, 10) - 1) : null,
       sunsetMonth: b.sunset !== "" ? Math.max(0, parseInt(b.sunset, 10) - 1) : null,
     };
-    if (editingId) {
-      onUpdate({ ...stream, overrides: (stream.overrides ?? []).map((o) => (o.id === editingId ? ovr : o)) });
+
+    // ── Propagate seasonality directly onto affected items so it persists to DB ──
+    // Item seasonalityPreset (+ seasonalityMultipliers for "custom") is saved via
+    // saveStreamItems → stream_items.seasonality_preset / .seasonality_multipliers.
+    // Without this, overrides only live in memory and vanish before the forecast runs.
+    let updatedItems = stream.items;
+    if (season) {
+      const itemPreset   = season as SeasonalityPreset;
+      const itemMults    = season === "custom" ? [...b.customMults] : undefined;
+      if (ovr.scope === "item") {
+        updatedItems = stream.items.map((it) =>
+          it.id === ovr.targetId
+            ? { ...it, seasonalityPreset: itemPreset, ...(itemMults ? { seasonalityMultipliers: itemMults } : { seasonalityMultipliers: undefined }) }
+            : it
+        );
+      } else {
+        // category scope — apply to every item whose category matches
+        const normTarget = ovr.targetId || "General";
+        updatedItems = stream.items.map((it) =>
+          (it.category || "General") === normTarget
+            ? { ...it, seasonalityPreset: itemPreset, ...(itemMults ? { seasonalityMultipliers: itemMults } : { seasonalityMultipliers: undefined }) }
+            : it
+        );
+      }
     } else {
-      onUpdate({ ...stream, overrides: [...(stream.overrides ?? []), ovr] });
+      // Seasonality cleared — remove preset from affected items so they inherit stream default
+      if (ovr.scope === "item") {
+        updatedItems = stream.items.map((it) =>
+          it.id === ovr.targetId
+            ? { ...it, seasonalityPreset: undefined, seasonalityMultipliers: undefined }
+            : it
+        );
+      } else {
+        const normTarget = ovr.targetId || "General";
+        updatedItems = stream.items.map((it) =>
+          (it.category || "General") === normTarget
+            ? { ...it, seasonalityPreset: undefined, seasonalityMultipliers: undefined }
+            : it
+        );
+      }
+    }
+
+    const updatedStream = { ...stream, items: updatedItems };
+    if (editingId) {
+      onUpdate({ ...updatedStream, overrides: (stream.overrides ?? []).map((o) => (o.id === editingId ? ovr : o)) });
+    } else {
+      onUpdate({ ...updatedStream, overrides: [...(stream.overrides ?? []), ovr] });
     }
     setBuilder(emptyBuilder());
     setEditingId(null);
@@ -4488,10 +4534,11 @@ function ApplyPageInner() {
           category:          it.category ?? "General",
           volume:            Number(it.volume),
           price:             Number(it.price),
-          costPrice:         it.cost_price != null ? Number(it.cost_price) : undefined,
-          unit:              it.unit,
-          note:              it.note ?? undefined,
-          seasonalityPreset: (it.seasonality_preset as SeasonalityPreset | null) ?? undefined,
+          costPrice:              it.cost_price != null ? Number(it.cost_price) : undefined,
+          unit:                   it.unit,
+          note:                   it.note ?? undefined,
+          seasonalityPreset:      (it.seasonality_preset as SeasonalityPreset | null) ?? undefined,
+          seasonalityMultipliers: (it.seasonality_multipliers as number[] | null) ?? undefined,
         })),
         driverMessages: ((state.driverConversations.find((c) => c.stream_id === s.id)?.messages) ?? []) as ChatMessage[],
       }));
@@ -4774,10 +4821,13 @@ function ApplyPageInner() {
     try {
       const sb = createClient();
       await saveStreamItems(sb, streamId, userId, items.map((it, pos) => ({
-        name: it.name, category: it.category,
+        name: it.name, category: it.category ?? "General",
         volume: it.volume, price: it.price,
+        costPrice: it.costPrice ?? null,
         unit: it.unit, note: it.note ?? undefined,
-        seasonalityPreset: it.seasonalityPreset, position: pos,
+        seasonalityPreset:      it.seasonalityPreset ?? null,
+        seasonalityMultipliers: it.seasonalityMultipliers ?? null,
+        position: pos,
       })));
       await saveDriverConversation(sb, appId, userId, streamId, driverMessages, null, true);
       // Mark drivers_done if every stream now has items
@@ -4809,10 +4859,12 @@ function ApplyPageInner() {
     try {
       const sb = createClient();
       await saveStreamItems(sb, streamId, userId, items.map((it, pos) => ({
-        name: it.name, category: it.category,
+        name: it.name, category: it.category ?? "General",
         volume: it.volume, price: it.price, costPrice: it.costPrice,
         unit: it.unit, note: it.note ?? undefined,
-        seasonalityPreset: it.seasonalityPreset, position: pos,
+        seasonalityPreset:      it.seasonalityPreset ?? null,
+        seasonalityMultipliers: it.seasonalityMultipliers ?? null,
+        position: pos,
       })));
       if (msgs.length > 0)
         await saveDriverConversation(sb, appId, userId, streamId, msgs, null, true);
@@ -5345,10 +5397,11 @@ function ApplyPageInner() {
                     const realId = (streams.find(s => s.id === streamId) ?? streams.find(s => s.name === streamName))?.id;
                     if (realId && !realId.startsWith("local-") && appId && userId) {
                       const sbPage = createClient();
-                      saveStreamItems(sbPage, realId, userId, items.map(it => ({
+                      saveStreamItems(sbPage, realId, userId, items.map((it, pos) => ({
                         name: it.name, category: it.category ?? "General",
                         volume: it.volume, price: it.price,
                         costPrice: it.costPrice, unit: it.unit, note: it.note,
+                        position: pos,
                       }))).catch(e => console.error("[page] saveStreamItems:", e));
                     }
                   }}
@@ -6012,11 +6065,12 @@ function ApplyPageInner() {
                                   for (const s of resolvedStreams) {
                                     if (isDbId(s.id) && s.items.length > 0) {
                                       await saveStreamItems(sb, s.id, userId, s.items.map((it, pos) => ({
-                                        id: isDbId(it.id) ? it.id : undefined,
-                                        name: it.name, category: it.category ?? "",
+                                        name: it.name, category: it.category ?? "General",
                                         volume: it.volume, price: it.price,
                                         unit: it.unit ?? "", note: it.note ?? "",
-                                        seasonality_preset: it.seasonalityPreset ?? null,
+                                        costPrice: it.costPrice ?? null,
+                                        seasonalityPreset:      it.seasonalityPreset ?? null,
+                                        seasonalityMultipliers: it.seasonalityMultipliers ?? null,
                                         position: pos,
                                       })));
                                     }
@@ -6257,11 +6311,13 @@ function ApplyPageInner() {
 
                               if (local.items?.length) {
                                 await saveStreamItems(sb, db.id, userId, local.items.map((it, pos) => ({
-                                  name: it.name, category: it.category,
+                                  name: it.name, category: it.category ?? "General",
                                   volume: it.volume, price: it.price,
-                                  costPrice: it.costPrice,           // ← was missing
+                                  costPrice: it.costPrice,
                                   unit: it.unit, note: it.note,
-                                  seasonalityPreset: it.seasonalityPreset, position: pos,
+                                  seasonalityPreset:      it.seasonalityPreset ?? null,
+                                  seasonalityMultipliers: it.seasonalityMultipliers ?? null,
+                                  position: pos,
                                 })));
                               }
                             }
