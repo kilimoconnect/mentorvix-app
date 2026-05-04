@@ -98,26 +98,6 @@ interface StreamDriver {
   saveState:              "idle" | "saving" | "saved" | "error";
 }
 
-/* ── Mini seasonality bar chart (matches apply/page AI dialog style) ─── */
-function SeasonalityChart({ multipliers }: { multipliers: number[] }) {
-  const maxV = Math.max(...multipliers, 1);
-  return (
-    <div className="flex items-end gap-px" style={{ height: 40 }}>
-      {multipliers.map((v, i) => {
-        const barH = Math.max((v / maxV) * 100, 5);
-        return (
-          <div key={i} className="flex-1 flex flex-col justify-end" style={{ height: 40 }}
-            title={`${MONTHS_SHORT[i]}: ${v.toFixed(2)}×`}>
-            <div
-              className="w-full rounded-t-sm transition-all duration-300"
-              style={{ height: `${barH}%`, background: v >= 1 ? "#0e7490" : "#cbd5e1", opacity: 0.85 }}
-            />
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 /* ── Accordion wrapper ─────────────────────────────────────────── */
 function Accordion({
@@ -521,8 +501,9 @@ export default function DriversPage() {
 
                     {/* ── Seasonality ──────────────────────── */}
                     <div>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Seasonality</p>
-                      <div className="space-y-3">
+                      {/* Seasonality — label + dropdown inline, chart always visible */}
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-[10px] font-bold text-slate-600 uppercase tracking-wider">Seasonality</p>
                         <select
                           value={stream.seasonalityPreset}
                           onChange={(e) => {
@@ -535,34 +516,45 @@ export default function DriversPage() {
                               seasonalityMultipliers: mults,
                             });
                           }}
-                          className="w-full text-sm font-medium text-slate-700 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-cyan-300/40 focus:border-cyan-400 cursor-pointer appearance-none"
-                          style={{
-                            backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%236b7280' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E\")",
-                            backgroundRepeat: "no-repeat",
-                            backgroundPosition: "right 12px center",
-                            paddingRight: "36px",
-                          }}
+                          className="text-[10px] border border-slate-200 rounded-lg px-2 py-1 text-slate-700 focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/20"
                         >
                           {(Object.entries(SEASONALITY_PRESETS) as [SeasonalityPreset, { label: string }][]).map(([key, { label }]) => (
                             <option key={key} value={key}>{label}</option>
                           ))}
                         </select>
-
-                        {stream.seasonalityPreset !== "none" && (
-                          <>
-                            <p className="text-[11px] text-slate-400 italic">
-                              {SEASONALITY_PRESETS[stream.seasonalityPreset]?.desc}
-                              {stream.seasonalityPreset === "custom" && " — set by the Revenue Engine"}
-                            </p>
-                            <SeasonalityChart multipliers={stream.seasonalityMultipliers} />
-                            <div className="flex">
-                              {MONTHS_SHORT.map((m, i) => (
-                                <span key={i} className="text-[9px] text-slate-300 flex-1 text-center">{m}</span>
-                              ))}
-                            </div>
-                          </>
-                        )}
                       </div>
+
+                      {/* Bar preview — always visible */}
+                      <div>
+                        <div className="flex items-end gap-px" style={{ height: 32 }}>
+                          {stream.seasonalityMultipliers.map((v, mi) => {
+                            const maxV = Math.max(...stream.seasonalityMultipliers, 1);
+                            const barH = Math.max((v / maxV) * 100, 5);
+                            return (
+                              <div key={mi} className="flex-1 flex flex-col justify-end" style={{ height: 32 }}
+                                title={`${MONTHS_SHORT[mi]}: ${v.toFixed(2)}×`}>
+                                <div className="w-full rounded-t-sm transition-all duration-300"
+                                  style={{ height: `${barH}%`, background: v >= 1 ? "#0e7490" : "#cbd5e1", opacity: 0.85 }} />
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="flex gap-px mt-0.5">
+                          {MONTHS_SHORT.map((m, mi) => (
+                            <div key={mi} className="flex-1 text-center">
+                              <span className="text-[7px] text-slate-300 font-medium">{m}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Description */}
+                      {stream.seasonalityPreset !== "none" && (
+                        <p className="text-[11px] text-slate-400 italic mt-1">
+                          {SEASONALITY_PRESETS[stream.seasonalityPreset]?.desc}
+                          {stream.seasonalityPreset === "custom" && " — set by the Revenue Engine"}
+                        </p>
+                      )}
                     </div>
 
                     {/* ── Expansion Events accordion ────────── */}
