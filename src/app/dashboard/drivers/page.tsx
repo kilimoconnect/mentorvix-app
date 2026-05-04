@@ -18,6 +18,7 @@ import {
   ShoppingBag, Briefcase, Repeat, Landmark, TrendingUp as TrendUp,
   ScrollText, Zap, Sparkles,
 } from "lucide-react";
+import { SeasonalityBarChart } from "@/components/SeasonalityBarChart";
 
 /* ── Constants (kept in sync with apply/page.tsx) ─────────────── */
 type SeasonalityPreset =
@@ -69,7 +70,6 @@ const STREAM_ICONS: Record<string, React.ComponentType<{ size?: number; classNam
   rental: Landmark, marketplace: TrendUp, contract: ScrollText, custom: Zap,
 };
 
-const MONTHS_SHORT = ["J","F","M","A","M","J","J","A","S","O","N","D"];
 
 function effectiveMonthlyGrowth(volPct: number, pricePct: number): number {
   return parseFloat((volPct + pricePct / 12).toFixed(2));
@@ -525,28 +525,7 @@ export default function DriversPage() {
                       </div>
 
                       {/* Bar preview — always visible */}
-                      <div>
-                        <div className="flex items-end gap-px" style={{ height: 32 }}>
-                          {stream.seasonalityMultipliers.map((v, mi) => {
-                            const maxV = Math.max(...stream.seasonalityMultipliers, 1);
-                            const barH = Math.max((v / maxV) * 100, 5);
-                            return (
-                              <div key={mi} className="flex-1 flex flex-col justify-end" style={{ height: 32 }}
-                                title={`${MONTHS_SHORT[mi]}: ${v.toFixed(2)}×`}>
-                                <div className="w-full rounded-t-sm transition-all duration-300"
-                                  style={{ height: `${barH}%`, background: v >= 1 ? "#0e7490" : "#cbd5e1", opacity: 0.85 }} />
-                              </div>
-                            );
-                          })}
-                        </div>
-                        <div className="flex gap-px mt-0.5">
-                          {MONTHS_SHORT.map((m, mi) => (
-                            <div key={mi} className="flex-1 text-center">
-                              <span className="text-[7px] text-slate-300 font-medium">{m}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
+                      <SeasonalityBarChart multipliers={stream.seasonalityMultipliers} height={160} />
 
                       {/* Description */}
                       {stream.seasonalityPreset !== "none" && (
