@@ -976,7 +976,7 @@ function AdvancedGrowthModal({
   const switchScope = (scope: "category" | "item") => setB({ scope, targetId: "" });
 
   const targetOptions = b.scope === "category"
-    ? categories.map((c) => ({ id: c, name: c }))
+    ? categories.map((c) => ({ id: c, name: (!c || c === "General") ? stream.name : c }))
     : stream.items.map((i) => ({ id: i.id, name: i.name }));
 
   const usedTargets = new Set(
@@ -989,7 +989,7 @@ function AdvancedGrowthModal({
   const commitRule = () => {
     if (!b.targetId) return;
     const targetName = b.scope === "category"
-      ? b.targetId
+      ? ((!b.targetId || b.targetId === "General") ? stream.name : b.targetId)
       : stream.items.find((i) => i.id === b.targetId)?.name ?? b.targetId;
     const season = b.seasonality as SeasonalityPreset | "";
     const ovr: GrowthOverride = {
@@ -1077,7 +1077,9 @@ function AdvancedGrowthModal({
                   <span className="text-slate-500">Growth <span className="font-bold text-slate-800 ml-1">+{stream.volumeGrowthPct ?? 0}%<span className="font-normal text-slate-400">/mo</span></span></span>
                   <span className="text-slate-500">Price <span className="font-bold text-slate-800 ml-1">+{stream.annualPriceGrowthPct ?? 0}%<span className="font-normal text-slate-400">/yr</span></span></span>
                   <span className="text-slate-500">Seasonality <span className="font-bold text-slate-800 ml-1">{SEASONALITY_PRESETS[stream.seasonalityPreset ?? "none"]?.label ?? "None"}</span></span>
-                  <span className="text-slate-500">Scenario <span className="font-bold text-slate-800 ml-1 capitalize">{stream.scenario ?? "base"}</span></span>
+                  <span className="text-slate-500">Scenario <span className="font-bold text-slate-800 ml-1">
+                    {(() => { const sc = effectiveScenario(stream.volumeGrowthPct ?? 0, stream.annualPriceGrowthPct ?? 0); return sc === "custom" ? "Custom" : GROWTH_PRESETS[sc].label; })()}
+                  </span></span>
                 </div>
                 <p className="text-[9px] text-slate-400 mt-2">Applied to all items unless overridden below.</p>
               </div>
