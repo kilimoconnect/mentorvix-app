@@ -597,7 +597,7 @@ export default function DriversPage() {
                               {stream.items.map((it) => (
                                 <tr key={it.id} className="border-b border-slate-50 last:border-0">
                                   <td className="py-2 pr-3 font-medium text-slate-700 whitespace-nowrap">{it.name}</td>
-                                  <td className="py-2 pr-3 text-slate-400">{it.category || "General"}</td>
+                                  <td className="py-2 pr-3 text-slate-400">{(!it.category || it.category === "General") ? stream.name : it.category}</td>
                                   <td className="py-2 pr-3 text-right tabular-nums">{it.volume.toLocaleString()}</td>
                                   <td className="py-2 pr-3 text-right tabular-nums">{fmt(it.price)}</td>
                                   <td className="py-2 pr-3">
