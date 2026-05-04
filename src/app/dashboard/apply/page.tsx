@@ -195,14 +195,15 @@ const CONF_STYLE: Record<Confidence, string> = {
 };
 
 /* ═════════════════════════════ growth model ══ */
-type GrowthScenario = "conservative" | "base" | "growth";
+// "custom" = engine-extracted rates that don't match any preset — never overwritten by preset buttons
+type GrowthScenario = "conservative" | "base" | "growth" | "custom";
 
-const GROWTH_PRESETS: Record<GrowthScenario, {
+const GROWTH_PRESETS: Record<Exclude<GrowthScenario, "custom">, {
   label: string; desc: string; volPct: number; pricePct: number; confidence: Confidence;
 }> = {
-  conservative: { label: "Conservative", desc: "Modest growth, stable pricing", volPct: 0.5, pricePct: 2.0, confidence: "high"   },
-  base:         { label: "Base",         desc: "Flat — current run rate, no growth assumed", volPct: 0, pricePct: 0, confidence: "high"   },
-  growth:       { label: "Growth Case",  desc: "Strong performance scenario",  volPct: 3.0, pricePct: 8.0, confidence: "low"    },
+  conservative: { label: "Conservative", desc: "Modest growth, stable pricing",               volPct: 0.5, pricePct: 2.0, confidence: "high" },
+  base:         { label: "Base",         desc: "Flat — current run rate, no growth assumed",  volPct: 0,   pricePct: 0,   confidence: "high" },
+  growth:       { label: "Growth Case",  desc: "Strong performance scenario",                 volPct: 3.0, pricePct: 8.0, confidence: "low"  },
 };
 
 /* ═══════════════════════════════ seasonality presets ══ */
@@ -1067,7 +1068,7 @@ function AdvancedGrowthModal({
                 <div>
                   <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-2">Scenario</p>
                   <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg w-fit">
-                    {(["conservative", "base", "growth"] as GrowthScenario[]).map((sc) => (
+                    {(["conservative", "base", "growth"] as const).map((sc) => (
                       <button key={sc}
                         onClick={() => {
                           const p = GROWTH_PRESETS[sc];
@@ -1405,7 +1406,7 @@ function ItemTable({ stream, onUpdate, onApplySeasonalityToAll, fmt, currencySym
           </div>
           {/* Scenario selector */}
           <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
-            {(["conservative", "base", "growth"] as GrowthScenario[]).map((sc) => (
+            {(["conservative", "base", "growth"] as const).map((sc) => (
               <button key={sc} onClick={() => {
                 const p = GROWTH_PRESETS[sc];
                 onUpdate({ ...stream, scenario: sc, volumeGrowthPct: p.volPct, annualPriceGrowthPct: p.pricePct, monthlyGrowthPct: effectiveMonthlyGrowth(p.volPct, p.pricePct) });
@@ -1420,7 +1421,7 @@ function ItemTable({ stream, onUpdate, onApplySeasonalityToAll, fmt, currencySym
         </div>
 
         {/* Scenario description */}
-        <p className="text-[10px] text-slate-400 italic">{GROWTH_PRESETS[stream.scenario]?.desc ?? "Custom growth inputs"}</p>
+        <p className="text-[10px] text-slate-400 italic">{stream.scenario !== "custom" ? GROWTH_PRESETS[stream.scenario].desc : "Custom growth inputs"}</p>
 
         {/* Volume + Price inputs */}
         <div className="grid grid-cols-2 gap-3">
@@ -1469,8 +1470,8 @@ function ItemTable({ stream, onUpdate, onApplySeasonalityToAll, fmt, currencySym
             </span>
           </div>
           <div className="flex flex-col items-end gap-0.5">
-            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${CONF_STYLE[GROWTH_PRESETS[stream.scenario]?.confidence ?? "medium"]}`}>
-              {GROWTH_PRESETS[stream.scenario]?.confidence === "high" ? "High" : GROWTH_PRESETS[stream.scenario]?.confidence === "low" ? "Low" : "Medium"} Confidence
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${CONF_STYLE[stream.scenario !== "custom" ? GROWTH_PRESETS[stream.scenario].confidence : "medium"]}`}>
+              {stream.scenario !== "custom" && GROWTH_PRESETS[stream.scenario].confidence === "high" ? "High" : stream.scenario !== "custom" && GROWTH_PRESETS[stream.scenario].confidence === "low" ? "Low" : "Medium"} Confidence
             </span>
             <span className="text-[9px] text-slate-300">Forecast reliability</span>
           </div>
@@ -2919,10 +2920,19 @@ function ForecastView({
     : null;
 
   // Dominant scenario across all streams
+  // "custom" wins if ANY stream has engine-defined rates (not a named preset)
   const scenarioCounts = streams.reduce((acc, s) => { acc[s.scenario] = (acc[s.scenario] ?? 0) + 1; return acc; }, {} as Partial<Record<GrowthScenario, number>>);
-  const dominantScenario: GrowthScenario = (scenarioCounts["growth"] ?? 0) > 0 && (scenarioCounts["growth"] ?? 0) >= (scenarioCounts["base"] ?? 0) && (scenarioCounts["growth"] ?? 0) >= (scenarioCounts["conservative"] ?? 0) ? "growth" : (scenarioCounts["base"] ?? 0) > 0 && (scenarioCounts["base"] ?? 0) >= (scenarioCounts["conservative"] ?? 0) ? "base" : "conservative";
+  const dominantScenario: GrowthScenario =
+    (scenarioCounts["custom"] ?? 0) > 0
+      ? "custom"
+      : (scenarioCounts["growth"] ?? 0) > 0 && (scenarioCounts["growth"] ?? 0) >= (scenarioCounts["base"] ?? 0) && (scenarioCounts["growth"] ?? 0) >= (scenarioCounts["conservative"] ?? 0)
+        ? "growth"
+        : (scenarioCounts["base"] ?? 0) > 0 && (scenarioCounts["base"] ?? 0) >= (scenarioCounts["conservative"] ?? 0)
+          ? "base"
+          : "conservative";
 
-  const applyGlobalScenario = (sc: GrowthScenario) => {
+  // Applying a global preset removes "custom" status — rates are overwritten with preset values
+  const applyGlobalScenario = (sc: Exclude<GrowthScenario, "custom">) => {
     const p = GROWTH_PRESETS[sc];
     streams.forEach((s) => onUpdateStream({ ...s, scenario: sc, volumeGrowthPct: p.volPct, annualPriceGrowthPct: p.pricePct, monthlyGrowthPct: effectiveMonthlyGrowth(p.volPct, p.pricePct) }));
   };
@@ -2975,7 +2985,7 @@ function ForecastView({
         <div className="flex items-center gap-3 flex-wrap">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 shrink-0">Scenario</span>
           <div className="flex bg-slate-100 rounded-lg p-0.5 gap-0.5">
-            {(["conservative", "base", "growth"] as GrowthScenario[]).map((sc) => {
+            {(["conservative", "base", "growth"] as const).map((sc) => {
               const active = dominantScenario === sc;
               const cls = sc === "conservative"
                 ? (active ? "bg-amber-500 text-white shadow-sm" : "text-slate-400 hover:text-amber-600")
@@ -2990,8 +3000,11 @@ function ForecastView({
               );
             })}
           </div>
+          {dominantScenario === "custom" && (
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 shrink-0">Saved Drivers</span>
+          )}
           <span className="text-[10px] text-slate-400 italic hidden sm:block">
-            {GROWTH_PRESETS[dominantScenario].desc} · all streams
+            {dominantScenario === "custom" ? "Driver-defined rates · each stream" : `${GROWTH_PRESETS[dominantScenario].desc} · all streams`}
           </span>
         </div>
         {/* Row 2: Start date + horizon + view toggle */}
@@ -3082,12 +3095,12 @@ function ForecastView({
           { label: "Streams",    val: `${streams.length} stream${streams.length !== 1 ? "s" : ""}` },
           { label: "Items",      val: `${totalItems} item${totalItems !== 1 ? "s" : ""}` },
           { label: "Currency",   val: currency ?? "—" },
-          { label: "Scenario",   val: GROWTH_PRESETS[dominantScenario].label, highlight: dominantScenario === "growth" ? "emerald" : dominantScenario === "conservative" ? "amber" : "cyan" },
+          { label: "Scenario",   val: dominantScenario === "custom" ? "Saved Drivers" : GROWTH_PRESETS[dominantScenario].label, highlight: dominantScenario === "growth" ? "emerald" : dominantScenario === "conservative" ? "amber" : dominantScenario === "custom" ? "violet" : "cyan" },
           { label: "FY Year End", val: fyEndMonth >= 0 ? `${MONTH_NAMES_FULL[fyEndMonth]} · ${MONTH_NAMES[(fyEndMonth + 1) % 12]} – ${MONTH_NAMES[fyEndMonth]}` : "Rolling" },
         ].map(({ label, val, highlight }, i) => (
           <div key={label} className={`flex items-center gap-1.5 ${i > 0 ? "sm:border-l sm:border-slate-200 sm:pl-5" : ""}`}>
             <span className="text-[10px] text-slate-400 uppercase tracking-wider">{label}</span>
-            <span className={`text-[11px] font-bold ${highlight === "emerald" ? "text-emerald-600" : highlight === "amber" ? "text-amber-600" : highlight === "cyan" ? "text-cyan-700" : "text-slate-700"}`}>{val}</span>
+            <span className={`text-[11px] font-bold ${highlight === "emerald" ? "text-emerald-600" : highlight === "amber" ? "text-amber-600" : highlight === "cyan" ? "text-cyan-700" : highlight === "violet" ? "text-violet-700" : "text-slate-700"}`}>{val}</span>
           </div>
         ))}
       </div>
@@ -3395,8 +3408,10 @@ function ForecastView({
                   ? "bg-amber-100 text-amber-700"
                   : dominantScenario === "growth"
                     ? "bg-emerald-100 text-emerald-700"
-                    : "bg-cyan-100 text-cyan-700"
-              }`}>{GROWTH_PRESETS[dominantScenario].label} Case</span>
+                    : dominantScenario === "custom"
+                      ? "bg-violet-100 text-violet-700"
+                      : "bg-cyan-100 text-cyan-700"
+              }`}>{dominantScenario === "custom" ? "Saved Drivers" : `${GROWTH_PRESETS[dominantScenario].label} Case`}</span>
 
               <span className="text-[10px] text-slate-400 hidden sm:inline">|</span>
               <span className="text-[10px] text-slate-500">
@@ -3894,7 +3909,7 @@ function ForecastView({
                   ["Horizon",   `${horizonYears} year${horizonYears !== 1 ? "s" : ""} · ${totalMths} months`],
                   ["Streams",   `${streams.length} revenue stream${streams.length !== 1 ? "s" : ""}`],
                   ["Items",     `${totalItems} revenue item${totalItems !== 1 ? "s" : ""}`],
-                  ["Scenario",  GROWTH_PRESETS[dominantScenario].label],
+                  ["Scenario",  dominantScenario === "custom" ? "Saved Drivers" : GROWTH_PRESETS[dominantScenario].label],
                   ["Currency",  currency ?? "—"],
                 ] as [string, string][]).map(([label, val]) => (
                   <div key={label} className="flex items-center justify-between gap-4">
@@ -3948,7 +3963,7 @@ function ForecastView({
                     {streamTotals.map((s, si) => {
                       const pct    = grandTotal > 0 ? Math.round((s.projTotal / grandTotal) * 100) : 0;
                       const sCagr  = years.length > 1 && s.yr1 > 0 ? ((Math.pow(s.yrN / s.yr1, 1 / (years.length - 1)) - 1) * 100) : null;
-                      const scCol  = s.scenario === "growth" ? "#059669" : s.scenario === "conservative" ? "#b45309" : "#0e7490";
+                      const scCol  = s.scenario === "growth" ? "#059669" : s.scenario === "conservative" ? "#b45309" : s.scenario === "custom" ? "#7c3aed" : "#0e7490";
                       const hasSeasOvr = (s.overrides ?? []).some((o) => o.seasonalityPreset);
                       const hasItemSeas = s.items.some((it) => it.seasonalityPreset);
                       return (
@@ -3961,7 +3976,7 @@ function ForecastView({
                           </td>
                           <td className="px-3 py-2.5 text-right">
                             <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full" style={{ color: scCol, background: `${scCol}18` }}>
-                              {GROWTH_PRESETS[s.scenario].label}
+                              {s.scenario === "custom" ? "Custom" : GROWTH_PRESETS[s.scenario as Exclude<GrowthScenario, "custom">].label}
                             </span>
                           </td>
                           <td className="px-3 py-2.5 text-right text-xs tabular-nums text-slate-600">
@@ -4283,7 +4298,8 @@ function ApplyPageInner() {
         volumeGrowthPct:      s.volume_growth_pct       != null ? Number(s.volume_growth_pct)       : Number(s.monthly_growth_pct),
         annualPriceGrowthPct: s.annual_price_growth_pct != null ? Number(s.annual_price_growth_pct) : 0,
         monthlyGrowthPct:     Number(s.monthly_growth_pct),
-        // Scenario: only match a named preset if the effective rate is exact; custom rates → "base"
+        // Scenario: match a named preset only if exact; anything else → "custom"
+        // (custom = engine-extracted rates, shown as-is, never overwritten by preset buttons)
         scenario: (() => {
           const volPct   = s.volume_growth_pct       != null ? Number(s.volume_growth_pct)       : Number(s.monthly_growth_pct);
           const pricePct = s.annual_price_growth_pct != null ? Number(s.annual_price_growth_pct) : 0;
@@ -4293,7 +4309,7 @@ function ApplyPageInner() {
           if (r === 0)                          return "base"         as GrowthScenario;
           if (Math.abs(r - cRate) < 0.05)      return "conservative" as GrowthScenario;
           if (Math.abs(r - gRate) < 0.1)       return "growth"       as GrowthScenario;
-          return "base" as GrowthScenario; // custom rate — neutral label
+          return "custom" as GrowthScenario;   // engine-defined custom rate
         })(),
         subNewPerMonth:      Number(s.sub_new_per_month),
         subChurnPct:         Number(s.sub_churn_pct),
