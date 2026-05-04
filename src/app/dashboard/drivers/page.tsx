@@ -221,16 +221,44 @@ export default function DriversPage() {
 
   /* ── Per-item seasonality picker state ─────────────────────── */
   const [openItemPicker, setOpenItemPicker] = useState<string | null>(null);
+  // Fixed-position coords so the popover escapes overflow-x-auto clipping
+  const [pickerPos,     setPickerPos]     = useState<{ top: number; left: number } | null>(null);
+  // Custom seasonality editor
+  const [customMults,   setCustomMults]   = useState<number[]>(Array(12).fill(1) as number[]);
+  const [customMode,    setCustomMode]    = useState<string | null>(null); // item id in custom edit
 
-  /* ── Update one item's seasonality_preset in DB + state ─────── */
-  const updateItemSeason = useCallback(async (itemId: string, streamId: string, preset: SeasonalityPreset | null) => {
+  const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  const openPicker = (e: React.MouseEvent<HTMLButtonElement>, itemId: string, existingMults?: number[] | null) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    setPickerPos({ top: rect.bottom + 6, left: rect.left });
+    if (openItemPicker === itemId) { setOpenItemPicker(null); setCustomMode(null); return; }
+    setOpenItemPicker(itemId);
+    setCustomMode(null);
+    setCustomMults(existingMults ?? Array(12).fill(1) as number[]);
+  };
+
+  const closePicker = () => { setOpenItemPicker(null); setCustomMode(null); };
+
+  /* ── Update one item's seasonality in DB + state ─────────────── */
+  const updateItemSeason = useCallback(async (
+    itemId: string, streamId: string,
+    preset: SeasonalityPreset | null,
+    multipliers?: number[] | null,
+  ) => {
     setStreams((prev) => prev.map((s) =>
       s.id === streamId
-        ? { ...s, items: s.items.map((it) => it.id === itemId ? { ...it, seasonality_preset: preset } : it) }
+        ? { ...s, items: s.items.map((it) =>
+            it.id === itemId
+              ? { ...it, seasonality_preset: preset, seasonality_multipliers: multipliers ?? null }
+              : it
+          )}
         : s
     ));
     try {
-      await sb.from("stream_items").update({ seasonality_preset: preset }).eq("id", itemId);
+      const patch: Record<string, unknown> = { seasonality_preset: preset };
+      if (multipliers !== undefined) patch.seasonality_multipliers = multipliers;
+      await sb.from("stream_items").update(patch).eq("id", itemId);
     } catch (e) {
       console.error("[drivers] updateItemSeason:", e);
     }
@@ -597,69 +625,18 @@ export default function DriversPage() {
                                   <td className="py-2 pr-3 text-right tabular-nums">{it.volume.toLocaleString()}</td>
                                   <td className="py-2 pr-3 text-right tabular-nums">{fmt(it.price)}</td>
                                   <td className="py-2 pr-3">
-                                    <div className="relative">
-                                      <button
-                                        onClick={() => setOpenItemPicker(openItemPicker === it.id ? null : it.id)}
-                                        className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-colors whitespace-nowrap ${
-                                          it.seasonality_preset && it.seasonality_preset !== "none"
-                                            ? "text-cyan-700 bg-cyan-50 border-cyan-200 hover:bg-cyan-100"
-                                            : "text-slate-400 bg-slate-50 border-slate-200 hover:bg-slate-100"
-                                        }`}
-                                      >
-                                        {it.seasonality_preset && it.seasonality_preset !== "none"
-                                          ? SEASONALITY_PRESETS[it.seasonality_preset as SeasonalityPreset]?.label ?? it.seasonality_preset
-                                          : "Stream ↓"}
-                                      </button>
-
-                                      {openItemPicker === it.id && (
-                                        <div className="absolute z-50 top-full mt-1.5 left-0 bg-white border border-slate-200 rounded-2xl shadow-2xl p-3 w-56">
-                                          <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-2">Item Seasonality</p>
-
-                                          <div className="space-y-0.5 max-h-44 overflow-y-auto mb-2">
-                                            <button
-                                              onClick={() => { updateItemSeason(it.id, stream.id, null); setOpenItemPicker(null); }}
-                                              className={`w-full text-left text-[10px] px-2 py-1 rounded-lg transition-colors ${
-                                                !it.seasonality_preset || it.seasonality_preset === "none"
-                                                  ? "bg-cyan-50 text-cyan-700 font-semibold"
-                                                  : "text-slate-600 hover:bg-slate-50"
-                                              }`}
-                                            >
-                                              Stream default
-                                            </button>
-                                            {(Object.keys(SEASONALITY_PRESETS) as SeasonalityPreset[])
-                                              .filter((p) => p !== "custom")
-                                              .map((p) => (
-                                                <button
-                                                  key={p}
-                                                  onClick={() => { updateItemSeason(it.id, stream.id, p); setOpenItemPicker(null); }}
-                                                  className={`w-full text-left text-[10px] px-2 py-1 rounded-lg transition-colors ${
-                                                    it.seasonality_preset === p ? "bg-cyan-50 text-cyan-700 font-semibold" : "text-slate-600 hover:bg-slate-50"
-                                                  }`}
-                                                >
-                                                  {SEASONALITY_PRESETS[p].label}
-                                                  <span className="block text-[8px] text-slate-400 font-normal leading-tight">{SEASONALITY_PRESETS[p].desc}</span>
-                                                </button>
-                                              ))}
-                                          </div>
-
-                                          {it.seasonality_preset && it.seasonality_preset !== "none" && it.seasonality_preset !== "custom" && (
-                                            <div className="border-t border-slate-100 pt-2">
-                                              <SeasonalityBarChart
-                                                multipliers={SEASONALITY_PRESETS[it.seasonality_preset as SeasonalityPreset]?.months ?? Array(12).fill(1)}
-                                                height={52}
-                                              />
-                                            </div>
-                                          )}
-
-                                          <button
-                                            onClick={() => setOpenItemPicker(null)}
-                                            className="w-full mt-2 text-[9px] text-slate-400 hover:text-slate-600 transition-colors"
-                                          >
-                                            Close
-                                          </button>
-                                        </div>
-                                      )}
-                                    </div>
+                                    <button
+                                      onClick={(e) => openPicker(e, it.id, it.seasonality_multipliers as number[] | null)}
+                                      className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-colors whitespace-nowrap ${
+                                        it.seasonality_preset && it.seasonality_preset !== "none"
+                                          ? "text-cyan-700 bg-cyan-50 border-cyan-200 hover:bg-cyan-100"
+                                          : "text-slate-400 bg-slate-50 border-slate-200 hover:bg-slate-100"
+                                      }`}
+                                    >
+                                      {it.seasonality_preset && it.seasonality_preset !== "none"
+                                        ? (it.seasonality_preset === "custom" ? "Custom ✦" : SEASONALITY_PRESETS[it.seasonality_preset as SeasonalityPreset]?.label ?? it.seasonality_preset)
+                                        : "Stream ↓"}
+                                    </button>
                                   </td>
                                   <td className="py-2 text-right font-semibold text-slate-700 tabular-nums">{fmt(it.volume * it.price)}</td>
                                 </tr>
@@ -709,6 +686,135 @@ export default function DriversPage() {
           </div>
         )}
       </main>
+
+      {/* ── Item Seasonality Picker (fixed portal — escapes overflow containers) ── */}
+      {openItemPicker && pickerPos && (() => {
+        // Find the item being edited
+        let activeItem: DbStreamItem | undefined;
+        let activeStreamId = "";
+        for (const s of streams) {
+          const found = s.items.find((it) => it.id === openItemPicker);
+          if (found) { activeItem = found; activeStreamId = s.id; break; }
+        }
+        if (!activeItem) return null;
+
+        const previewMults =
+          customMode === openItemPicker ? customMults
+          : activeItem.seasonality_preset === "custom" ? ((activeItem.seasonality_multipliers as number[] | null) ?? Array(12).fill(1) as number[])
+          : activeItem.seasonality_preset && activeItem.seasonality_preset !== "none"
+            ? SEASONALITY_PRESETS[activeItem.seasonality_preset as SeasonalityPreset]?.months
+            : null;
+
+        return (
+          <>
+            {/* Backdrop */}
+            <div className="fixed inset-0 z-40" onClick={closePicker} />
+            {/* Popover */}
+            <div
+              className="fixed z-50 bg-white border border-slate-200 rounded-2xl shadow-2xl"
+              style={{ top: pickerPos.top, left: pickerPos.left, width: customMode === openItemPicker ? 340 : 228 }}
+            >
+              <div className="p-3">
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+                  {activeItem.name} — Seasonality
+                </p>
+
+                {customMode !== openItemPicker ? (
+                  <>
+                    {/* Preset list */}
+                    <div className="space-y-0.5 max-h-52 overflow-y-auto mb-2">
+                      <button
+                        onClick={() => { updateItemSeason(openItemPicker, activeStreamId, null, null); closePicker(); }}
+                        className={`w-full text-left text-[10px] px-2 py-1 rounded-lg transition-colors ${
+                          !activeItem.seasonality_preset || activeItem.seasonality_preset === "none"
+                            ? "bg-cyan-50 text-cyan-700 font-semibold" : "text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >Stream default</button>
+
+                      {(Object.keys(SEASONALITY_PRESETS) as SeasonalityPreset[])
+                        .filter((p) => p !== "custom")
+                        .map((p) => (
+                          <button key={p}
+                            onClick={() => { updateItemSeason(openItemPicker, activeStreamId, p, null); closePicker(); }}
+                            className={`w-full text-left text-[10px] px-2 py-1 rounded-lg transition-colors ${
+                              activeItem!.seasonality_preset === p ? "bg-cyan-50 text-cyan-700 font-semibold" : "text-slate-600 hover:bg-slate-50"
+                            }`}
+                          >
+                            {SEASONALITY_PRESETS[p].label}
+                            <span className="block text-[8px] text-slate-400 font-normal leading-tight">{SEASONALITY_PRESETS[p].desc}</span>
+                          </button>
+                        ))}
+
+                      {/* Custom option */}
+                      <button
+                        onClick={() => {
+                          setCustomMults((activeItem!.seasonality_multipliers as number[] | null) ?? Array(12).fill(1) as number[]);
+                          setCustomMode(openItemPicker);
+                        }}
+                        className={`w-full text-left text-[10px] px-2 py-1 rounded-lg transition-colors ${
+                          activeItem.seasonality_preset === "custom" ? "bg-cyan-50 text-cyan-700 font-semibold" : "text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        Custom ✦
+                        <span className="block text-[8px] text-slate-400 font-normal leading-tight">Set your own monthly pattern</span>
+                      </button>
+                    </div>
+
+                    {/* Chart preview */}
+                    {previewMults && (
+                      <div className="border-t border-slate-100 pt-2">
+                        <SeasonalityBarChart multipliers={previewMults} height={52} />
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  /* ── Custom editor ── */
+                  <>
+                    <p className="text-[9px] text-slate-400 mb-2">Set a multiplier for each month (1.0 = baseline)</p>
+                    <SeasonalityBarChart multipliers={customMults} height={60} />
+                    <div className="grid grid-cols-6 gap-1 mt-2">
+                      {MONTHS_SHORT.map((m, i) => (
+                        <div key={m} className="flex flex-col items-center gap-0.5">
+                          <input
+                            type="number" step="0.05" min="0.1" max="3"
+                            value={customMults[i].toFixed(2)}
+                            onChange={(e) => {
+                              const v = Math.max(0.1, Math.min(3, parseFloat(e.target.value) || 1));
+                              setCustomMults((prev) => { const n = [...prev]; n[i] = v; return n; });
+                            }}
+                            className="w-full text-center text-[9px] border border-slate-200 rounded px-0.5 py-0.5 outline-none focus:border-cyan-400"
+                          />
+                          <span className="text-[8px] text-slate-400">{m}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-2 mt-3">
+                      <button
+                        onClick={() => setCustomMode(null)}
+                        className="flex-1 text-[10px] py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
+                      >← Back</button>
+                      <button
+                        onClick={() => {
+                          updateItemSeason(openItemPicker, activeStreamId, "custom", customMults);
+                          closePicker();
+                        }}
+                        className="flex-1 text-[10px] py-1.5 rounded-lg text-white font-semibold transition-colors"
+                        style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}
+                      >Apply</button>
+                    </div>
+                  </>
+                )}
+
+                {customMode !== openItemPicker && (
+                  <button onClick={closePicker} className="w-full mt-2 text-[9px] text-slate-400 hover:text-slate-600 transition-colors">
+                    Close
+                  </button>
+                )}
+              </div>
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }
