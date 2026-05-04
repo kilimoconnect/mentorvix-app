@@ -4136,8 +4136,8 @@ function ApplyPageInner() {
   // Currency-aware number formatter used everywhere outside ForecastView/RevenueMix
   const fmt = makeFmt(currency);
 
-  // Progress bar position: 0=situation, 1=mapping, 2=confirm, 3=data, 4=forecast
-  const displayStep = !situationDone ? 0 : step + 1;
+  // Progress bar: 0=Setup, 1=Revenue Model (steps 0-2), 2=Forecast (step 3)
+  const displayStep = !situationDone ? 0 : step <= 2 ? 1 : 2;
 
   // Intake chat
   const [messages,  setMessages]  = useState<ChatMessage[]>([]);
@@ -4675,20 +4675,20 @@ function ApplyPageInner() {
         </Link>
         <div className="flex-1 flex items-center justify-center">
           <div className="flex items-center gap-2">
-            {["Context", "Revenue Mapping", "Structure Review", "Driver Inputs", "Forecast"].map((label, i) => (
+            {["Setup", "Revenue Model", "Forecast"].map((label, i) => (
               <div key={i} className="flex items-center gap-1.5">
                 <div className={`flex items-center gap-1.5 text-xs font-medium ${displayStep >= i ? "text-cyan-700" : "text-slate-400"}`}>
                   <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
                     style={{ background: displayStep >= i ? "#0e7490" : "#e2e8f0", color: displayStep >= i ? "#fff" : "#94a3b8" }}>
                     {displayStep > i
-                      ? <Check className="w-3 h-3" />               /* completed → tick   */
+                      ? <Check className="w-3 h-3" />
                       : displayStep === i
-                        ? <div className="w-2 h-2 rounded-full bg-white" />   /* current → dot */
-                        : <span>{i + 1}</span>}                     /* upcoming → number  */
+                        ? <div className="w-2 h-2 rounded-full bg-white" />
+                        : <span>{i + 1}</span>}
                   </div>
                   <span className="hidden sm:block">{label}</span>
                 </div>
-                {i < 4 && <div className={`w-4 sm:w-6 h-px ${displayStep > i ? "bg-cyan-600" : "bg-slate-200"}`} />}
+                {i < 2 && <div className={`w-6 sm:w-10 h-px ${displayStep > i ? "bg-cyan-600" : "bg-slate-200"}`} />}
               </div>
             ))}
           </div>
