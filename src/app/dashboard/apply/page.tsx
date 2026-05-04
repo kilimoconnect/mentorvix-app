@@ -767,14 +767,16 @@ function ItemRow({
         </div>
       </td>
       <td className="px-2 py-2 text-center">
-        {fromOverride ? (
-          /* Override rule is driving seasonality — show as a read-only badge */
+        {(fromOverride || effectiveSeason === "custom") ? (
+          /* Override rule is driving seasonality — show as a read-only badge.
+             "custom" can only be set via Advanced Override (not in the dropdown),
+             so always render a badge when it appears. */
           <span
             title="Set via Advanced Override rule"
             className="text-[9px] font-semibold text-cyan-700 bg-cyan-50 border border-cyan-200 px-1.5 py-0.5 rounded-full whitespace-nowrap cursor-default"
           >
             {effectiveSeason === "custom"
-              ? "Custom"
+              ? "Custom ✦"
               : SEASONALITY_PRESETS[effectiveSeason as SeasonalityPreset]?.label ?? effectiveSeason}
           </span>
         ) : (
