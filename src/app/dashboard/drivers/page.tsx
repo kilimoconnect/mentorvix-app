@@ -83,6 +83,20 @@ function classifyScenario(volPct: number, pricePct: number): GrowthScenario {
   return "custom";
 }
 
+/* ── GrowthOverride (mirrors apply/page.tsx — kept in sync) ───── */
+interface GrowthOverride {
+  id:                     string;
+  scope:                  "item" | "category";
+  targetId:               string;
+  targetName:             string;
+  volumeGrowthPct?:       number | null;
+  annualPriceGrowthPct?:  number | null;
+  seasonalityPreset?:     SeasonalityPreset | null;
+  seasonalityMultipliers?: number[] | null;
+  launchMonth?:           number | null;
+  sunsetMonth?:           number | null;
+}
+
 /* ── Local state per stream ───────────────────────────────────── */
 interface StreamDriver {
   id:                     string;
@@ -94,6 +108,7 @@ interface StreamDriver {
   annualPriceGrowthPct:   number;
   seasonalityPreset:      SeasonalityPreset;
   seasonalityMultipliers: number[];
+  overrides:              GrowthOverride[];   // mirrors revenue_streams.item_overrides
   items:                  DbStreamItem[];
   saveState:              "idle" | "saving" | "saved" | "error";
 }
@@ -177,6 +192,7 @@ export default function DriversPage() {
               (s.seasonality_multipliers as number[] | null)
               ?? SEASONALITY_PRESETS[preset]?.months
               ?? (Array(12).fill(1) as number[]),
+            overrides: (s.item_overrides as GrowthOverride[] | null) ?? [],
             items,
             saveState: "idle",
           };
@@ -240,34 +256,64 @@ export default function DriversPage() {
 
   const closePicker = () => { setOpenItemPicker(null); setCustomMode(null); };
 
-  /* ── Update one item's seasonality in DB + state ─────────────── */
+  /* ── Update one item's seasonality → stored in revenue_streams.item_overrides ── */
+  // Writing to item_overrides (migration 010) instead of stream_items.seasonality_preset
+  // (migration 004) ensures apply/page.tsx getItemParams always sees it — overrides have
+  // the highest priority in the resolution chain.
   const updateItemSeason = useCallback(async (
-    itemId: string, streamId: string,
+    itemId: string, itemName: string, streamId: string,
     preset: SeasonalityPreset | null,
     multipliers?: number[] | null,
   ) => {
-    setStreams((prev) => prev.map((s) =>
-      s.id === streamId
-        ? { ...s, items: s.items.map((it) =>
-            it.id === itemId
-              ? { ...it, seasonality_preset: preset, seasonality_multipliers: multipliers ?? null }
-              : it
-          )}
-        : s
-    ));
-    try {
-      // Only persist seasonality_multipliers for custom patterns — named presets derive
-      // their monthly factors from SEASONALITY_PRESETS at runtime, so storing null here
-      // would fail silently if migration 009 hasn't been applied yet.
-      const patch: Record<string, unknown> = { seasonality_preset: preset };
-      if (preset === "custom" && multipliers != null) {
-        patch.seasonality_multipliers = multipliers;
+    setStreams((prev) => prev.map((s) => {
+      if (s.id !== streamId) return s;
+
+      const existing = s.overrides.find(
+        (o) => o.scope === "item" && (o.targetId === itemId || o.targetName === itemName)
+      );
+
+      let newOverrides: GrowthOverride[];
+      if (preset === null) {
+        // "Stream default" — clear seasonality from override; remove override if it has
+        // no other fields worth keeping (growth rates, launch/sunset).
+        if (existing) {
+          const stripped = { ...existing, seasonalityPreset: null, seasonalityMultipliers: null };
+          const hasOther = stripped.volumeGrowthPct != null || stripped.annualPriceGrowthPct != null
+                        || stripped.launchMonth != null || stripped.sunsetMonth != null;
+          newOverrides = hasOther
+            ? s.overrides.map((o) => (o === existing ? stripped : o))
+            : s.overrides.filter((o) => o !== existing);
+        } else {
+          newOverrides = s.overrides;
+        }
+      } else if (existing) {
+        // Update seasonality on the existing override (preserves growth-rate fields)
+        newOverrides = s.overrides.map((o) =>
+          o === existing
+            ? { ...o, seasonalityPreset: preset, seasonalityMultipliers: preset === "custom" ? (multipliers ?? null) : null }
+            : o
+        );
+      } else {
+        // Create a new seasonality-only override
+        const newOvr: GrowthOverride = {
+          id:          crypto.randomUUID(),
+          scope:       "item",
+          targetId:    itemId,
+          targetName:  itemName,
+          seasonalityPreset:      preset,
+          seasonalityMultipliers: preset === "custom" ? (multipliers ?? null) : null,
+        };
+        newOverrides = [...s.overrides, newOvr];
       }
-      const { error } = await sb.from("stream_items").update(patch).eq("id", itemId);
-      if (error) console.error("[drivers] updateItemSeason DB error:", error);
-    } catch (e) {
-      console.error("[drivers] updateItemSeason:", e);
-    }
+
+      // Fire-and-forget DB persist (optimistic update done above in setStreams)
+      const dbVal = newOverrides.length > 0 ? (newOverrides as unknown[]) : null;
+      updateStreamDb(sb, streamId, { item_overrides: dbVal }).catch((e) =>
+        console.error("[drivers] updateItemSeason persist:", e)
+      );
+
+      return { ...s, overrides: newOverrides };
+    }));
   }, [sb]);
 
   /* ── Optimistic update + debounced save ───────────────────── */
@@ -624,7 +670,15 @@ export default function DriversPage() {
                               </tr>
                             </thead>
                             <tbody>
-                              {stream.items.map((it) => (
+                              {stream.items.map((it) => {
+                                // Read per-item seasonality from item_overrides (same source apply/page uses)
+                                const itemOvr = stream.overrides.find(
+                                  (o) => o.scope === "item" && (o.targetId === it.id || o.targetName === it.name)
+                                );
+                                const itemPreset = itemOvr?.seasonalityPreset ?? null;
+                                const itemMults  = itemOvr?.seasonalityMultipliers ?? null;
+                                const hasPreset  = !!itemPreset && itemPreset !== "none";
+                                return (
                                 <tr key={it.id} className="border-b border-slate-50 last:border-0">
                                   <td className="py-2 pr-3 font-medium text-slate-700 whitespace-nowrap">{it.name}</td>
                                   <td className="py-2 pr-3 text-slate-400">{(!it.category || it.category === "General") ? stream.name : it.category}</td>
@@ -632,21 +686,22 @@ export default function DriversPage() {
                                   <td className="py-2 pr-3 text-right tabular-nums">{fmt(it.price)}</td>
                                   <td className="py-2 pr-3">
                                     <button
-                                      onClick={() => openPicker(it.id, it.seasonality_multipliers as number[] | null, it.seasonality_preset)}
+                                      onClick={() => openPicker(it.id, itemMults, itemPreset)}
                                       className={`text-[10px] font-medium px-2 py-0.5 rounded-full border transition-colors whitespace-nowrap ${
-                                        it.seasonality_preset && it.seasonality_preset !== "none"
+                                        hasPreset
                                           ? "text-cyan-700 bg-cyan-50 border-cyan-200 hover:bg-cyan-100"
                                           : "text-slate-400 bg-slate-50 border-slate-200 hover:bg-slate-100"
                                       }`}
                                     >
-                                      {it.seasonality_preset && it.seasonality_preset !== "none"
-                                        ? (it.seasonality_preset === "custom" ? "Custom ✦" : SEASONALITY_PRESETS[it.seasonality_preset as SeasonalityPreset]?.label ?? it.seasonality_preset)
+                                      {hasPreset
+                                        ? (itemPreset === "custom" ? "Custom ✦" : SEASONALITY_PRESETS[itemPreset]?.label ?? itemPreset)
                                         : "Stream ↓"}
                                     </button>
                                   </td>
                                   <td className="py-2 text-right font-semibold text-slate-700 tabular-nums">{fmt(it.volume * it.price)}</td>
                                 </tr>
-                              ))}
+                                );
+                              })}
                             </tbody>
                             {stream.items.length > 1 && (
                               <tfoot>
@@ -703,27 +758,33 @@ export default function DriversPage() {
         }
         if (!activeItem) return null;
 
-        // Resolve preview multipliers from the PENDING selection (not the saved item preset)
+        // Resolve preview multipliers from the PENDING selection
         const activeStream = streams.find((s) => s.id === activeStreamId);
+        // Saved custom mults come from the item's current override (not stream_items column)
+        const savedItemOvr = activeStream?.overrides.find(
+          (o) => o.scope === "item" && (o.targetId === openItemPicker || o.targetName === activeItem.name)
+        );
+        const savedCustomMults = savedItemOvr?.seasonalityMultipliers ?? null;
+
         const previewMults: number[] | null =
           customMode === openItemPicker
             ? customMults
             : pendingPreset === "custom"
-              ? ((activeItem.seasonality_multipliers as number[] | null) ?? Array(12).fill(1) as number[])
+              ? (savedCustomMults ?? customMults)
               : pendingPreset === null
-                ? (activeStream?.seasonalityMultipliers ?? null)       // stream default pattern
+                ? (activeStream?.seasonalityMultipliers ?? null)
                 : pendingPreset === "none"
                   ? Array(12).fill(1) as number[]
                   : SEASONALITY_PRESETS[pendingPreset]?.months ?? null;
 
         // Label for the right-panel header
         const pendingLabel =
-          pendingPreset === null   ? "Stream default"
+          pendingPreset === null       ? "Stream default"
           : pendingPreset === "custom" ? "Custom"
           : SEASONALITY_PRESETS[pendingPreset]?.label ?? pendingPreset;
 
-        // Whether the pending selection differs from what's currently saved
-        const currentSaved = (activeItem.seasonality_preset ?? null) as SeasonalityPreset | null;
+        // Whether the pending selection differs from the saved override preset
+        const currentSaved = (savedItemOvr?.seasonalityPreset ?? null) as SeasonalityPreset | null;
         const hasChange = pendingPreset !== currentSaved;
 
         return (
@@ -836,7 +897,7 @@ export default function DriversPage() {
                         >Cancel</button>
                         <button
                           onClick={() => {
-                            updateItemSeason(openItemPicker, activeStreamId, pendingPreset, null);
+                            updateItemSeason(openItemPicker, activeItem.name, activeStreamId, pendingPreset, null);
                             closePicker();
                           }}
                           disabled={!hasChange}
@@ -877,7 +938,7 @@ export default function DriversPage() {
                       >← Back to presets</button>
                       <button
                         onClick={() => {
-                          updateItemSeason(openItemPicker, activeStreamId, "custom", customMults);
+                          updateItemSeason(openItemPicker, activeItem.name, activeStreamId, "custom", customMults);
                           setPendingPreset("custom");
                           closePicker();
                         }}
