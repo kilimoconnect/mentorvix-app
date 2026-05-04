@@ -70,6 +70,7 @@ export interface DbRevenueStream {
   seasonality_multipliers: number[] | null; // 12-element array; null = use preset defaults
   volume_growth_pct:       number | null;   // vol % per month (migration 008); null = old record
   annual_price_growth_pct: number | null;   // price % per year (migration 008); null = old record
+  item_overrides:          unknown[] | null; // serialised GrowthOverride[] (migration 010)
   created_at: string;
   updated_at: string;
 }
@@ -360,6 +361,7 @@ export async function saveStreams(
     rental_occupancy_pct: number;
     driver_done: boolean;
     position: number;
+    item_overrides?: unknown[] | null;
   }>,
 ): Promise<DbRevenueStream[]> {
   // ── 1. Delete streams no longer in the list ────────────────────────────────
@@ -401,6 +403,8 @@ export async function saveStreams(
     rental_occupancy_pct: s.rental_occupancy_pct,
     driver_done:          s.driver_done,
     position:             s.position ?? i,
+    // Only include migration-010 column when provided (avoids error on old DB schemas)
+    ...(s.item_overrides !== undefined ? { item_overrides: s.item_overrides } : {}),
   });
 
   const saved: DbRevenueStream[] = [];

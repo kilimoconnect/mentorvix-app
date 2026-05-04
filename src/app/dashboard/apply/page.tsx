@@ -4526,7 +4526,7 @@ function ApplyPageInner() {
           ?? Array(12).fill(1) as number[],
         expansionMonth:         null,
         expansionMultiplier:    1.5,
-        overrides:              [],
+        overrides:              (s.item_overrides as GrowthOverride[] | null) ?? [],
         driverDone:          s.driver_done,
         items: (state.itemsByStream[s.id] ?? []).map((it) => ({
           id:                it.id,
@@ -4783,8 +4783,22 @@ function ApplyPageInner() {
   useEffect(() => { sendIntakeRef.current = sendIntake; });
 
   const updateStream = useCallback((updated: RevenueStream) => {
-    setStreams((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-  }, []);
+    setStreams((prev) => {
+      const prev$ = prev.find((s) => s.id === updated.id);
+      // Immediately persist override rules to DB whenever they change
+      if (
+        prev$ && isDbId(updated.id) && appId && userId &&
+        JSON.stringify(prev$.overrides) !== JSON.stringify(updated.overrides)
+      ) {
+        const sb = createClient();
+        updateStreamDb(sb, updated.id, {
+          item_overrides: (updated.overrides ?? []).length > 0 ? (updated.overrides as unknown[]) : null,
+        } as Parameters<typeof updateStreamDb>[2]).catch(console.error);
+      }
+      return prev.map((s) => (s.id === updated.id ? updated : s));
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appId, userId]);
 
   // ── Called by ActualsChat when [ACTUALS_DETECTED] fires (existing biz only) ──
   const handleActualsSaved = useCallback(async (
@@ -5627,6 +5641,7 @@ function ApplyPageInner() {
                                     rental_occupancy_pct: s.rentalOccupancyPct,
                                     driver_done: s.driverDone,
                                     position: i,
+                                    item_overrides: (s.overrides ?? []).length > 0 ? s.overrides : null,
                                   }))
                                 );
                                 const idMap: Record<string, string> = {};
@@ -6048,6 +6063,7 @@ function ApplyPageInner() {
                                       rental_occupancy_pct: s.rentalOccupancyPct,
                                       driver_done: s.driverDone,
                                       position: i,
+                                      item_overrides: (s.overrides ?? []).length > 0 ? s.overrides : null,
                                     }))
                                   );
                                   // Resolve any temp IDs → real DB UUIDs
