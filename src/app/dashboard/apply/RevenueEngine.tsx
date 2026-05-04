@@ -3,6 +3,7 @@
 import {
   useState, useEffect, useRef, useCallback,
 } from "react";
+import { Mic, MicOff, Send as SendIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
   saveStreams, saveStreamItems,
@@ -200,47 +201,60 @@ interface ConfirmStreamsCardProps {
 }
 function ConfirmStreamsCard({ streams, onConfirm, onEdit }: ConfirmStreamsCardProps) {
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 border-l-4 border-l-red-400">
-      <div className="flex items-center gap-2 mb-4">
-        <span className="text-base">🔴</span>
-        <h3 className="font-semibold text-slate-800">Confirm Revenue Streams</h3>
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden">
+      {/* header */}
+      <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-5 py-4 flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-2 mb-0.5">
+            <div className="w-2 h-2 rounded-full bg-red-400" />
+            <p className="text-xs font-bold uppercase tracking-widest text-slate-300">Confirm Before Continuing</p>
+          </div>
+          <p className="text-white font-bold text-base">Revenue Streams Detected</p>
+        </div>
+        <span className="bg-white/10 text-white text-xs font-bold px-2.5 py-1 rounded-full">
+          {streams.length} stream{streams.length !== 1 ? "s" : ""}
+        </span>
       </div>
-      <ul className="space-y-2 mb-5">
+
+      {/* stream list */}
+      <div className="divide-y divide-slate-50">
         {streams.map((s, i) => {
           const meta = STREAM_META[s.type];
           return (
-            <li key={i} className="flex items-center gap-3">
-              <span
-                className="px-2 py-0.5 rounded text-xs font-medium"
-                style={{ color: meta.color, background: meta.bg }}
-              >
-                {meta.label}
-              </span>
-              <span className="text-slate-700 text-sm font-medium">{s.name}</span>
-              <span className={`ml-auto text-xs px-1.5 py-0.5 rounded font-medium ${
-                s.confidence === "high" ? "bg-emerald-50 text-emerald-700" :
-                s.confidence === "medium" ? "bg-amber-50 text-amber-700" :
-                "bg-rose-50 text-rose-700"
+            <div key={i} className="flex items-center gap-3 px-5 py-3.5 hover:bg-slate-50/60 transition-colors">
+              <div className="w-7 h-7 rounded-lg flex-shrink-0 flex items-center justify-center text-[11px] font-bold"
+                style={{ background: meta.bg, color: meta.color }}>
+                {i + 1}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-slate-800 truncate">{s.name}</p>
+                <p className="text-[11px] text-slate-400" style={{ color: meta.color }}>{meta.label}</p>
+              </div>
+              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide ${
+                s.confidence === "high"   ? "bg-emerald-50 text-emerald-600 border border-emerald-100" :
+                s.confidence === "medium" ? "bg-amber-50 text-amber-600 border border-amber-100" :
+                                            "bg-rose-50 text-rose-600 border border-rose-100"
               }`}>
-                {s.confidence}
+                {s.confidence} confidence
               </span>
-            </li>
+            </div>
           );
         })}
-      </ul>
-      <div className="flex gap-3">
-        <button
-          onClick={() => onConfirm(streams)}
-          className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors"
-        >
-          Confirm
-        </button>
-        <button
-          onClick={onEdit}
-          className="px-4 py-2 border border-slate-300 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"
-        >
-          Edit
-        </button>
+      </div>
+
+      {/* footer */}
+      <div className="px-5 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between">
+        <p className="text-[11px] text-slate-400">These streams will be set up one at a time</p>
+        <div className="flex gap-2.5">
+          <button onClick={onEdit}
+            className="px-4 py-2 rounded-xl text-sm font-semibold border border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-white transition-all">
+            Edit
+          </button>
+          <button onClick={() => onConfirm(streams)}
+            className="px-5 py-2 rounded-xl text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm shadow-emerald-200 transition-all flex items-center gap-2">
+            Confirm Streams →
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -278,22 +292,54 @@ function PasteDataCard({ streamName, onExtract }: PasteDataCardProps) {
   const [text, setText] = useState("");
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-      <h3 className="font-semibold text-slate-800 mb-1">Import Product Data</h3>
-      <p className="text-xs text-slate-500 mb-3">{streamName}</p>
+      <h3 className="font-semibold text-slate-800 mb-0.5">Import Product Data</h3>
+      <p className="text-xs text-slate-400 mb-4">{streamName}</p>
+
+      {/* Format guide */}
+      <div className="bg-slate-50 rounded-xl p-3 mb-4 text-xs text-slate-600">
+        <p className="font-semibold text-slate-700 mb-2">Enter one product per line with these details:</p>
+        <div className="grid grid-cols-3 gap-2 mb-3">
+          <div className="bg-white rounded-lg p-2 border border-slate-200">
+            <p className="font-bold text-cyan-700 text-[11px] uppercase tracking-wide mb-0.5">Product Name</p>
+            <p className="text-slate-500">What you sell<br/><em>e.g. Interior Paint 4L</em></p>
+          </div>
+          <div className="bg-white rounded-lg p-2 border border-slate-200">
+            <p className="font-bold text-cyan-700 text-[11px] uppercase tracking-wide mb-0.5">Monthly Volume</p>
+            <p className="text-slate-500">Units sold per month<br/><em>e.g. 120</em></p>
+          </div>
+          <div className="bg-white rounded-lg p-2 border border-slate-200">
+            <p className="font-bold text-cyan-700 text-[11px] uppercase tracking-wide mb-0.5">Selling Price</p>
+            <p className="text-slate-500">Price per unit<br/><em>e.g. 18,500</em></p>
+          </div>
+        </div>
+        <p className="text-slate-400 text-[11px]">Optional 4th column: <span className="font-medium text-slate-500">Cost Price</span> (what you pay per unit — for profit calculation)</p>
+      </div>
+
+      {/* Example */}
+      <div className="bg-slate-50 rounded-lg px-3 py-2 mb-3 font-mono text-[11px] text-slate-500 border border-dashed border-slate-200">
+        <p className="text-slate-400 mb-1">Example:</p>
+        <p>Interior White 4L &nbsp;| &nbsp;120 &nbsp;| &nbsp;18,500 &nbsp;| &nbsp;12,000</p>
+        <p>Exterior Gloss 4L &nbsp;| &nbsp;80 &nbsp;&nbsp;| &nbsp;22,000</p>
+        <p>Primer 5L &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;| &nbsp;45 &nbsp;&nbsp;| &nbsp;15,000 &nbsp;| &nbsp;9,500</p>
+      </div>
+
       <textarea
         value={text}
         onChange={e => setText(e.target.value)}
-        rows={6}
-        className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-300 resize-none"
-        placeholder="Paste your data here — Name | Monthly Volume | Price (one item per line)"
+        rows={7}
+        className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-300 resize-none font-mono"
+        placeholder={"Product Name | Monthly Volume | Selling Price | Cost Price (optional)\n...\n...\nEstimates are fine — round numbers work"}
       />
-      <button
-        onClick={() => { if (text.trim()) onExtract(text.trim()); }}
-        disabled={!text.trim()}
-        className="mt-3 px-4 py-2 bg-cyan-600 text-white rounded-lg text-sm font-medium hover:bg-cyan-700 transition-colors disabled:opacity-40"
-      >
-        Extract Data
-      </button>
+      <div className="flex items-center justify-between mt-3">
+        <p className="text-[11px] text-slate-400">You can also paste directly from Excel or Google Sheets</p>
+        <button
+          onClick={() => { if (text.trim()) onExtract(text.trim()); }}
+          disabled={!text.trim()}
+          className="px-4 py-2 bg-cyan-600 text-white rounded-lg text-sm font-semibold hover:bg-cyan-700 transition-colors disabled:opacity-40"
+        >
+          Extract Data →
+        </button>
+      </div>
     </div>
   );
 }
@@ -305,47 +351,80 @@ interface ConfirmItemsCardProps {
   onEdit: () => void;
 }
 function ConfirmItemsCard({ items, onConfirm, onEdit }: ConfirmItemsCardProps) {
+  const totalMonthlyRev = items.reduce((s, it) => s + it.volume * it.price, 0);
+  const fmt = (n: number) => n >= 1_000_000
+    ? `${(n / 1_000_000).toFixed(1)}M`
+    : n >= 1_000 ? `${(n / 1_000).toFixed(0)}K` : n.toFixed(0);
+  const hasCost = items.some(it => it.costPrice != null);
+
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 border-l-4 border-l-red-400">
-      <div className="flex items-center gap-2 mb-4">
-        <span>🔴</span>
-        <h3 className="font-semibold text-slate-800">Confirm Items ({items.length} detected)</h3>
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden">
+      {/* header */}
+      <div className="bg-gradient-to-r from-red-50 to-orange-50 border-b border-red-100 px-5 py-3.5 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="w-2 h-2 rounded-full bg-red-500" />
+          <p className="text-sm font-bold text-slate-800">Confirm Detected Items</p>
+          <span className="px-2 py-0.5 bg-white border border-slate-200 rounded-full text-[11px] font-semibold text-slate-600">
+            {items.length} item{items.length !== 1 ? "s" : ""}
+          </span>
+        </div>
+        <div className="text-right">
+          <p className="text-[10px] text-slate-400 uppercase tracking-wide">Est. Monthly Revenue</p>
+          <p className="text-sm font-bold text-emerald-700">{fmt(totalMonthlyRev)}</p>
+        </div>
       </div>
-      <div className="overflow-x-auto mb-5">
-        <table className="w-full text-xs text-slate-600">
+
+      {/* table */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
           <thead>
-            <tr className="border-b border-slate-100">
-              {["Name","Volume","Unit","Price","Cost Price"].map(h => (
-                <th key={h} className="text-left py-1.5 px-2 font-medium text-slate-500">{h}</th>
-              ))}
+            <tr className="bg-slate-50 border-b border-slate-100">
+              <th className="text-left py-2 px-4 font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Product / Item</th>
+              <th className="text-right py-2 px-3 font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Monthly Volume</th>
+              <th className="text-left py-2 px-3 font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Unit</th>
+              <th className="text-right py-2 px-3 font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Selling Price</th>
+              {hasCost && <th className="text-right py-2 px-3 font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Cost Price</th>}
+              <th className="text-right py-2 px-4 font-semibold text-slate-500 uppercase tracking-wide text-[10px]">Monthly Rev.</th>
             </tr>
           </thead>
           <tbody>
-            {items.map(it => (
-              <tr key={it.id} className="border-b border-slate-50 hover:bg-slate-50">
-                <td className="py-1.5 px-2 font-medium">{it.name}</td>
-                <td className="py-1.5 px-2">{it.volume}</td>
-                <td className="py-1.5 px-2">{it.unit}</td>
-                <td className="py-1.5 px-2">{it.price}</td>
-                <td className="py-1.5 px-2">{it.costPrice ?? "—"}</td>
+            {items.map((it, i) => (
+              <tr key={it.id} className={`border-b border-slate-50 ${i % 2 === 0 ? "bg-white" : "bg-slate-50/40"} hover:bg-cyan-50/40 transition-colors`}>
+                <td className="py-2.5 px-4 font-semibold text-slate-800">{it.name}
+                  {it.category && it.category !== "General" && (
+                    <span className="ml-1.5 text-[10px] font-normal text-slate-400">{it.category}</span>
+                  )}
+                </td>
+                <td className="py-2.5 px-3 text-right text-slate-700 font-medium">{it.volume.toLocaleString()}</td>
+                <td className="py-2.5 px-3 text-slate-500">{it.unit}</td>
+                <td className="py-2.5 px-3 text-right text-slate-700">{it.price.toLocaleString()}</td>
+                {hasCost && <td className="py-2.5 px-3 text-right text-slate-500">{it.costPrice != null ? it.costPrice.toLocaleString() : <span className="text-slate-300">—</span>}</td>}
+                <td className="py-2.5 px-4 text-right font-semibold text-emerald-700">{fmt(it.volume * it.price)}</td>
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr className="bg-emerald-50 border-t border-emerald-100">
+              <td colSpan={hasCost ? 5 : 4} className="py-2.5 px-4 text-xs font-semibold text-slate-600 uppercase tracking-wide">Total Monthly Revenue</td>
+              <td className="py-2.5 px-4 text-right font-bold text-emerald-700 text-sm">{fmt(totalMonthlyRev)}</td>
+            </tr>
+          </tfoot>
         </table>
       </div>
-      <div className="flex gap-3">
-        <button
-          onClick={onConfirm}
-          className="px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors"
-        >
-          Confirm &amp; Save
-        </button>
-        <button
-          onClick={onEdit}
-          className="px-4 py-2 border border-slate-300 text-slate-600 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors"
-        >
-          Edit
-        </button>
+
+      {/* footer actions */}
+      <div className="px-5 py-4 flex items-center justify-between bg-white border-t border-slate-100">
+        <p className="text-[11px] text-slate-400">Review the table above — edit if anything looks wrong before confirming</p>
+        <div className="flex gap-2.5">
+          <button onClick={onEdit}
+            className="px-4 py-2 rounded-xl text-sm font-semibold border border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50 transition-all">
+            Edit
+          </button>
+          <button onClick={onConfirm}
+            className="px-5 py-2 rounded-xl text-sm font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm shadow-emerald-200 transition-all">
+            Confirm &amp; Save
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1448,6 +1527,42 @@ export function RevenueEngine({
 
   const active = isInputActive() && !inputLocked;
 
+  /* ── mic ── */
+  const [micActive, setMicActive] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null);
+
+  const toggleMic = useCallback(() => {
+    if (typeof window === "undefined") return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!SR) return;
+    if (micActive) {
+      recognitionRef.current?.stop();
+      recognitionRef.current = null;
+      setMicActive(false);
+      return;
+    }
+    const rec = new SR();
+    rec.lang = "en-US";
+    rec.interimResults = true;
+    rec.continuous = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rec.onresult = (e: any) => {
+      let final = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) final += (e.results[i][0]?.transcript as string) ?? "";
+      }
+      if (final) setInputVal(prev => prev ? prev.trimEnd() + " " + final.trim() : final.trim());
+    };
+    rec.onerror = () => { recognitionRef.current = null; setMicActive(false); };
+    rec.onend   = () => { if (recognitionRef.current) { recognitionRef.current = null; setMicActive(false); } };
+    rec.start();
+    recognitionRef.current = rec;
+    setMicActive(true);
+  }, [micActive]);
+
   /* ── render ── */
   return (
     <div className="flex gap-6 h-full">
@@ -1464,22 +1579,42 @@ export function RevenueEngine({
 
         {/* input */}
         <div className={`mt-4 flex gap-2 transition-opacity ${active ? "opacity-100" : "opacity-40 pointer-events-none"}`}>
+          {/* mic button */}
+          <button
+            onClick={toggleMic}
+            disabled={!active}
+            title={micActive ? "Stop recording" : "Speak your answer"}
+            className={`flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
+              micActive
+                ? "bg-red-500 text-white shadow-md shadow-red-200 animate-pulse"
+                : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+            }`}
+          >
+            {micActive ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+          </button>
+
           <input
             ref={inputRef}
             type="text"
             value={inputVal}
             onChange={e => setInputVal(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Type your answer..."
+            placeholder={micActive ? "Listening… speak now" : "Type your answer or use the mic"}
             disabled={!active}
-            className="flex-1 border border-slate-200 rounded-xl px-4 py-2.5 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-300 bg-white"
+            className={`flex-1 border rounded-xl px-4 py-2.5 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 bg-white transition-all ${
+              micActive
+                ? "border-red-300 focus:ring-red-200"
+                : "border-slate-200 focus:ring-cyan-300"
+            }`}
           />
+
           <button
             onClick={() => sendMessage(inputVal)}
             disabled={!active || !inputVal.trim()}
-            className="px-4 py-2.5 bg-cyan-600 text-white rounded-xl text-sm font-medium hover:bg-cyan-700 transition-colors disabled:opacity-40"
+            title="Send"
+            className="flex-shrink-0 w-10 h-10 rounded-xl bg-cyan-600 text-white flex items-center justify-center hover:bg-cyan-700 transition-colors disabled:opacity-40"
           >
-            Send
+            <SendIcon className="w-4 h-4" />
           </button>
         </div>
       </div>
