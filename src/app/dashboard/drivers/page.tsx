@@ -221,8 +221,8 @@ export default function DriversPage() {
 
   /* ── Per-item seasonality picker state ─────────────────────── */
   const [openItemPicker, setOpenItemPicker] = useState<string | null>(null);
-  // Fixed-position coords so the popover escapes overflow-x-auto clipping
-  const [pickerPos,     setPickerPos]     = useState<{ top: number; left: number } | null>(null);
+  // Fixed-position coords + maxHeight so the popover escapes overflow-x-auto and stays in-viewport
+  const [pickerPos, setPickerPos] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   // Custom seasonality editor
   const [customMults,   setCustomMults]   = useState<number[]>(Array(12).fill(1) as number[]);
   const [customMode,    setCustomMode]    = useState<string | null>(null); // item id in custom edit
@@ -230,8 +230,31 @@ export default function DriversPage() {
   const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
   const openPicker = (e: React.MouseEvent<HTMLButtonElement>, itemId: string, existingMults?: number[] | null) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    setPickerPos({ top: rect.bottom + 6, left: rect.left });
+    const rect             = e.currentTarget.getBoundingClientRect();
+    const ESTIMATED_H      = 340;  // generous estimate of popover height
+    const POPOVER_W_NORMAL = 228;
+    const MARGIN           = 8;
+
+    const spaceBelow = window.innerHeight - rect.bottom - MARGIN;
+    const spaceAbove = rect.top - MARGIN;
+
+    // Flip above when there's not enough room below but there's more room above
+    let top: number;
+    let maxHeight: number;
+    if (spaceBelow >= Math.min(ESTIMATED_H, 200) || spaceBelow >= spaceAbove) {
+      // Open below
+      top       = rect.bottom + 6;
+      maxHeight = Math.max(120, spaceBelow - 6);
+    } else {
+      // Open above
+      maxHeight = Math.max(120, spaceAbove - 6);
+      top       = Math.max(MARGIN, rect.top - Math.min(ESTIMATED_H, maxHeight) - 6);
+    }
+
+    // Clamp left so popover doesn't overflow the right edge
+    const left = Math.min(rect.left, window.innerWidth - POPOVER_W_NORMAL - MARGIN);
+
+    setPickerPos({ top, left, maxHeight });
     if (openItemPicker === itemId) { setOpenItemPicker(null); setCustomMode(null); return; }
     setOpenItemPicker(itemId);
     setCustomMode(null);
@@ -375,7 +398,7 @@ export default function DriversPage() {
 
         {/* ── Stream cards ─────────────────────────────────────── */}
         {streams.length > 0 && (
-          <div className="max-w-2xl mx-auto px-6 py-6 space-y-5">
+          <div className="max-w-5xl mx-auto px-6 py-6 space-y-5">
 
             {streams.map((stream) => {
               const scenario      = classifyScenario(stream.volumeGrowthPct, stream.annualPriceGrowthPct);
@@ -711,11 +734,16 @@ export default function DriversPage() {
             <div className="fixed inset-0 z-40" onClick={closePicker} />
             {/* Popover */}
             <div
-              className="fixed z-50 bg-white border border-slate-200 rounded-2xl shadow-2xl"
-              style={{ top: pickerPos.top, left: pickerPos.left, width: customMode === openItemPicker ? 340 : 228 }}
+              className="fixed z-50 bg-white border border-slate-200 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+              style={{
+                top:       pickerPos.top,
+                left:      pickerPos.left,
+                width:     customMode === openItemPicker ? 340 : 228,
+                maxHeight: pickerPos.maxHeight,
+              }}
             >
-              <div className="p-3">
-                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-2">
+              <div className="p-3 overflow-y-auto flex-1 flex flex-col min-h-0">
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-2 shrink-0">
                   {activeItem.name} — Seasonality
                 </p>
 
