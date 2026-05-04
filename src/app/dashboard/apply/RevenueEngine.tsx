@@ -1127,12 +1127,15 @@ export function RevenueEngine({
     else if (phase === "collect_chat") {
       setInputLocked(false);
       setInputVal("");
-      addFeedItem({ kind: "ai", text: `For ${s.name}, describe your items — what you sell, monthly volumes, and prices.` });
+      addFeedItem({ kind: "ai", text: `For ${s.name}, describe your items — what you sell, monthly volumes, and prices. You can type below or use the paste table.` });
+      /* also show the paste card so the user has both options */
+      addFeedItem({ kind: "card", resolved: false, card: { type: "paste_data", streamName: s.name } });
       driverMsgsRef.current = [];
     }
 
     else if (phase === "collect_paste") {
-      setInputLocked(true);
+      setInputLocked(false);
+      setInputVal("");
       const cardId = addFeedItem({
         kind: "card", resolved: false,
         card: { type: "paste_data", streamName: s.name },
@@ -1231,11 +1234,8 @@ export function RevenueEngine({
       const choice = payload as "under20" | "20to100" | "more100";
       const label = choice === "under20" ? "Under 20" : choice === "20to100" ? "20–100" : "More than 100";
       resolveCard(cardId, label);
-      if (choice === "under20") {
-        await advanceStreamPhase(idx!, "collect_chat");
-      } else {
-        await advanceStreamPhase(idx!, "collect_paste");
-      }
+      /* always show both chat + paste regardless of item count */
+      await advanceStreamPhase(idx!, "collect_chat");
       return;
     }
 
