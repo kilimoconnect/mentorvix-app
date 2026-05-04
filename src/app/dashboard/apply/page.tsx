@@ -2884,6 +2884,37 @@ function ForecastView({
   // -1 = rolling Year 1/2/… grouping (default); 0–11 = financial year ending that calendar month
   const [fyEndMonth, setFyEndMonth] = useState<number>(-1);
 
+  // Saved-drivers snapshot — captured whenever streams carry scenario="custom".
+  // Lets the user switch to a preset and then click back to their engine-defined rates.
+  type DriverSnap = { volumeGrowthPct: number; annualPriceGrowthPct: number; monthlyGrowthPct: number };
+  const [savedDriversSnapshot, setSavedDriversSnapshot] = useState<Map<string, DriverSnap>>(new Map());
+
+  useEffect(() => {
+    const customStreams = streams.filter(s => s.scenario === "custom");
+    if (customStreams.length === 0) return;
+    setSavedDriversSnapshot(prev => {
+      const next = new Map(prev);
+      customStreams.forEach(s => {
+        next.set(s.id, {
+          volumeGrowthPct:      s.volumeGrowthPct      ?? 0,
+          annualPriceGrowthPct: s.annualPriceGrowthPct ?? 0,
+          monthlyGrowthPct:     s.monthlyGrowthPct,
+        });
+      });
+      return next;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streams]);
+
+  const restoreSavedDrivers = () => {
+    streams.forEach(s => {
+      const snap = savedDriversSnapshot.get(s.id);
+      if (snap) {
+        onUpdateStream({ ...s, ...snap, scenario: "custom" });
+      }
+    });
+  };
+
   const MONTH_NAMES      = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const MONTH_NAMES_FULL = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
@@ -3000,8 +3031,17 @@ function ForecastView({
               );
             })}
           </div>
-          {dominantScenario === "custom" && (
-            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 shrink-0">Saved Drivers</span>
+          {savedDriversSnapshot.size > 0 && (
+            <button
+              onClick={() => { if (dominantScenario !== "custom") restoreSavedDrivers(); }}
+              className={`text-[10px] font-semibold px-2 py-0.5 rounded-full transition-all shrink-0 ${
+                dominantScenario === "custom"
+                  ? "bg-violet-500 text-white shadow-sm cursor-default"
+                  : "bg-violet-50 text-violet-500 border border-violet-200 hover:bg-violet-100 cursor-pointer"
+              }`}
+            >
+              Saved Drivers
+            </button>
           )}
           <span className="text-[10px] text-slate-400 italic hidden sm:block">
             {dominantScenario === "custom" ? "Driver-defined rates · each stream" : `${GROWTH_PRESETS[dominantScenario].desc} · all streams`}
