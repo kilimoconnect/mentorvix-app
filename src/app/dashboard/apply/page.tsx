@@ -1680,7 +1680,9 @@ function ItemTable({ stream, onUpdate, onApplySeasonalityToAll, fmt, currencySym
                   <>
                     <tr key={`cat-${cat}`} className="bg-slate-50/60">
                       <td colSpan={5} className="px-3 py-1.5">
-                        <span className="text-xs font-bold text-slate-600">{cat}</span>
+                        <span className="text-xs font-bold text-slate-600">
+                          {(!cat || cat === "General") ? stream.name : cat}
+                        </span>
                       </td>
                       <td className="px-3 py-1.5 text-right">
                         <span className="text-xs font-bold text-slate-600">{fmt(catRev)}</span>
