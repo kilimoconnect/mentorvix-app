@@ -128,7 +128,9 @@ type StreamType = "product" | "service" | "subscription" | "rental" | "marketpla
 type Confidence = "high" | "medium" | "low";
 type Provider   = "openai" | "gemini";
 type DriverMode = "chat" | "import" | "manual";
-type SeasonalityPreset = "none" | "q4_peak" | "q1_slow" | "summer_peak" | "end_of_year" | "construction" | "custom";
+type SeasonalityPreset = "none" | "q4_peak" | "q1_slow" | "summer_peak" | "end_of_year" | "construction"
+  | "wet_season" | "harvest" | "school_term" | "tourism_high" | "ramadan" | "back_to_school" | "mid_year_slow" | "agri_planting"
+  | "custom";
 
 interface ChatMessage { role: "user" | "assistant"; content: string; }
 interface StreamItem  { id: string; name: string; category: string; volume: number; price: number; costPrice?: number; unit: string; note?: string; seasonalityPreset?: SeasonalityPreset; }
@@ -212,8 +214,16 @@ const SEASONALITY_PRESETS: Record<SeasonalityPreset, { label: string; desc: stri
   q1_slow:     { label: "Q1 Slow",       desc: "Post-holiday demand dip in Q1",                    months: [0.75, 0.78, 0.95, 1.05, 1.10, 1.12, 1.12, 1.08, 1.02, 1.02, 1.00, 1.01] },
   summer_peak: { label: "Summer Peak",   desc: "Jun–Aug high season (tourism / outdoor)",          months: [0.80, 0.82, 0.90, 1.00, 1.08, 1.20, 1.28, 1.22, 1.10, 0.98, 0.90, 0.72] },
   end_of_year: { label: "Year-End Corp", desc: "Q4 corporate budget flush (B2B / consulting)",     months: [0.88, 0.88, 0.92, 0.95, 1.00, 1.00, 0.92, 0.95, 1.05, 1.10, 1.18, 1.17] },
-  construction:{ label: "Dry Season",    desc: "Dry-season peak (construction / farming)",         months: [1.15, 1.18, 1.20, 1.10, 1.05, 0.85, 0.80, 0.82, 0.90, 1.00, 1.05, 0.90] },
-  custom:      { label: "Custom",        desc: "Define your own monthly pattern",                  months: Array(12).fill(1) },
+  construction:  { label: "Dry Season",         desc: "Dry-season peak (construction / farming)",           months: [1.15, 1.18, 1.20, 1.10, 1.05, 0.85, 0.80, 0.82, 0.90, 1.00, 1.05, 0.90] },
+  wet_season:    { label: "Wet Season",         desc: "Rainy season slowdown, dry months peak",              months: [1.10, 1.05, 1.00, 0.90, 0.75, 0.65, 0.60, 0.65, 0.80, 1.00, 1.10, 1.15] },
+  harvest:       { label: "Harvest Season",     desc: "Oct–Nov harvest spike",                               months: [0.85, 0.82, 0.90, 0.95, 1.00, 0.95, 0.90, 0.95, 1.05, 1.25, 1.35, 1.03] },
+  school_term:   { label: "School Term",        desc: "School holidays dip, term-time peaks",               months: [1.00, 1.05, 1.10, 1.05, 1.05, 0.70, 0.65, 0.70, 1.20, 1.25, 1.15, 0.80] },
+  tourism_high:  { label: "Tourism High",       desc: "Jan + Dec peak high season",                         months: [1.30, 1.25, 1.15, 1.05, 0.90, 0.80, 0.85, 0.90, 0.95, 1.00, 1.10, 1.35] },
+  ramadan:       { label: "Ramadan / Eid",      desc: "Mar–Apr surge, Dec festive boost",                   months: [0.95, 0.95, 1.50, 1.60, 1.20, 0.90, 0.85, 0.88, 0.90, 0.92, 0.95, 1.40] },
+  back_to_school:{ label: "Back-to-School",     desc: "Aug–Sep back-to-school spike",                       months: [1.10, 1.05, 0.95, 0.92, 0.90, 0.80, 0.80, 1.45, 1.35, 1.10, 0.92, 0.72] },
+  mid_year_slow: { label: "Mid-Year Slow",      desc: "Jun–Aug mid-year trough",                            months: [1.10, 1.05, 1.02, 0.95, 0.85, 0.75, 0.72, 0.78, 0.95, 1.10, 1.15, 1.18] },
+  agri_planting: { label: "Agri Planting",      desc: "Mar–May planting spend cycle",                       months: [0.80, 0.82, 1.10, 1.30, 1.20, 0.90, 0.75, 0.80, 0.85, 1.00, 1.05, 0.93] },
+  custom:        { label: "Custom",             desc: "Define your own monthly pattern",                    months: Array(12).fill(1) },
 };
 
 function effectiveMonthlyGrowth(volPct: number, annualPricePct: number): number {
@@ -4272,7 +4282,18 @@ function ApplyPageInner() {
         monthlyGrowthPct:    Number(s.monthly_growth_pct),
         volumeGrowthPct:     Number(s.monthly_growth_pct), // treat stored rate as volume growth
         annualPriceGrowthPct: 0,                            // price growth unknown — default 0
-        scenario:            (Number(s.monthly_growth_pct) === 0 ? "base" : Number(s.monthly_growth_pct) <= 1.0 ? "conservative" : "growth") as GrowthScenario,
+        // Scenario: only classify as a named preset if the stored rate exactly matches one.
+        // Custom growth rates (e.g. 1.25%/mo) fall back to "base" (neutral) so clicking
+        // the scenario buttons doesn't silently overwrite the user's custom rate.
+        scenario: (() => {
+          const r = Number(s.monthly_growth_pct);
+          const cRate = effectiveMonthlyGrowth(GROWTH_PRESETS.conservative.volPct, GROWTH_PRESETS.conservative.pricePct);
+          const gRate = effectiveMonthlyGrowth(GROWTH_PRESETS.growth.volPct,       GROWTH_PRESETS.growth.pricePct);
+          if (r === 0)                          return "base"         as GrowthScenario;
+          if (Math.abs(r - cRate) < 0.05)      return "conservative" as GrowthScenario;
+          if (Math.abs(r - gRate) < 0.1)       return "growth"       as GrowthScenario;
+          return "base" as GrowthScenario; // custom rate — show neutral Base label
+        })(),
         subNewPerMonth:      Number(s.sub_new_per_month),
         subChurnPct:         Number(s.sub_churn_pct),
         rentalOccupancyPct:  Number(s.rental_occupancy_pct),
