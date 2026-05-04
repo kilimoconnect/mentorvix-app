@@ -1361,13 +1361,16 @@ export function RevenueEngine({
     setFeed(prev => prev.filter(item => item.id !== id));
   }, []);
 
-  /* sync streamsRef and notify parent */
+  /* sync streamsRef and schedule React re-render.
+     CRITICAL: compute next synchronously from the current ref so that any
+     code running immediately after setStreamsSync reads the correct value.
+     Using a functional updater for React keeps the queued update correct even
+     when multiple calls are batched (React will call `() => next` with whatever
+     previous state it has, but we bypass that and just hand it the final value). */
   function setStreamsSync(updater: (prev: WorkingStream[]) => WorkingStream[]) {
-    setStreams(prev => {
-      const next = updater(prev);
-      streamsRef.current = next;
-      return next;
-    });
+    const next = updater(streamsRef.current); // synchronous — always reads latest ref
+    streamsRef.current = next;                // update ref immediately
+    setStreams(next);                         // schedule React re-render with the new value
   }
 
   /* auto scroll */
