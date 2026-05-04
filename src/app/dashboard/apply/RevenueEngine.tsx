@@ -188,6 +188,63 @@ function inputLockForPhase(phase: EnginePhase): boolean {
   return false; /* detecting — input is active for intake chat */
 }
 
+/* ─────────────────────────────────── tabular paste parser ── */
+/**
+ * Fast client-side parser for structured tabular data (tab, pipe, comma).
+ * Handles any column order by reading the header row keywords.
+ * Returns null if the input doesn't look like a table (fall through to AI).
+ */
+function parseTabularData(raw: string): ParsedItem[] | null {
+  const lines = raw.trim().split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) return null;
+
+  // Detect separator: prefer tab, then pipe, then comma
+  const firstLine = lines[0];
+  const sep = firstLine.includes("\t") ? "\t"
+    : firstLine.includes("|") ? "|"
+    : firstLine.includes(",") ? ","
+    : null;
+  if (!sep) return null;
+
+  const headers = firstLine.split(sep).map(h => h.trim().toLowerCase().replace(/[^a-z0-9]/g, ""));
+
+  // Map header keywords → column indices
+  const nameIdx  = headers.findIndex(h => /name|product|item|service|description|desc/.test(h));
+  const volIdx   = headers.findIndex(h => /vol|unit|qty|quant|amount|count|sales/.test(h));
+  const priceIdx = headers.findIndex(h => /price|sell|rate|rev|value/.test(h));
+  const costIdx  = headers.findIndex(h => /cost|cogs|buy|purchase|wholesale/.test(h));
+
+  // Need at least a name column and a price column in the header
+  if (nameIdx === -1 || priceIdx === -1) return null;
+
+  const items: ParsedItem[] = [];
+  let counter = 0;
+
+  for (const line of lines.slice(1)) {
+    const parts = line.split(sep).map(p => p.trim().replace(/,/g, ""));
+    const name = parts[nameIdx];
+    if (!name) continue;
+
+    const price  = parseFloat(parts[priceIdx] ?? "");
+    const volume = volIdx  !== -1 ? parseFloat(parts[volIdx]  ?? "") : NaN;
+    const cost   = costIdx !== -1 ? parseFloat(parts[costIdx] ?? "") : NaN;
+
+    if (!name || isNaN(price)) continue;
+
+    items.push({
+      id:        `paste-${++counter}`,
+      name,
+      category:  "General",
+      volume:    isNaN(volume) ? 1 : volume,
+      price,
+      costPrice: isNaN(cost) ? undefined : cost,
+      unit:      "unit",
+    });
+  }
+
+  return items.length > 0 ? items : null;
+}
+
 /* ─────────────────────────────────── uid helper ── */
 let _uid = 0;
 function uid() { return ++_uid; }
@@ -1342,34 +1399,51 @@ export function RevenueEngine({
     if (action === "paste_extract" && idx !== null) {
       const pastedText = payload as string;
       resolveCard(cardId, "Data pasted");
-      addFeedItem({ kind: "user", text: pastedText.substring(0, 80) + (pastedText.length > 80 ? "…" : "") });
-      const typingId = addFeedItem({ kind: "typing" });
+      const preview = pastedText.substring(0, 100) + (pastedText.length > 100 ? "…" : "");
+      addFeedItem({ kind: "user", text: preview });
       setInputLocked(true);
+
+      /* ── fast path: client-side tabular parse (tab / pipe / comma + header) ── */
+      const quickItems = parseTabularData(pastedText);
+      if (quickItems && quickItems.length > 0) {
+        addFeedItem({ kind: "ai", text: `Got it — extracted ${quickItems.length} item${quickItems.length !== 1 ? "s" : ""} from your table. Review below.` });
+        pendingItemsRef.current = quickItems;
+        await advanceStreamPhase(idx, "confirm_items");
+        return;
+      }
+
+      /* ── slow path: send to AI for free-text / ambiguous formats ── */
+      const typingId = addFeedItem({ kind: "typing" });
       try {
+        /* prepend a clear extraction instruction so the AI always outputs the block */
+        const extractPrompt =
+          `Extract every product/item from the data below and output [ITEMS_DETECTED] immediately — no questions.\n\n${pastedText}`;
         const msgs: ChatMsg[] = [
           ...driverMsgsRef.current,
-          { role: "user", content: pastedText },
+          { role: "user", content: extractPrompt },
         ];
         driverMsgsRef.current = msgs;
         const reply = await callDrivers(msgs, idx);
         removeTyping(typingId);
         driverMsgsRef.current = [...msgs, { role: "assistant", content: reply }];
-        const pasteCleanIdx = reply.indexOf("[ITEMS_DETECTED]");
-        const pasteClean = (pasteCleanIdx !== -1 ? reply.slice(0, pasteCleanIdx) : reply).trim();
-        if (pasteClean) addFeedItem({ kind: "ai", text: pasteClean });
+
+        const cleanIdx = reply.indexOf("[ITEMS_DETECTED]");
+        const clean = (cleanIdx !== -1 ? reply.slice(0, cleanIdx) : reply).trim();
+        if (clean) addFeedItem({ kind: "ai", text: clean });
 
         const items = parseItems(reply);
         if (items && items.length > 0) {
           pendingItemsRef.current = items;
           await advanceStreamPhase(idx, "confirm_items");
         } else {
-          addFeedItem({ kind: "ai", text: "I couldn't detect items from that data. Please try again or rephrase." });
+          addFeedItem({ kind: "ai", text: "I couldn't read that format. Try using a table with headers: Product | Volume | Price | Cost" });
           await advanceStreamPhase(idx, "collect_paste");
         }
       } catch (e) {
         removeTyping(typingId);
         console.error(e);
-        addFeedItem({ kind: "ai", text: "Something went wrong extracting your data. Please try again." });
+        addFeedItem({ kind: "ai", text: "Something went wrong. Please try again." });
+        setInputLocked(false);
       }
       return;
     }
