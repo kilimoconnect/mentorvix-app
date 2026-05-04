@@ -830,10 +830,10 @@ export default function DriversPage() {
                     {MONTHS_SHORT.map((m, i) => (
                       <div key={m} className="flex flex-col items-center gap-1">
                         <input
-                          type="number" step="0.05" min="0.1" max="3"
+                          type="number" step="0.05" min="0" max="5"
                           value={customMults[i].toFixed(2)}
                           onChange={(e) => {
-                            const v = Math.max(0.1, Math.min(3, parseFloat(e.target.value) || 1));
+                            const v = Math.max(0, Math.min(5, parseFloat(e.target.value) || 0));
                             setCustomMults((prev) => { const n = [...prev]; n[i] = v; return n; });
                           }}
                           className="w-full text-center text-xs border border-slate-200 rounded-lg px-1 py-1.5 outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-300/30"
