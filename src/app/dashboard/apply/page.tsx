@@ -5973,67 +5973,28 @@ function ApplyPageInner() {
                         </div>
                       )}
 
-                      {/* Mode tabs + driver inputs — only shown when not in actuals phase */}
+                      {/* Item table — always visible so Add Item is accessible */}
                       {(situation !== "existing" || actualsPhaseByStream[currentStream.id]) && (<>
-                      <div className="flex gap-2 bg-slate-100 p-1 rounded-xl">
-                        {([
-                          { id: "chat"   as DriverMode, label: "AI Guided",      icon: BrainCircuit },
-                          { id: "import" as DriverMode, label: "Paste Data",     icon: Clipboard },
-                          { id: "manual" as DriverMode, label: "Manual Entry",   icon: Pencil },
-                        ]).map(({ id, label, icon: Icon }) => (
-                          <button key={id} onClick={() => setDriverMode(id)}
-                            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all ${
-                              driverMode === id ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                            }`}>
-                            <Icon className="w-3.5 h-3.5" /> {label}
-                          </button>
-                        ))}
+                      <div>
+                        {currentStream.items.length > 0 && (
+                          <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">
+                            Revenue Items — edit inline
+                          </p>
+                        )}
+                        <ItemTable
+                          stream={currentStream}
+                          onUpdate={updateStream}
+                          onApplySeasonalityToAll={(preset, mults) =>
+                            setStreams((prev) => prev.map((s) => ({
+                              ...s,
+                              seasonalityPreset:      preset,
+                              seasonalityMultipliers: [...mults],
+                            })))
+                          }
+                          fmt={fmt}
+                          currencySymbol={getCurrencySymbol(currency)}
+                        />
                       </div>
-
-
-                      {/* Manual entry info */}
-                      {driverMode === "manual" && currentStream.items.length === 0 && (
-                        <div className="bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-xs text-slate-600">
-                          Add items directly in the table below — fill in name, category, volume and price.
-                        </div>
-                      )}
-
-                      {/* Mode content */}
-                      {driverMode === "chat" && <DriverChat
-                        stream={currentStream}
-                        onUpdate={updateStream}
-                        onItemsSaved={handleItemsSaved}
-                        situation={situation}
-                        isFirstStream={streamIdx === 0}
-                        onForecastYears={setForecastHorizon}
-                        onForecastStart={(y, m) => { setForecastStartYear(y); setForecastStartMonth(m); }}
-                        intakeContext={messages.map(m => `${m.role === "user" ? "Client" : "AI"}: ${m.content}`).join("\n")}
-                      />}
-                      {driverMode === "import" && <ImportPane stream={currentStream} onUpdate={updateStream} />}
-
-                      {/* Item table */}
-                      {(currentStream.items.length > 0 || driverMode === "manual") && (
-                        <div>
-                          {currentStream.items.length > 0 && (
-                            <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                              Revenue Items — edit inline
-                            </p>
-                          )}
-                          <ItemTable
-                            stream={currentStream}
-                            onUpdate={updateStream}
-                            onApplySeasonalityToAll={(preset, mults) =>
-                              setStreams((prev) => prev.map((s) => ({
-                                ...s,
-                                seasonalityPreset:      preset,
-                                seasonalityMultipliers: [...mults],
-                              })))
-                            }
-                            fmt={fmt}
-                            currencySymbol={getCurrencySymbol(currency)}
-                          />
-                        </div>
-                      )}
 
                       {/* Navigation */}
                       <div className="flex gap-3 pt-1">
