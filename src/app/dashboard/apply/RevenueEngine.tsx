@@ -678,7 +678,7 @@ function SeasonalityChart({ multipliers, height = 110 }: { multipliers: number[]
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} margin={{ top: 4, right: 4, left: -28, bottom: 0 }} barCategoryGap="20%">
         <XAxis dataKey="month" tick={{ fontSize: 9, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-        <YAxis domain={[0, 2000]} tick={{ fontSize: 9, fill: "#cbd5e1" }} tickFormatter={v => `${v}%`} axisLine={false} tickLine={false} tickCount={5} />
+        <YAxis domain={[0, 500]} tick={{ fontSize: 9, fill: "#cbd5e1" }} tickFormatter={v => `${v}%`} axisLine={false} tickLine={false} tickCount={5} />
         <Tooltip
           formatter={(v) => [`${v}%`, "Index"]}
           contentStyle={{ fontSize: 11, borderRadius: 8, border: "1px solid #e2e8f0", padding: "4px 10px" }}
@@ -804,7 +804,7 @@ function SeasonalityCard({ onConfirm }: SeasonalityCardProps) {
             {preset === "custom" && (
               <div>
                 <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
-                  Set each month — 1.0 = baseline, 2.0 = double, 0 = no revenue
+                  Set each month — 1.0 = baseline, 2.0 = double, 5.0 = 5× peak
                 </p>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-2">
                   {/* Left col: Jan–Jun (0–5) | Right col: Jul–Dec (6–11) */}
@@ -815,7 +815,7 @@ function SeasonalityCard({ onConfirm }: SeasonalityCardProps) {
                         <span className="text-[11px] font-semibold text-slate-500 w-7 flex-shrink-0">{MONTHS_SHORT[i]}</span>
                         <input
                           type="range"
-                          min={0} max={20} step={0.1}
+                          min={0} max={5} step={0.1}
                           value={custom[i]}
                           onChange={e => setMonthMultiplier(i, parseFloat(e.target.value))}
                           className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer"
@@ -831,7 +831,7 @@ function SeasonalityCard({ onConfirm }: SeasonalityCardProps) {
                         <span className="text-[11px] font-semibold text-slate-500 w-7 flex-shrink-0">{MONTHS_SHORT[i + 6]}</span>
                         <input
                           type="range"
-                          min={0} max={20} step={0.1}
+                          min={0} max={5} step={0.1}
                           value={custom[i + 6]}
                           onChange={e => setMonthMultiplier(i + 6, parseFloat(e.target.value))}
                           className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer"
