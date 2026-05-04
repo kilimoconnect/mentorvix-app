@@ -6056,23 +6056,61 @@ function ApplyPageInner() {
                                     const db = savedS[i];
                                     if (db && s.id !== db.id) idMap[s.id] = db.id;
                                   });
+                                  // Resolve stream IDs (temp → DB UUID)
                                   let resolvedStreams = streams;
                                   if (Object.keys(idMap).length > 0) {
                                     resolvedStreams = streams.map((s) => ({ ...s, id: idMap[s.id] ?? s.id }));
-                                    setStreams(resolvedStreams);
                                   }
-                                  // Save items for every stream that has them
+                                  // Merge override seasonality into items so the forecast state
+                                  // matches what will be written to DB (idempotent: if commitRule
+                                  // already propagated, item already has the preset).
+                                  resolvedStreams = resolvedStreams.map((s) => {
+                                    const ovrs = s.overrides ?? [];
+                                    if (!ovrs.some((o) => o.seasonalityPreset)) return s;
+                                    return {
+                                      ...s,
+                                      items: s.items.map((it) => {
+                                        if (it.seasonalityPreset) return it; // already set
+                                        const normCat = it.category || "General";
+                                        const itemOvr = ovrs.find((o) => o.scope === "item"     && o.targetId === it.id             && o.seasonalityPreset);
+                                        const catOvr  = ovrs.find((o) => o.scope === "category" && (o.targetId || "General") === normCat && o.seasonalityPreset);
+                                        const ovr = itemOvr ?? catOvr;
+                                        if (!ovr?.seasonalityPreset) return it;
+                                        return { ...it, seasonalityPreset: ovr.seasonalityPreset, seasonalityMultipliers: ovr.seasonalityMultipliers ?? undefined };
+                                      }),
+                                    };
+                                  });
+                                  setStreams(resolvedStreams);
+                                  // Save items for every stream that has them.
+                                  // Effective seasonality = item's own preset (set by commitRule)
+                                  // OR fall back to any matching override rule in stream.overrides —
+                                  // this covers overrides that were created before the commitRule fix.
                                   for (const s of resolvedStreams) {
                                     if (isDbId(s.id) && s.items.length > 0) {
-                                      await saveStreamItems(sb, s.id, userId, s.items.map((it, pos) => ({
-                                        name: it.name, category: it.category ?? "General",
-                                        volume: it.volume, price: it.price,
-                                        unit: it.unit ?? "", note: it.note ?? "",
-                                        costPrice: it.costPrice ?? null,
-                                        seasonalityPreset:      it.seasonalityPreset ?? null,
-                                        seasonalityMultipliers: it.seasonalityMultipliers ?? null,
-                                        position: pos,
-                                      })));
+                                      const ovrs = s.overrides ?? [];
+                                      await saveStreamItems(sb, s.id, userId, s.items.map((it, pos) => {
+                                        let effectivePreset      = it.seasonalityPreset ?? null;
+                                        let effectiveMults       = it.seasonalityMultipliers ?? null;
+                                        if (!effectivePreset) {
+                                          const normCat  = it.category || "General";
+                                          const itemOvr  = ovrs.find((o) => o.scope === "item"     && o.targetId === it.id             && o.seasonalityPreset);
+                                          const catOvr   = ovrs.find((o) => o.scope === "category" && (o.targetId || "General") === normCat && o.seasonalityPreset);
+                                          const ovr      = itemOvr ?? catOvr;
+                                          if (ovr?.seasonalityPreset) {
+                                            effectivePreset = ovr.seasonalityPreset;
+                                            effectiveMults  = ovr.seasonalityMultipliers;
+                                          }
+                                        }
+                                        return {
+                                          name: it.name, category: it.category ?? "General",
+                                          volume: it.volume, price: it.price,
+                                          unit: it.unit ?? "", note: it.note ?? "",
+                                          costPrice: it.costPrice ?? null,
+                                          seasonalityPreset:      effectivePreset,
+                                          seasonalityMultipliers: effectiveMults,
+                                          position: pos,
+                                        };
+                                      }));
                                     }
                                   }
                                   await updateApplicationFlags(sb, appId, { drivers_done: true });
