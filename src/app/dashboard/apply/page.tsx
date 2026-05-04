@@ -730,10 +730,11 @@ function StreamTypeControls({ stream, onUpdate }: { stream: RevenueStream; onUpd
 
 /* ═══════════════════════════════════════ ItemRow ══ */
 function ItemRow({
-  item, type, onChange, onDelete, fmt, currencySymbol,
-}: { item: StreamItem; type: StreamType; onChange: (i: StreamItem) => void; onDelete: () => void; fmt: (n: number) => string; currencySymbol: string }) {
+  item, type, onChange, onDelete, fmt, currencySymbol, streamName,
+}: { item: StreamItem; type: StreamType; onChange: (i: StreamItem) => void; onDelete: () => void; fmt: (n: number) => string; currencySymbol: string; streamName?: string }) {
   const upN = (k: keyof StreamItem, v: string | number) => onChange({ ...item, [k]: v });
   const rev = itemMonthlyRev(item, type);
+  const catLabel = (!item.category || item.category === "General") ? (streamName ?? "General") : item.category;
   return (
     <tr className="group border-t border-slate-100 hover:bg-slate-50 transition-colors">
       <td className="px-3 py-2">
@@ -741,8 +742,7 @@ function ItemRow({
           className="w-full text-xs text-slate-800 bg-transparent border-b border-transparent group-hover:border-slate-200 focus:border-cyan-400 outline-none" />
       </td>
       <td className="px-3 py-2">
-        <input value={item.category} onChange={(e) => upN("category", e.target.value)}
-          className="w-full text-xs text-slate-500 bg-transparent border-b border-transparent group-hover:border-slate-200 focus:border-cyan-400 outline-none" />
+        <span className="text-xs text-slate-400">{catLabel}</span>
       </td>
       <td className="px-3 py-2">
         <input type="number" value={item.volume || ""} placeholder="0"
@@ -1698,6 +1698,7 @@ function ItemTable({ stream, onUpdate, onApplySeasonalityToAll, fmt, currencySym
                         onDelete={() => deleteItem(item.id)}
                         fmt={fmt}
                         currencySymbol={currencySymbol}
+                        streamName={stream.name}
                       />
                     ))}
                   </>
