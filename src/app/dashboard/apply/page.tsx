@@ -2912,11 +2912,29 @@ function ForecastView({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streams, onUpdateStream, inlineSb]);
 
-  // Saved-drivers snapshot — captured whenever streams carry scenario="custom".
-  // Lets the user switch to a preset and then click back to their engine-defined rates.
+  // Saved-drivers snapshot — populated synchronously from the streams prop so the
+  // button is visible on the very first render (no useEffect delay / "only after refresh").
+  // Also updated whenever new custom streams appear after mount (e.g. engine finishes).
   type DriverSnap = { volumeGrowthPct: number; annualPriceGrowthPct: number; monthlyGrowthPct: number };
-  const [savedDriversSnapshot, setSavedDriversSnapshot] = useState<Map<string, DriverSnap>>(new Map());
 
+  const buildSnapshot = (src: RevenueStream[]): Map<string, DriverSnap> => {
+    const map = new Map<string, DriverSnap>();
+    src.filter(s => s.scenario === "custom").forEach(s => {
+      map.set(s.id, {
+        volumeGrowthPct:      s.volumeGrowthPct      ?? 0,
+        annualPriceGrowthPct: s.annualPriceGrowthPct ?? 0,
+        monthlyGrowthPct:     s.monthlyGrowthPct,
+      });
+    });
+    return map;
+  };
+
+  // Lazy initializer runs synchronously at mount — reads streams prop as-is.
+  const [savedDriversSnapshot, setSavedDriversSnapshot] = useState<Map<string, DriverSnap>>(
+    () => buildSnapshot(streams),
+  );
+
+  // Keep the snapshot up-to-date when streams change after mount (engine update, inline edit, etc.)
   useEffect(() => {
     const customStreams = streams.filter(s => s.scenario === "custom");
     if (customStreams.length === 0) return;
