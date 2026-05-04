@@ -1731,6 +1731,17 @@ export function RevenueEngine({
     /* ── confirm_seasonality ── */
     if (action === "confirm_seasonality") {
       resolveCard(cardId, "Seasonality confirmed");
+      /* persist seasonality to DB so it survives refresh */
+      const seas = pendingSeasonalityRef.current;
+      if (seas) {
+        const sid = streamsRef.current[idx!]?.id;
+        if (sid && !sid.startsWith("local-")) {
+          updateStream(sb, sid, {
+            seasonality_preset:      seas.preset,
+            seasonality_multipliers: seas.preset === "custom" ? seas.multipliers : null,
+          }).catch(console.error);
+        }
+      }
       await advanceStreamPhase(idx!, "stream_summary");
       return;
     }

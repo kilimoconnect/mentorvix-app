@@ -66,6 +66,8 @@ export interface DbRevenueStream {
   rental_occupancy_pct: number;
   driver_done: boolean;
   position: number;
+  seasonality_preset: string | null;        // e.g. "none" | "q4_peak" | "custom"
+  seasonality_multipliers: number[] | null; // 12-element array; null = use preset defaults
   created_at: string;
   updated_at: string;
 }
