@@ -2884,6 +2884,34 @@ function ForecastView({
   // -1 = rolling Year 1/2/… grouping (default); 0–11 = financial year ending that calendar month
   const [fyEndMonth, setFyEndMonth] = useState<number>(-1);
 
+  // Inline driver editing in the assumptions table
+  const [inlineEdit, setInlineEdit] = useState<{
+    id: string; field: "vol" | "price" | "seas"; val: string;
+  } | null>(null);
+  const inlineSb = useRef(createClient()).current;
+
+  /** Apply an inline edit: update local stream state + persist to DB immediately */
+  const saveInlineEdit = useCallback((
+    streamId: string,
+    patch: { volumeGrowthPct?: number; annualPriceGrowthPct?: number; seasonalityPreset?: SeasonalityPreset; seasonalityMultipliers?: number[] },
+  ) => {
+    const stream = streams.find((s) => s.id === streamId);
+    if (!stream) return;
+    const newVol   = patch.volumeGrowthPct      ?? stream.volumeGrowthPct;
+    const newPrice = patch.annualPriceGrowthPct  ?? stream.annualPriceGrowthPct;
+    const monthly  = effectiveMonthlyGrowth(newVol, newPrice);
+    onUpdateStream({ ...stream, ...patch, monthlyGrowthPct: monthly, scenario: "custom" as GrowthScenario });
+    const dbPatch: Parameters<typeof updateStreamDb>[2] = {
+      volume_growth_pct:       newVol,
+      annual_price_growth_pct: newPrice,
+      monthly_growth_pct:      monthly,
+    };
+    if (patch.seasonalityPreset      !== undefined) dbPatch.seasonality_preset      = patch.seasonalityPreset;
+    if (patch.seasonalityMultipliers !== undefined) dbPatch.seasonality_multipliers = patch.seasonalityMultipliers;
+    updateStreamDb(inlineSb, streamId, dbPatch).catch(console.error);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streams, onUpdateStream, inlineSb]);
+
   // Saved-drivers snapshot — captured whenever streams carry scenario="custom".
   // Lets the user switch to a preset and then click back to their engine-defined rates.
   type DriverSnap = { volumeGrowthPct: number; annualPriceGrowthPct: number; monthlyGrowthPct: number };
@@ -3987,15 +4015,18 @@ function ForecastView({
 
             {/* ── Row 2: Per-stream table ── */}
             <div className="border-t border-slate-100">
-              <div className="px-5 py-2.5 bg-slate-50/60">
+              <div className="px-5 py-2.5 bg-slate-50/60 flex items-center justify-between">
                 <p className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Stream Assumptions</p>
+                <Link href="/dashboard/drivers" className="flex items-center gap-1 text-[11px] text-cyan-600 hover:text-cyan-800 font-medium transition-colors">
+                  <Pencil size={11} /> Edit all drivers
+                </Link>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full border-collapse" style={{ minWidth: 680 }}>
                   <thead>
                     <tr style={{ background: "#f8fafc" }}>
-                      {["Stream","Scenario","Vol/mo","Price/yr","Eff. Rate","Seasonality","Items","Mix %","Yr 1","Final Yr"].map((h) => (
-                        <th key={h} className={`px-3 py-2 text-xs font-bold text-slate-500 whitespace-nowrap ${h === "Stream" ? "text-left" : "text-right"}`}>{h}</th>
+                      {(["Stream","Scenario","Vol/mo ✎","Price/yr ✎","Eff. Rate","Seasonality ✎","Items","Mix %","Yr 1","Final Yr"] as const).map((h) => (
+                        <th key={h} className={`px-3 py-2 text-xs font-bold whitespace-nowrap ${h === "Stream" ? "text-left text-slate-500" : h.includes("✎") ? "text-right text-cyan-600" : "text-right text-slate-500"}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -4019,18 +4050,90 @@ function ForecastView({
                               {s.scenario === "custom" ? "Custom" : GROWTH_PRESETS[s.scenario as Exclude<GrowthScenario, "custom">].label}
                             </span>
                           </td>
-                          <td className="px-3 py-2.5 text-right text-xs tabular-nums text-slate-600">
-                            {(s.volumeGrowthPct ?? 0) > 0 ? `+${s.volumeGrowthPct}%` : "—"}
+                          {/* Vol/mo — inline editable */}
+                          <td className="px-3 py-2.5 text-right text-xs tabular-nums">
+                            {inlineEdit?.id === s.id && inlineEdit.field === "vol" ? (
+                              <input
+                                type="number" min={0} max={30} step={0.25}
+                                value={inlineEdit.val}
+                                autoFocus
+                                onChange={(e) => setInlineEdit({ ...inlineEdit, val: e.target.value })}
+                                onBlur={() => {
+                                  const v = Math.max(0, Math.min(30, parseFloat(inlineEdit.val) || 0));
+                                  saveInlineEdit(s.id, { volumeGrowthPct: v });
+                                  setInlineEdit(null);
+                                }}
+                                onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") setInlineEdit(null); }}
+                                className="w-16 text-xs font-bold border border-cyan-400 rounded-md px-1.5 py-0.5 text-right focus:outline-none focus:ring-1 focus:ring-cyan-300 bg-cyan-50"
+                              />
+                            ) : (
+                              <button
+                                onClick={() => setInlineEdit({ id: s.id, field: "vol", val: String(s.volumeGrowthPct ?? 0) })}
+                                className="text-slate-600 hover:text-cyan-600 hover:underline cursor-pointer transition-colors"
+                                title="Click to edit"
+                              >
+                                {(s.volumeGrowthPct ?? 0) > 0 ? `+${s.volumeGrowthPct}%` : <span className="text-slate-300">+0%</span>}
+                              </button>
+                            )}
                           </td>
-                          <td className="px-3 py-2.5 text-right text-xs tabular-nums text-slate-600">
-                            {(s.annualPriceGrowthPct ?? 0) > 0 ? `+${s.annualPriceGrowthPct}%` : "—"}
+                          {/* Price/yr — inline editable */}
+                          <td className="px-3 py-2.5 text-right text-xs tabular-nums">
+                            {inlineEdit?.id === s.id && inlineEdit.field === "price" ? (
+                              <input
+                                type="number" min={0} max={50} step={0.5}
+                                value={inlineEdit.val}
+                                autoFocus
+                                onChange={(e) => setInlineEdit({ ...inlineEdit, val: e.target.value })}
+                                onBlur={() => {
+                                  const v = Math.max(0, Math.min(50, parseFloat(inlineEdit.val) || 0));
+                                  saveInlineEdit(s.id, { annualPriceGrowthPct: v });
+                                  setInlineEdit(null);
+                                }}
+                                onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") setInlineEdit(null); }}
+                                className="w-16 text-xs font-bold border border-cyan-400 rounded-md px-1.5 py-0.5 text-right focus:outline-none focus:ring-1 focus:ring-cyan-300 bg-cyan-50"
+                              />
+                            ) : (
+                              <button
+                                onClick={() => setInlineEdit({ id: s.id, field: "price", val: String(s.annualPriceGrowthPct ?? 0) })}
+                                className="text-slate-600 hover:text-cyan-600 hover:underline cursor-pointer transition-colors"
+                                title="Click to edit"
+                              >
+                                {(s.annualPriceGrowthPct ?? 0) > 0 ? `+${s.annualPriceGrowthPct}%` : <span className="text-slate-300">+0%</span>}
+                              </button>
+                            )}
                           </td>
                           <td className="px-3 py-2.5 text-right text-xs font-semibold tabular-nums" style={{ color: s.monthlyGrowthPct > 0 ? "#059669" : "#64748b" }}>
                             {s.monthlyGrowthPct > 0 ? `+${s.monthlyGrowthPct.toFixed(2)}%/mo` : "Flat"}
                           </td>
-                          <td className="px-3 py-2.5 text-right text-xs text-slate-500">
-                            {SEASONALITY_PRESETS[s.seasonalityPreset ?? "none"]?.label ?? "None"}
-                            {hasSeasOvr && <span className="text-[10px] text-cyan-500 ml-1">+ovr</span>}
+                          {/* Seasonality — inline editable */}
+                          <td className="px-3 py-2.5 text-right text-xs text-slate-500 relative">
+                            {inlineEdit?.id === s.id && inlineEdit.field === "seas" ? (
+                              <select
+                                autoFocus
+                                value={inlineEdit.val}
+                                onChange={(e) => {
+                                  const preset = e.target.value as SeasonalityPreset;
+                                  const mults  = preset !== "custom" ? SEASONALITY_PRESETS[preset].months : s.seasonalityMultipliers;
+                                  saveInlineEdit(s.id, { seasonalityPreset: preset, seasonalityMultipliers: mults });
+                                  setInlineEdit(null);
+                                }}
+                                onBlur={() => setInlineEdit(null)}
+                                className="text-xs border border-cyan-400 rounded-md px-1.5 py-0.5 focus:outline-none bg-white text-slate-700 max-w-[130px]"
+                              >
+                                {(Object.entries(SEASONALITY_PRESETS) as [SeasonalityPreset, { label: string }][]).map(([key, { label }]) => (
+                                  <option key={key} value={key}>{label}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <button
+                                onClick={() => setInlineEdit({ id: s.id, field: "seas", val: s.seasonalityPreset ?? "none" })}
+                                className="hover:text-cyan-600 hover:underline cursor-pointer transition-colors"
+                                title="Click to edit"
+                              >
+                                {SEASONALITY_PRESETS[s.seasonalityPreset ?? "none"]?.label ?? "None"}
+                                {hasSeasOvr && <span className="text-[10px] text-cyan-500 ml-1">+ovr</span>}
+                              </button>
+                            )}
                           </td>
                           <td className="px-3 py-2.5 text-right text-xs text-slate-500 tabular-nums">
                             {s.items.length}
