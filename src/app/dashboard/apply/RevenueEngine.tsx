@@ -1736,7 +1736,7 @@ export function RevenueEngine({
         if (sid && !sid.startsWith("local-")) {
           updateStream(sb, sid, {
             seasonality_preset:      seas.preset,
-            seasonality_multipliers: seas.preset === "custom" ? seas.multipliers : null,
+            seasonality_multipliers: seas.multipliers, // always write actual array, not null
           }).catch(console.error);
         }
       }
@@ -1775,7 +1775,7 @@ export function RevenueEngine({
         if (seas) {
           updateStream(sb, sid, {
             seasonality_preset:      seas.preset,
-            seasonality_multipliers: seas.preset === "custom" ? seas.multipliers : null,
+            seasonality_multipliers: seas.multipliers, // always write actual array, not null
           }).catch((e) => console.error("[engine] updateStream (seasonality):", e));
         }
       }
@@ -1832,8 +1832,7 @@ export function RevenueEngine({
         if (s.seasonality) {
           updateStream(sb, s.id, {
             seasonality_preset:      s.seasonality.preset,
-            seasonality_multipliers: s.seasonality.preset === "custom"
-              ? s.seasonality.multipliers : null,
+            seasonality_multipliers: s.seasonality.multipliers, // always write actual array, not null
           }).catch((e) => console.error("[engine] confirm_model seasonality:", s.name, e));
         }
       }

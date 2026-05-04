@@ -4277,7 +4277,9 @@ function ApplyPageInner() {
         subChurnPct:         Number(s.sub_churn_pct),
         rentalOccupancyPct:  Number(s.rental_occupancy_pct),
         seasonalityPreset:      (s.seasonality_preset ?? "none") as SeasonalityPreset,
-        seasonalityMultipliers: (s.seasonality_multipliers as number[] | null) ?? Array(12).fill(1) as number[],
+        seasonalityMultipliers: (s.seasonality_multipliers as number[] | null)
+          ?? SEASONALITY_PRESETS[(s.seasonality_preset ?? "none") as SeasonalityPreset]?.months
+          ?? Array(12).fill(1) as number[],
         expansionMonth:         null,
         expansionMultiplier:    1.5,
         overrides:              [],
@@ -6098,8 +6100,7 @@ function ApplyPageInner() {
                               // saveStreams only writes base columns, so we need a separate call.
                               updateStreamDb(sb, db.id, {
                                 seasonality_preset:      local.seasonalityPreset ?? "none",
-                                seasonality_multipliers: local.seasonalityPreset === "custom"
-                                  ? local.seasonalityMultipliers : null,
+                                seasonality_multipliers: local.seasonalityMultipliers ?? null, // always write actual array
                               }).catch(e => console.error("[save&continue] seasonality:", e));
 
                               if (local.items?.length) {
