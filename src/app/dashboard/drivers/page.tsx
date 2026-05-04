@@ -98,24 +98,19 @@ interface StreamDriver {
   saveState:              "idle" | "saving" | "saved" | "error";
 }
 
-/* ── Mini seasonality bar chart ───────────────────────────────── */
+/* ── Mini seasonality bar chart (matches apply/page AI dialog style) ─── */
 function SeasonalityChart({ multipliers }: { multipliers: number[] }) {
-  const maxV = Math.max(...multipliers);
-  const minV = Math.min(...multipliers);
+  const maxV = Math.max(...multipliers, 1);
   return (
-    <div className="flex items-end gap-px h-10 w-full">
+    <div className="flex items-end gap-px" style={{ height: 40 }}>
       {multipliers.map((v, i) => {
-        const heightPct = maxV === minV ? 50 : 20 + ((v - minV) / (maxV - minV)) * 75;
-        const isHigh = v > 1.06;
-        const isLow  = v < 0.94;
+        const barH = Math.max((v / maxV) * 100, 5);
         return (
-          <div key={i} className="flex-1 flex flex-col justify-end">
+          <div key={i} className="flex-1 flex flex-col justify-end" style={{ height: 40 }}
+            title={`${MONTHS_SHORT[i]}: ${v.toFixed(2)}×`}>
             <div
-              className={`w-full rounded-t-sm transition-all ${
-                isHigh ? "bg-emerald-400" : isLow ? "bg-amber-400" : "bg-cyan-300"
-              }`}
-              style={{ height: `${heightPct}%` }}
-              title={`${MONTHS_SHORT[i]}: ${Math.round(v * 100)}%`}
+              className="w-full rounded-t-sm transition-all duration-300"
+              style={{ height: `${barH}%`, background: v >= 1 ? "#0e7490" : "#cbd5e1", opacity: 0.85 }}
             />
           </div>
         );
@@ -564,17 +559,6 @@ export default function DriversPage() {
                               {MONTHS_SHORT.map((m, i) => (
                                 <span key={i} className="text-[9px] text-slate-300 flex-1 text-center">{m}</span>
                               ))}
-                            </div>
-                            <div className="flex items-center gap-4">
-                              <span className="flex items-center gap-1 text-[10px] text-emerald-600">
-                                <span className="w-2 h-2 rounded-sm bg-emerald-400 inline-block" /> Peak
-                              </span>
-                              <span className="flex items-center gap-1 text-[10px] text-amber-600">
-                                <span className="w-2 h-2 rounded-sm bg-amber-400 inline-block" /> Trough
-                              </span>
-                              <span className="flex items-center gap-1 text-[10px] text-slate-400">
-                                <span className="w-2 h-2 rounded-sm bg-cyan-300 inline-block" /> Neutral
-                              </span>
                             </div>
                           </>
                         )}
