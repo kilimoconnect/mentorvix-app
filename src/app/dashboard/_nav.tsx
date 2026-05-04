@@ -4,15 +4,16 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   LayoutDashboard, FilePlus2, FolderOpen, BarChart3, Landmark,
-  Settings, CreditCard, HelpCircle,
+  Settings, CreditCard, HelpCircle, SlidersHorizontal,
 } from "lucide-react";
 
 const NAV_ITEMS = [
-  { icon: LayoutDashboard, label: "Dashboard",            href: "/dashboard"           },
-  { icon: FilePlus2,       label: "Funding Applications", href: "/dashboard/apply"     },
-  { icon: FolderOpen,      label: "Documents",            href: "/dashboard/documents" },
-  { icon: BarChart3,       label: "Financial Models",     href: "/dashboard/models"    },
-  { icon: Landmark,        label: "Loan Matches",         href: "/dashboard/loans"     },
+  { icon: LayoutDashboard,    label: "Dashboard",            href: "/dashboard"           },
+  { icon: FilePlus2,          label: "Funding Applications", href: "/dashboard/apply"     },
+  { icon: SlidersHorizontal,  label: "Revenue Drivers",      href: "/dashboard/drivers"   },
+  { icon: FolderOpen,         label: "Documents",            href: "/dashboard/documents" },
+  { icon: BarChart3,          label: "Financial Models",     href: "/dashboard/models"    },
+  { icon: Landmark,           label: "Loan Matches",         href: "/dashboard/loans"     },
 ];
 const NAV_BOTTOM = [
   { icon: CreditCard, label: "Billing",  href: "/dashboard/billing"  },
