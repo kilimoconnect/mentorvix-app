@@ -4678,9 +4678,13 @@ function ApplyPageInner() {
             {["Context", "Revenue Mapping", "Structure Review", "Driver Inputs", "Forecast"].map((label, i) => (
               <div key={i} className="flex items-center gap-1.5">
                 <div className={`flex items-center gap-1.5 text-xs font-medium ${displayStep >= i ? "text-cyan-700" : "text-slate-400"}`}>
-                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold"
+                  <div className="w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
                     style={{ background: displayStep >= i ? "#0e7490" : "#e2e8f0", color: displayStep >= i ? "#fff" : "#94a3b8" }}>
-                    {displayStep > i ? <Check className="w-3 h-3" /> : i + 1}
+                    {displayStep > i
+                      ? <Check className="w-3 h-3" />               /* completed → tick   */
+                      : displayStep === i
+                        ? <div className="w-2 h-2 rounded-full bg-white" />   /* current → dot */
+                        : <span>{i + 1}</span>}                     /* upcoming → number  */
                   </div>
                   <span className="hidden sm:block">{label}</span>
                 </div>
