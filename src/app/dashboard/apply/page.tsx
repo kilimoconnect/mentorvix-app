@@ -5094,14 +5094,23 @@ function ApplyPageInner() {
                       }));
                     });
                   }}
-                  onItemsSaved={(streamId, items) => {
-                    setStreams(prev => prev.map(s =>
-                      s.id === streamId ? { ...s, items: items.map(it => ({
-                        id: it.id, name: it.name, category: it.category,
-                        volume: it.volume, price: it.price, costPrice: it.costPrice,
-                        unit: it.unit, note: it.note,
-                      })), driverDone: true } : s
-                    ));
+                  onItemsSaved={(streamId, streamName, items) => {
+                    const mapped = items.map(it => ({
+                      id: it.id, name: it.name, category: it.category,
+                      volume: it.volume, price: it.price, costPrice: it.costPrice,
+                      unit: it.unit, note: it.note,
+                    }));
+                    setStreams(prev => {
+                      // Primary: match by real DB UUID (after onStreamsDetected UUID sync)
+                      const byId = prev.map(s =>
+                        s.id === streamId ? { ...s, items: mapped, driverDone: true } : s
+                      );
+                      if (byId.some((s, i) => s !== prev[i])) return byId;
+                      // Fallback: match by name in case UUID sync hasn't landed yet
+                      return prev.map(s =>
+                        s.name === streamName ? { ...s, items: mapped, driverDone: true } : s
+                      );
+                    });
                   }}
                   onForecastYears={setForecastHorizon}
                   onForecastStart={(y, m) => { setForecastStartYear(y); setForecastStartMonth(m); }}

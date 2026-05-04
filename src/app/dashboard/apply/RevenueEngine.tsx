@@ -99,7 +99,7 @@ interface RevenueEngineProps {
   userId:            string | null;
   currency:          string | null;
   onStreamsDetected:  (streams: WorkingStream[]) => void;
-  onItemsSaved:      (streamId: string, items: ParsedItem[]) => void;
+  onItemsSaved:      (streamId: string, streamName: string, items: ParsedItem[]) => void;
   onForecastYears:   (y: number) => void;
   onForecastStart:   (year: number, month: number) => void;
   onComplete:        () => void;
@@ -1427,30 +1427,31 @@ export function RevenueEngine({
         rental_occupancy_pct: 0, driver_done: false, position: i,
       }));
       const saved = await saveStreams(sb, appId, userId, rows);
-      /* map real UUIDs back into engine state */
-      setStreamsSync(prev => {
-        const updated = prev.map((ws, i) => ({ ...ws, id: saved[i]?.id ?? ws.id }));
-        /* CRITICAL: also tell the page about the real UUIDs so onItemsSaved
-           can match by ID later. We call onStreamsDetected a second time with
-           the real-UUID streams. The page handler detects a same-length re-call
-           and only updates IDs, preserving any items already set. */
-        onStreamsDetected(updated);
-        return updated;
-      });
+      /* Build updated streams with real UUIDs from the current ref snapshot */
+      const updated = streamsRef.current.map((ws, i) => ({
+        ...ws,
+        id: saved[i]?.id ?? ws.id,
+      }));
+      /* Update engine state (pure — no side effects inside updater) */
+      setStreamsSync(() => updated);
+      /* CRITICAL: tell the page about real UUIDs OUTSIDE the state updater.
+         The page's onStreamsDetected detects a same-length re-call and only
+         updates IDs, preserving any items already set by onItemsSaved. */
+      onStreamsDetected(updated);
     } catch (e) {
       console.error("saveStreams error", e);
     }
   }
 
   /* ── save items to DB ── */
-  async function dbSaveItems(streamId: string, items: ParsedItem[]): Promise<void> {
+  async function dbSaveItems(streamId: string, streamName: string, items: ParsedItem[]): Promise<void> {
     if (!userId) return;
     try {
       await saveStreamItems(sb, streamId, userId, items.map(it => ({
         name: it.name, category: it.category, volume: it.volume,
         price: it.price, costPrice: it.costPrice, unit: it.unit, note: it.note,
       })));
-      onItemsSaved(streamId, items);
+      onItemsSaved(streamId, streamName, items);
     } catch (e) {
       console.error("saveStreamItems error", e);
     }
@@ -1649,7 +1650,7 @@ export function RevenueEngine({
       const items = pendingItemsRef.current;
       const s = streamsRef.current[idx];
       resolveCard(cardId, `${items.length} items confirmed`);
-      await dbSaveItems(s.id, items);
+      await dbSaveItems(s.id, s.name, items);
       if (appId && userId) {
         saveDriverConversation(sb, appId, userId, s.id, driverMsgsRef.current, null, false).catch(console.error);
       }
