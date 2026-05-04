@@ -32,9 +32,9 @@ function cleanAI(text: string): string {
   return text
     .replace(/^\s*\*{3,}\s*$/gm,  "")     // standalone *** / **** separator lines
     .replace(/^\s*-{3,}\s*$/gm,   "")     // standalone --- separator lines
-    .replace(/\*\*\*(.*?)\*\*\*/gs, "$1") // bold+italic ***text***
-    .replace(/\*\*(.*?)\*\*/gs,    "$1")  // bold **text**
-    .replace(/\*(.*?)\*/gs,        "$1")  // italic *text*
+    .replace(/\*\*\*(.*?)\*\*\*/g, "$1") // bold+italic ***text***
+    .replace(/\*\*(.*?)\*\*/g,    "$1")  // bold **text**
+    .replace(/\*(.*?)\*/g,        "$1")  // italic *text*
     .replace(/`([^`]+)`/g,         "$1")  // inline code `text`
     .replace(/^#{1,6}\s+/gm,       "")    // headings # H1
     .replace(/^[-•]\s+/gm,         "")    // bullet list items - item

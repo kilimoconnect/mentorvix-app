@@ -10,12 +10,13 @@ import {
   updateStream as updateStreamDb,
   getOrCreateApplication,
 } from "@/lib/supabase/revenue";
+import type { DbStreamItem } from "@/lib/supabase/revenue";
 import { makeFmt } from "@/lib/utils/currency";
 import {
-  ArrowLeft, Check, Loader2, BarChart3, AlertCircle,
-  TrendingUp, TrendingDown, Minus, ChevronRight,
+  Check, Loader2, BarChart3, AlertCircle,
+  TrendingUp, TrendingDown, Minus, ChevronDown, ChevronRight,
   ShoppingBag, Briefcase, Repeat, Landmark, TrendingUp as TrendUp,
-  ScrollText, Zap,
+  ScrollText, Zap, Sparkles,
 } from "lucide-react";
 
 /* ── Constants (kept in sync with apply/page.tsx) ─────────────── */
@@ -48,9 +49,9 @@ const GROWTH_PRESETS: Record<Exclude<GrowthScenario, "custom">, {
   label: string; volPct: number; pricePct: number;
   activeCls: string; inactiveCls: string;
 }> = {
-  conservative: { label: "Conservative", volPct: 0.5, pricePct: 2.0, activeCls: "bg-amber-500 text-white shadow-sm",   inactiveCls: "text-amber-600 hover:bg-amber-50" },
-  base:         { label: "Base",         volPct: 0,   pricePct: 0,   activeCls: "bg-cyan-600 text-white shadow-sm",    inactiveCls: "text-cyan-700  hover:bg-cyan-50"  },
-  growth:       { label: "Growth Case",  volPct: 3.0, pricePct: 8.0, activeCls: "bg-emerald-500 text-white shadow-sm", inactiveCls: "text-emerald-600 hover:bg-emerald-50" },
+  conservative: { label: "Conservative",  volPct: 0.5, pricePct: 2.0, activeCls: "bg-amber-500 text-white shadow-sm",    inactiveCls: "text-amber-600 hover:bg-amber-50"    },
+  base:         { label: "Base",          volPct: 0,   pricePct: 0,   activeCls: "bg-cyan-600 text-white shadow-sm",     inactiveCls: "text-cyan-700  hover:bg-cyan-50"     },
+  growth:       { label: "Growth Case",   volPct: 3.0, pricePct: 8.0, activeCls: "bg-emerald-500 text-white shadow-sm",  inactiveCls: "text-emerald-600 hover:bg-emerald-50" },
 };
 
 const STREAM_COLORS: Record<string, string> = {
@@ -84,15 +85,17 @@ function classifyScenario(volPct: number, pricePct: number): GrowthScenario {
 
 /* ── Local state per stream ───────────────────────────────────── */
 interface StreamDriver {
-  id:                   string;
-  name:                 string;
-  type:                 string;
-  baseRevMonthly:       number;
-  volumeGrowthPct:      number;
-  annualPriceGrowthPct: number;
-  seasonalityPreset:    SeasonalityPreset;
+  id:                     string;
+  name:                   string;
+  type:                   string;
+  confidence:             "high" | "medium" | "low";
+  baseRevMonthly:         number;
+  volumeGrowthPct:        number;
+  annualPriceGrowthPct:   number;
+  seasonalityPreset:      SeasonalityPreset;
   seasonalityMultipliers: number[];
-  saveState: "idle" | "saving" | "saved" | "error";
+  items:                  DbStreamItem[];
+  saveState:              "idle" | "saving" | "saved" | "error";
 }
 
 /* ── Mini seasonality bar chart ───────────────────────────────── */
@@ -100,7 +103,7 @@ function SeasonalityChart({ multipliers }: { multipliers: number[] }) {
   const maxV = Math.max(...multipliers);
   const minV = Math.min(...multipliers);
   return (
-    <div className="flex items-end gap-px h-12 w-full">
+    <div className="flex items-end gap-px h-10 w-full">
       {multipliers.map((v, i) => {
         const heightPct = maxV === minV ? 50 : 20 + ((v - minV) / (maxV - minV)) * 75;
         const isHigh = v > 1.06;
@@ -121,20 +124,45 @@ function SeasonalityChart({ multipliers }: { multipliers: number[] }) {
   );
 }
 
+/* ── Accordion wrapper ─────────────────────────────────────────── */
+function Accordion({
+  title, subtitle, open, onToggle, children,
+}: {
+  title: string; subtitle?: string; open: boolean; onToggle: () => void; children: React.ReactNode;
+}) {
+  return (
+    <div className="border border-slate-100 rounded-xl overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors text-left"
+      >
+        <div>
+          <p className="text-xs font-bold text-slate-700">{title}</p>
+          {subtitle && <p className="text-[11px] text-slate-400 mt-0.5">{subtitle}</p>}
+        </div>
+        {open ? <ChevronDown size={14} className="text-slate-400 shrink-0" /> : <ChevronRight size={14} className="text-slate-400 shrink-0" />}
+      </button>
+      {open && <div className="px-4 py-4">{children}</div>}
+    </div>
+  );
+}
+
 /* ════════════════════════════════════════════════════════════════ */
 export default function DriversPage() {
   const router = useRouter();
   const sb = useRef(createClient()).current;
-  const saveTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const saveTimers  = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const streamsRef  = useRef<StreamDriver[]>([]);
 
-  const [loading,  setLoading]  = useState(true);
-  const [error,    setError]    = useState<string | null>(null);
-  const [streams,  setStreams]  = useState<StreamDriver[]>([]);
-  const [currency, setCurrency] = useState<string | null>(null);
+  const [loading,   setLoading]   = useState(true);
+  const [saving,    setSaving]    = useState(false);
+  const [error,     setError]     = useState<string | null>(null);
+  const [streams,   setStreams]   = useState<StreamDriver[]>([]);
+  const [currency,  setCurrency]  = useState<string | null>(null);
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [openSections, setOpenSections] = useState<Record<string, Record<string, boolean>>>({});
 
-  // Always keep ref in sync for stale-closure–safe saves
+  // Always keep ref in sync
   streamsRef.current = streams;
 
   /* ── Load ──────────────────────────────────────────────────── */
@@ -165,14 +193,16 @@ export default function DriversPage() {
             id:   s.id,
             name: s.name,
             type: s.type,
+            confidence: s.confidence ?? "medium",
             baseRevMonthly,
-            volumeGrowthPct:      volPct,
-            annualPriceGrowthPct: pricePct,
-            seasonalityPreset:    preset,
+            volumeGrowthPct:        volPct,
+            annualPriceGrowthPct:   pricePct,
+            seasonalityPreset:      preset,
             seasonalityMultipliers:
               (s.seasonality_multipliers as number[] | null)
               ?? SEASONALITY_PRESETS[preset]?.months
               ?? (Array(12).fill(1) as number[]),
+            items,
             saveState: "idle",
           };
         });
@@ -186,7 +216,7 @@ export default function DriversPage() {
     })();
   }, [router, sb]);
 
-  /* ── Persist (called after debounce) ──────────────────────── */
+  /* ── Persist one stream ────────────────────────────────────── */
   const persistStream = useCallback(async (streamId: string) => {
     const s = streamsRef.current.find((x) => x.id === streamId);
     if (!s) return;
@@ -201,11 +231,8 @@ export default function DriversPage() {
         seasonality_preset:      s.seasonalityPreset,
         seasonality_multipliers: s.seasonalityMultipliers,
       });
-
       setStreams((prev) => prev.map((x) => x.id === streamId ? { ...x, saveState: "saved" } : x));
       setLastSaved(new Date());
-
-      // Reset to idle after 2.5 s
       setTimeout(() => {
         setStreams((prev) => prev.map((x) =>
           x.id === streamId && x.saveState === "saved" ? { ...x, saveState: "idle" } : x,
@@ -217,14 +244,33 @@ export default function DriversPage() {
     }
   }, [sb]);
 
-  /* ── Optimistic update + schedule save ────────────────────── */
+  /* ── Optimistic update + debounced save ───────────────────── */
   const updateDriver = useCallback((streamId: string, patch: Partial<StreamDriver>) => {
     setStreams((prev) => prev.map((s) => s.id === streamId ? { ...s, ...patch } : s));
     if (saveTimers.current[streamId]) clearTimeout(saveTimers.current[streamId]);
     saveTimers.current[streamId] = setTimeout(() => persistStream(streamId), 700);
   }, [persistStream]);
 
-  /* ── Loading ───────────────────────────────────────────────── */
+  /* ── Save all + navigate ───────────────────────────────────── */
+  const saveDrivers = useCallback(async () => {
+    setSaving(true);
+    // Flush any pending debounce timers immediately
+    Object.values(saveTimers.current).forEach(clearTimeout);
+    saveTimers.current = {};
+    await Promise.all(streamsRef.current.map((s) => persistStream(s.id)));
+    setSaving(false);
+    router.push("/dashboard/apply");
+  }, [persistStream, router]);
+
+  /* ── Section toggle ────────────────────────────────────────── */
+  const toggleSection = (streamId: string, section: string) => {
+    setOpenSections((prev) => ({
+      ...prev,
+      [streamId]: { ...prev[streamId], [section]: !prev[streamId]?.[section] },
+    }));
+  };
+
+  /* ── Loading ────────────────────────────────────────────────── */
   if (loading) {
     return (
       <div className="flex h-screen bg-slate-50 overflow-hidden">
@@ -256,44 +302,39 @@ export default function DriversPage() {
   }
 
   const fmt = makeFmt(currency);
+  const totalRevMonthly = streams.reduce((s, x) => s + x.baseRevMonthly, 0);
 
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       <DashboardSidebar />
       <main className="flex-1 overflow-y-auto">
 
-        {/* ── Header ─────────────────────────────────────────── */}
+        {/* ── Header ───────────────────────────────────────────── */}
         <div className="sticky top-0 z-10 bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => router.back()}
-              className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
-            >
-              <ArrowLeft size={18} />
-            </button>
-            <div>
+          <div>
+            <div className="flex items-center gap-2">
               <h1 className="text-lg font-bold text-slate-900">Revenue Drivers</h1>
-              <p className="text-xs text-slate-500">Growth rates &amp; seasonality — auto-saved per stream</p>
+              {streams.length > 0 && (
+                <span className="text-[11px] font-semibold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">
+                  {streams.length} stream{streams.length !== 1 ? "s" : ""}
+                </span>
+              )}
             </div>
+            <p className="text-xs text-slate-400 mt-0.5">
+              {lastSaved
+                ? `Auto-saved at ${lastSaved.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                : "Growth rates & seasonality — auto-saved per stream"}
+            </p>
           </div>
-          <div className="flex items-center gap-3">
-            {lastSaved && (
-              <span className="text-[11px] text-slate-400 hidden sm:block">
-                Last saved {lastSaved.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-              </span>
-            )}
-            <Link
-              href="/dashboard/apply"
-              className="flex items-center gap-1.5 text-xs font-semibold text-cyan-700 bg-cyan-50 hover:bg-cyan-100 px-3 py-1.5 rounded-lg transition-colors"
-            >
-              <BarChart3 size={13} />
-              View Forecast
-              <ChevronRight size={12} />
-            </Link>
-          </div>
+          {totalRevMonthly > 0 && (
+            <div className="text-right hidden sm:block">
+              <p className="text-[11px] text-slate-400">Total base revenue</p>
+              <p className="text-base font-bold text-slate-800">{fmt(totalRevMonthly)}<span className="text-slate-400 text-xs font-normal">/mo</span></p>
+            </div>
+          )}
         </div>
 
-        {/* ── Empty state ─────────────────────────────────────── */}
+        {/* ── Empty state ──────────────────────────────────────── */}
         {streams.length === 0 && (
           <div className="flex flex-col items-center justify-center py-28 text-center px-6">
             <div className="w-14 h-14 rounded-2xl bg-slate-100 flex items-center justify-center mb-4">
@@ -301,7 +342,7 @@ export default function DriversPage() {
             </div>
             <p className="text-slate-700 font-semibold mb-1">No revenue streams yet</p>
             <p className="text-sm text-slate-400 mb-5">
-              Run the Revenue Engine first — it extracts your streams and sets the initial driver rates.
+              Run the Revenue Engine first to set up your streams and driver rates.
             </p>
             <Link
               href="/dashboard/apply"
@@ -312,42 +353,54 @@ export default function DriversPage() {
           </div>
         )}
 
-        {/* ── Stream cards ────────────────────────────────────── */}
+        {/* ── Stream cards ─────────────────────────────────────── */}
         {streams.length > 0 && (
           <div className="max-w-2xl mx-auto px-6 py-6 space-y-5">
 
             {streams.map((stream) => {
-              const scenario     = classifyScenario(stream.volumeGrowthPct, stream.annualPriceGrowthPct);
+              const scenario      = classifyScenario(stream.volumeGrowthPct, stream.annualPriceGrowthPct);
               const effectiveRate = effectiveMonthlyGrowth(stream.volumeGrowthPct, stream.annualPriceGrowthPct);
-              const color        = STREAM_COLORS[stream.type] ?? "#6366f1";
-              const StreamIcon   = STREAM_ICONS[stream.type] ?? Zap;
+              const color         = STREAM_COLORS[stream.type] ?? "#6366f1";
+              const StreamIcon    = STREAM_ICONS[stream.type] ?? Zap;
+              const isExpOpen     = openSections[stream.id]?.expansion ?? false;
+              const isAovOpen     = openSections[stream.id]?.overrides ?? false;
+              const streamTotal   = stream.items.reduce((sum, it) => sum + it.volume * it.price, 0);
+
+              // Confidence chip
+              const confLabel = stream.confidence === "high" ? "High Confidence" : stream.confidence === "low" ? "Low Confidence" : "Medium Confidence";
+              const confCls   = stream.confidence === "high"
+                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                : stream.confidence === "low"
+                  ? "bg-red-50 text-red-600 border border-red-200"
+                  : "bg-amber-50 text-amber-700 border border-amber-200";
 
               return (
                 <div key={stream.id} className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-sm">
 
-                  {/* ── Card header ─── */}
-                  <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100"
-                       style={{ borderLeftColor: color, borderLeftWidth: 4 }}>
-                    <div className="flex items-center gap-3">
+                  {/* ── Card header ──────────────────────────── */}
+                  <div
+                    className="flex items-center justify-between px-5 py-4 border-b border-slate-100"
+                    style={{ borderLeftColor: color, borderLeftWidth: 4 }}
+                  >
+                    <div className="flex items-center gap-3 min-w-0">
                       <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
                            style={{ background: `${color}18` }}>
                         <StreamIcon size={15} style={{ color }} />
                       </div>
-                      <div>
-                        <p className="text-sm font-bold text-slate-800 leading-tight">{stream.name}</p>
-                        <p className="text-[11px] text-slate-400">{STREAM_TYPE_LABELS[stream.type] ?? stream.type}</p>
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-slate-800 leading-tight truncate">{stream.name}</p>
+                        <p className="text-[11px] text-slate-400">
+                          {STREAM_TYPE_LABELS[stream.type] ?? stream.type}
+                          {stream.baseRevMonthly > 0 && (
+                            <> · <span className="font-semibold text-slate-600">{fmt(stream.baseRevMonthly)}/mo</span></>
+                          )}
+                        </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      {stream.baseRevMonthly > 0 && (
-                        <span className="text-[11px] text-slate-500 hidden md:block">
-                          {fmt(stream.baseRevMonthly)}<span className="text-slate-400">/mo</span>
-                        </span>
-                      )}
-                      {/* Save status */}
+                    <div className="flex items-center gap-2 shrink-0 ml-2">
                       {stream.saveState === "saving" && (
                         <span className="flex items-center gap-1 text-[11px] text-slate-400">
-                          <Loader2 size={11} className="animate-spin" /> Saving…
+                          <Loader2 size={11} className="animate-spin" /> Saving
                         </span>
                       )}
                       {stream.saveState === "saved" && (
@@ -365,11 +418,11 @@ export default function DriversPage() {
 
                   <div className="px-5 py-5 space-y-6">
 
-                    {/* ── Growth drivers ─── */}
+                    {/* ── Growth Logic ─────────────────────── */}
                     <div>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Growth Drivers</p>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Growth Logic</p>
 
-                      {/* Quick preset buttons */}
+                      {/* Preset buttons */}
                       <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg w-fit mb-4">
                         {(["conservative", "base", "growth"] as const).map((sc) => {
                           const p      = GROWTH_PRESETS[sc];
@@ -391,66 +444,62 @@ export default function DriversPage() {
                         })}
                         {scenario === "custom" && (
                           <span className="text-[11px] font-semibold px-3 py-1 rounded-md bg-violet-500 text-white shadow-sm">
-                            Custom
+                            Custom growth inputs
                           </span>
                         )}
                       </div>
 
-                      {/* Sliders + inputs */}
+                      {/* Sliders */}
                       <div className="space-y-3">
                         {/* Volume growth */}
                         <div className="flex items-center gap-3">
-                          <label className="text-xs text-slate-500 w-32 shrink-0">Volume / month</label>
+                          <label className="text-xs text-slate-500 w-36 shrink-0">Volume Growth</label>
                           <input
-                            type="range"
-                            min={0} max={10} step={0.25}
+                            type="range" min={0} max={10} step={0.25}
                             value={stream.volumeGrowthPct}
                             onChange={(e) => updateDriver(stream.id, { volumeGrowthPct: parseFloat(e.target.value) })}
                             className="flex-1 h-1.5 accent-cyan-600 cursor-pointer"
                           />
-                          <div className="flex items-center gap-1.5 shrink-0">
+                          <div className="flex items-center gap-1 shrink-0">
                             <input
-                              type="number"
-                              min={0} max={30} step={0.25}
+                              type="number" min={0} max={30} step={0.25}
                               value={stream.volumeGrowthPct}
                               onChange={(e) => {
                                 const v = Math.max(0, Math.min(30, parseFloat(e.target.value) || 0));
                                 updateDriver(stream.id, { volumeGrowthPct: v });
                               }}
-                              className="w-14 text-xs font-bold text-slate-800 border border-slate-200 rounded-lg px-2 py-1.5 text-center focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-300/30"
+                              className="w-12 text-xs font-bold text-slate-800 border border-slate-200 rounded-lg px-1.5 py-1.5 text-center focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-300/30"
                             />
-                            <span className="text-[11px] text-slate-400 w-8">%/mo</span>
+                            <span className="text-[11px] text-slate-400 w-12">% / month</span>
                           </div>
                         </div>
 
-                        {/* Annual price increase */}
+                        {/* Annual price */}
                         <div className="flex items-center gap-3">
-                          <label className="text-xs text-slate-500 w-32 shrink-0">Price / year</label>
+                          <label className="text-xs text-slate-500 w-36 shrink-0">Annual Price Increase</label>
                           <input
-                            type="range"
-                            min={0} max={30} step={0.5}
+                            type="range" min={0} max={30} step={0.5}
                             value={stream.annualPriceGrowthPct}
                             onChange={(e) => updateDriver(stream.id, { annualPriceGrowthPct: parseFloat(e.target.value) })}
                             className="flex-1 h-1.5 accent-cyan-600 cursor-pointer"
                           />
-                          <div className="flex items-center gap-1.5 shrink-0">
+                          <div className="flex items-center gap-1 shrink-0">
                             <input
-                              type="number"
-                              min={0} max={50} step={0.5}
+                              type="number" min={0} max={50} step={0.5}
                               value={stream.annualPriceGrowthPct}
                               onChange={(e) => {
                                 const v = Math.max(0, Math.min(50, parseFloat(e.target.value) || 0));
                                 updateDriver(stream.id, { annualPriceGrowthPct: v });
                               }}
-                              className="w-14 text-xs font-bold text-slate-800 border border-slate-200 rounded-lg px-2 py-1.5 text-center focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-300/30"
+                              className="w-12 text-xs font-bold text-slate-800 border border-slate-200 rounded-lg px-1.5 py-1.5 text-center focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-300/30"
                             />
-                            <span className="text-[11px] text-slate-400 w-8">%/yr</span>
+                            <span className="text-[11px] text-slate-400 w-12">% / year</span>
                           </div>
                         </div>
                       </div>
 
-                      {/* Effective rate + scenario chip */}
-                      <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between">
+                      {/* Effective rate row */}
+                      <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-1.5">
                           {effectiveRate > 0
                             ? <TrendingUp   size={13} className="text-emerald-500" />
@@ -458,37 +507,34 @@ export default function DriversPage() {
                               ? <TrendingDown size={13} className="text-red-400" />
                               : <Minus        size={13} className="text-slate-300" />
                           }
-                          <span className="text-[11px] text-slate-400">Effective rate</span>
+                          <span className="text-[11px] text-slate-400">Effective rate:</span>
                           <span className={`text-[12px] font-bold ${
                             effectiveRate > 0 ? "text-emerald-600"
                             : effectiveRate < 0 ? "text-red-500" : "text-slate-500"
                           }`}>
-                            {effectiveRate > 0 ? "+" : ""}{effectiveRate.toFixed(2)}%/mo
+                            {effectiveRate > 0 ? "+" : ""}{effectiveRate.toFixed(2)}% / month
                           </span>
                         </div>
-                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                          scenario === "growth"       ? "bg-emerald-100 text-emerald-700"
-                          : scenario === "conservative" ? "bg-amber-100 text-amber-700"
-                          : scenario === "custom"       ? "bg-violet-100 text-violet-700"
-                          : "bg-cyan-100 text-cyan-700"
-                        }`}>
-                          {scenario === "custom" ? "Custom" : GROWTH_PRESETS[scenario].label}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${confCls}`}>
+                            {confLabel}
+                          </span>
+                          <span className="text-[10px] text-slate-400">Forecast reliability</span>
+                        </div>
                       </div>
                     </div>
 
-                    {/* ── Seasonality ─── */}
+                    {/* ── Seasonality ──────────────────────── */}
                     <div>
                       <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-3">Seasonality</p>
                       <div className="space-y-3">
-                        {/* Preset selector */}
                         <select
                           value={stream.seasonalityPreset}
                           onChange={(e) => {
                             const preset = e.target.value as SeasonalityPreset;
                             const mults  = preset !== "custom"
                               ? SEASONALITY_PRESETS[preset].months
-                              : stream.seasonalityMultipliers; // preserve existing custom
+                              : stream.seasonalityMultipliers;
                             updateDriver(stream.id, {
                               seasonalityPreset:      preset,
                               seasonalityMultipliers: mults,
@@ -507,24 +553,19 @@ export default function DriversPage() {
                           ))}
                         </select>
 
-                        {/* Seasonality description */}
                         {stream.seasonalityPreset !== "none" && (
-                          <p className="text-[11px] text-slate-400 italic">
-                            {SEASONALITY_PRESETS[stream.seasonalityPreset]?.desc}
-                            {stream.seasonalityPreset === "custom" && " — set by the Revenue Engine"}
-                          </p>
-                        )}
-
-                        {/* Mini bar chart */}
-                        {stream.seasonalityPreset !== "none" && (
-                          <div className="space-y-1">
+                          <>
+                            <p className="text-[11px] text-slate-400 italic">
+                              {SEASONALITY_PRESETS[stream.seasonalityPreset]?.desc}
+                              {stream.seasonalityPreset === "custom" && " — set by the Revenue Engine"}
+                            </p>
                             <SeasonalityChart multipliers={stream.seasonalityMultipliers} />
                             <div className="flex">
                               {MONTHS_SHORT.map((m, i) => (
                                 <span key={i} className="text-[9px] text-slate-300 flex-1 text-center">{m}</span>
                               ))}
                             </div>
-                            <div className="flex items-center gap-3 pt-1">
+                            <div className="flex items-center gap-4">
                               <span className="flex items-center gap-1 text-[10px] text-emerald-600">
                                 <span className="w-2 h-2 rounded-sm bg-emerald-400 inline-block" /> Peak
                               </span>
@@ -535,29 +576,104 @@ export default function DriversPage() {
                                 <span className="w-2 h-2 rounded-sm bg-cyan-300 inline-block" /> Neutral
                               </span>
                             </div>
-                          </div>
+                          </>
                         )}
                       </div>
                     </div>
+
+                    {/* ── Expansion Events accordion ────────── */}
+                    <Accordion
+                      title="Expansion Events"
+                      subtitle="Model a future capacity increase from a specific month"
+                      open={isExpOpen}
+                      onToggle={() => toggleSection(stream.id, "expansion")}
+                    >
+                      <div className="text-center py-6">
+                        <Sparkles size={22} className="text-slate-200 mx-auto mb-2" />
+                        <p className="text-xs text-slate-400 font-medium">No expansion events configured</p>
+                        <p className="text-[11px] text-slate-300 mt-1">
+                          e.g. new branch, new product category, new distributor — coming soon
+                        </p>
+                      </div>
+                    </Accordion>
+
+                    {/* ── Advanced Overrides accordion ──────── */}
+                    {stream.items.length > 0 && (
+                      <Accordion
+                        title="Advanced Overrides"
+                        subtitle={`Item & category-specific growth, pricing, and seasonality rules`}
+                        open={isAovOpen}
+                        onToggle={() => toggleSection(stream.id, "overrides")}
+                      >
+                        <div className="overflow-x-auto -mx-1">
+                          <table className="w-full text-[11px] text-slate-600 border-collapse">
+                            <thead>
+                              <tr className="border-b border-slate-100">
+                                <th className="text-left font-semibold text-slate-400 pb-2 pr-3">Item / Name</th>
+                                <th className="text-left font-semibold text-slate-400 pb-2 pr-3">Category</th>
+                                <th className="text-right font-semibold text-slate-400 pb-2 pr-3">Units/mo</th>
+                                <th className="text-right font-semibold text-slate-400 pb-2 pr-3">Unit Price</th>
+                                <th className="text-left font-semibold text-slate-400 pb-2 pr-3">Season</th>
+                                <th className="text-right font-semibold text-slate-400 pb-2">Monthly Rev</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {stream.items.map((it) => (
+                                <tr key={it.id} className="border-b border-slate-50 last:border-0">
+                                  <td className="py-2 pr-3 font-medium text-slate-700 whitespace-nowrap">{it.name}</td>
+                                  <td className="py-2 pr-3 text-slate-400">{it.category || "General"}</td>
+                                  <td className="py-2 pr-3 text-right tabular-nums">{it.volume.toLocaleString()}</td>
+                                  <td className="py-2 pr-3 text-right tabular-nums">{fmt(it.price)}</td>
+                                  <td className="py-2 pr-3">
+                                    <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full font-medium">
+                                      {it.seasonality_preset
+                                        ? SEASONALITY_PRESETS[it.seasonality_preset as SeasonalityPreset]?.label ?? it.seasonality_preset
+                                        : "Stream"}
+                                    </span>
+                                  </td>
+                                  <td className="py-2 text-right font-semibold text-slate-700 tabular-nums">{fmt(it.volume * it.price)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            {stream.items.length > 1 && (
+                              <tfoot>
+                                <tr className="border-t border-slate-200">
+                                  <td colSpan={5} className="pt-2.5 text-[11px] font-bold text-slate-500">Stream Total</td>
+                                  <td className="pt-2.5 text-right text-[11px] font-bold text-slate-800 tabular-nums">{fmt(streamTotal)}/mo</td>
+                                </tr>
+                              </tfoot>
+                            )}
+                          </table>
+                        </div>
+                      </Accordion>
+                    )}
 
                   </div>
                 </div>
               );
             })}
 
-            {/* Summary footer */}
+            {/* ── Save Drivers footer ───────────────────────────── */}
             <div className="bg-white border border-slate-200 rounded-2xl px-5 py-4 flex items-center justify-between gap-4">
               <div>
-                <p className="text-xs font-semibold text-slate-700">{streams.length} revenue stream{streams.length !== 1 ? "s" : ""} configured</p>
-                <p className="text-[11px] text-slate-400 mt-0.5">Changes save automatically. Open the forecast to see updated projections.</p>
+                <p className="text-xs font-semibold text-slate-700">
+                  {streams.length} revenue stream{streams.length !== 1 ? "s" : ""} configured
+                </p>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Changes save automatically. Click to lock in your custom drivers.
+                </p>
               </div>
-              <Link
-                href="/dashboard/apply"
-                className="flex items-center gap-2 px-4 py-2 bg-cyan-600 text-white text-xs font-semibold rounded-xl hover:bg-cyan-700 transition-colors shrink-0"
+              <button
+                onClick={saveDrivers}
+                disabled={saving}
+                className="flex items-center gap-2 px-5 py-2.5 text-sm font-semibold text-white rounded-xl transition-colors shrink-0 disabled:opacity-70"
+                style={{ background: saving ? "#64748b" : "linear-gradient(135deg,#0e7490,#0891b2)" }}
               >
-                <BarChart3 size={13} />
-                View Forecast
-              </Link>
+                {saving
+                  ? <><Loader2 size={14} className="animate-spin" /> Saving…</>
+                  : <><Check size={14} /> Save Drivers</>
+                }
+              </button>
             </div>
 
           </div>
