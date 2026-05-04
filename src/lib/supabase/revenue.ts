@@ -465,24 +465,35 @@ export async function saveStreamItems(
     position?: number;
   }>,
 ): Promise<DbStreamItem[]> {
-  // Delete all existing items for this stream
-  await supabase.from("stream_items").delete().eq("stream_id", streamId);
+  // Delete all existing items for this stream — surface errors so callers know
+  const { error: delErr } = await supabase
+    .from("stream_items")
+    .delete()
+    .eq("stream_id", streamId);
+  if (delErr) throw new Error(`saveStreamItems delete: ${delErr.message}`);
 
   if (items.length === 0) return [];
 
-  const rows = items.map((it, i) => ({
-    stream_id: streamId,
-    user_id: userId,
-    name: it.name,
-    category: it.category,
-    volume: it.volume,
-    price: it.price,
-    cost_price: it.costPrice ?? null,
-    unit: it.unit,
-    note: it.note ?? null,
-    seasonality_preset: it.seasonalityPreset ?? null,
-    position: it.position ?? i,
-  }));
+  // Build rows without optional columns so the INSERT succeeds even if
+  // migrations 004 (seasonality_preset) or 006 (cost_price) haven't been
+  // applied to this Supabase project yet.
+  const rows = items.map((it, i) => {
+    const row: Record<string, unknown> = {
+      stream_id: streamId,
+      user_id:   userId,
+      name:      it.name,
+      category:  it.category ?? "General",
+      volume:    it.volume,
+      price:     it.price,
+      unit:      it.unit,
+      note:      it.note ?? null,
+      position:  it.position ?? i,
+    };
+    // Only include migration-gated columns when they have a real value
+    if (it.costPrice != null)        row.cost_price          = it.costPrice;
+    if (it.seasonalityPreset != null) row.seasonality_preset  = it.seasonalityPreset;
+    return row;
+  });
 
   const { data, error } = await supabase
     .from("stream_items")
