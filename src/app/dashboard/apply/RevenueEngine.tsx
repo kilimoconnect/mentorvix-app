@@ -11,6 +11,7 @@ import {
   updateApplicationFlags,
 } from "@/lib/supabase/revenue";
 import { makeFmt } from "@/lib/utils/currency";
+import { SeasonalityBarChart } from "@/components/SeasonalityBarChart";
 
 /* ─────────────────────────────────── types ── */
 
@@ -664,32 +665,9 @@ function ConfirmGrowthCard({ profile, onConfirm, onAdjust }: ConfirmGrowthCardPr
   );
 }
 
-/* ── SeasonalityChart ── shared between SeasonalityCard and ConfirmSeasonalityCard */
-function SeasonalityChart({ multipliers }: { multipliers: number[]; height?: number }) {
-  const maxV = Math.max(...multipliers, 1);
-  return (
-    <div>
-      <div className="flex items-end gap-px" style={{ height: 32 }}>
-        {multipliers.map((v, i) => {
-          const barH = Math.max((v / maxV) * 100, 5);
-          return (
-            <div key={i} className="flex-1 flex flex-col justify-end" style={{ height: 32 }}
-              title={`${MONTHS_SHORT[i]}: ${v.toFixed(2)}×`}>
-              <div className="w-full rounded-t-sm transition-all duration-300"
-                style={{ height: `${barH}%`, background: v >= 1 ? "#0e7490" : "#cbd5e1", opacity: 0.85 }} />
-            </div>
-          );
-        })}
-      </div>
-      <div className="flex gap-px mt-0.5">
-        {["J","F","M","A","M","J","J","A","S","O","N","D"].map((m, mi) => (
-          <div key={mi} className="flex-1 text-center">
-            <span className="text-[7px] text-slate-300 font-medium">{m}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+/* ── SeasonalityChart ── delegate to shared Recharts component */
+function SeasonalityChart({ multipliers, height = 200 }: { multipliers: number[]; height?: number }) {
+  return <SeasonalityBarChart multipliers={multipliers} height={height} />;
 }
 
 /* ── SeasonalityCard ── */
@@ -792,7 +770,7 @@ function SeasonalityCard({ onConfirm }: SeasonalityCardProps) {
                 <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                   {preset === "custom" ? "Your Custom Pattern" : SEASONALITY_PRESETS[preset].label}
                 </p>
-                <p className="text-[10px] text-slate-400">Teal = above baseline · Gray = below</p>
+                <p className="text-[10px] text-slate-400">Blue = above baseline · Amber = below</p>
               </div>
               <SeasonalityChart multipliers={activeMultipliers} height={200} />
             </div>
@@ -889,7 +867,7 @@ function ConfirmSeasonalityCard({ profile, onConfirm, onEdit }: ConfirmSeasonali
         <div className="px-5 pt-4 pb-2 bg-slate-50">
           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">Monthly Revenue Index</p>
           <SeasonalityChart multipliers={profile.multipliers} height={200} />
-          <p className="text-[10px] text-slate-400 text-right mt-1">Teal = above baseline · Gray = below baseline</p>
+          <p className="text-[10px] text-slate-400 text-right mt-1">Blue = above baseline · Amber = below baseline</p>
         </div>
       )}
 
