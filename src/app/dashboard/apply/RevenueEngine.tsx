@@ -1552,6 +1552,8 @@ export function RevenueEngine({
         status: "completed" as const,
       };
       setStreamsSync(prev => prev.map((ws, i) => i === idx ? updated : ws));
+      /* notify page so it picks up growth + seasonality for the forecast */
+      onStreamsDetectedRef.current(streamsRef.current);
       addFeedItem({
         kind: "card", resolved: false,
         card: { type: "stream_summary", stream: updated },

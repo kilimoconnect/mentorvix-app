@@ -5069,10 +5069,28 @@ function ApplyPageInner() {
                   currency={currency}
                   onStreamsDetected={(detected) => {
                     setStreams(prev => {
-                      // Second call with same count = DB UUID sync after saveStreams resolves.
-                      // Only update IDs — preserve any items already written by onItemsSaved.
+                      // Same-length re-call = UUID sync OR stream-completion update.
+                      // Merge IDs + growth + seasonality from engine; preserve local overrides.
                       if (prev.length === detected.length && detected.length > 0) {
-                        return prev.map((s, i) => ({ ...s, id: detected[i].id }));
+                        return prev.map((s, i) => {
+                          const d = detected[i];
+                          return {
+                            ...s,
+                            id: d.id,
+                            // Pull in growth numbers if the engine now has them
+                            ...(d.growth ? {
+                              volumeGrowthPct:     d.growth.monthlyVolumePct,
+                              annualPriceGrowthPct: d.growth.annualPricePct,
+                              monthlyGrowthPct:    d.growth.monthlyVolumePct + d.growth.annualPricePct / 12,
+                            } : {}),
+                            // Pull in seasonality if the engine now has it
+                            ...(d.seasonality ? {
+                              seasonalityPreset:      d.seasonality.preset as SeasonalityPreset,
+                              seasonalityMultipliers: d.seasonality.multipliers,
+                            } : {}),
+                            driverDone: d.status === "completed" ? true : s.driverDone,
+                          };
+                        });
                       }
                       // Fresh detection — build full RevenueStream objects
                       return detected.map(ws => ({
