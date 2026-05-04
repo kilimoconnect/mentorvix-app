@@ -1756,21 +1756,28 @@ export function RevenueEngine({
       const s = streamsRef.current[idx];
       resolveCard(cardId, `${s.name} done`);
       addFeedItem({ kind: "divider", text: `${s.name} complete`, color: "emerald" });
-      /* Authoritative final write — includes growth + seasonality so they survive
-         refresh even if the individual confirm_growth / confirm_seasonality writes
-         failed silently (e.g. migration 007 wasn't applied at that point). */
+      /* Authoritative final write — TWO separate calls so a missing-column
+         error on seasonality (migration 007) cannot silently kill the
+         growth + driver_done write (which are in the base schema). */
       if (s.id && !s.id.startsWith("local-")) {
+        const sid  = s.id;
         const g    = pendingGrowthRef.current;
         const seas = pendingSeasonalityRef.current;
-        const patch: Parameters<typeof updateStream>[2] = { driver_done: true };
-        if (g) {
-          patch.monthly_growth_pct = g.monthlyVolumePct + g.annualPricePct / 12;
-        }
+
+        /* Call 1 — always safe: base-schema columns only */
+        const basePatch: Parameters<typeof updateStream>[2] = { driver_done: true };
+        if (g) basePatch.monthly_growth_pct = g.monthlyVolumePct + g.annualPricePct / 12;
+        updateStream(sb, sid, basePatch).catch((e) =>
+          console.error("[engine] updateStream (base):", e)
+        );
+
+        /* Call 2 — seasonality: migration-007 columns; safe to fail independently */
         if (seas) {
-          patch.seasonality_preset      = seas.preset;
-          patch.seasonality_multipliers = seas.preset === "custom" ? seas.multipliers : null;
+          updateStream(sb, sid, {
+            seasonality_preset:      seas.preset,
+            seasonality_multipliers: seas.preset === "custom" ? seas.multipliers : null,
+          }).catch((e) => console.error("[engine] updateStream (seasonality):", e));
         }
-        updateStream(sb, s.id, patch).catch(console.error);
       }
 
       const nextIdx = idx + 1;

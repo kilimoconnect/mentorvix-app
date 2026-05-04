@@ -10,6 +10,7 @@ import {
   saveIntakeConversation, saveDriverConversation, saveForecastConfig,
   saveProjectionSnapshot, loadApplicationState, updateApplicationFlags,
   saveActuals, saveOperatingExpenses, saveBusinessProfile,
+  updateStream as updateStreamDb,
   type DbApplication, type ApplicationState, type DbBusinessProfile,
 } from "@/lib/supabase/revenue";
 import { RevenueEngine } from "./RevenueEngine";
@@ -6092,13 +6093,24 @@ function ApplyPageInner() {
                           );
                           for (let i = 0; i < savedStreams.length; i++) {
                             const local = streams[i]; const db = savedStreams[i];
-                            if (local?.items?.length && db) {
-                              await saveStreamItems(sb, db.id, userId, local.items.map((it, pos) => ({
-                                name: it.name, category: it.category,
-                                volume: it.volume, price: it.price,
-                                unit: it.unit, note: it.note,
-                                seasonalityPreset: it.seasonalityPreset, position: pos,
-                              })));
+                            if (local && db) {
+                              // Persist seasonality on the stream row (migration-007 columns).
+                              // saveStreams only writes base columns, so we need a separate call.
+                              updateStreamDb(sb, db.id, {
+                                seasonality_preset:      local.seasonalityPreset ?? "none",
+                                seasonality_multipliers: local.seasonalityPreset === "custom"
+                                  ? local.seasonalityMultipliers : null,
+                              }).catch(e => console.error("[save&continue] seasonality:", e));
+
+                              if (local.items?.length) {
+                                await saveStreamItems(sb, db.id, userId, local.items.map((it, pos) => ({
+                                  name: it.name, category: it.category,
+                                  volume: it.volume, price: it.price,
+                                  costPrice: it.costPrice,           // ← was missing
+                                  unit: it.unit, note: it.note,
+                                  seasonalityPreset: it.seasonalityPreset, position: pos,
+                                })));
+                              }
                             }
                           }
 
