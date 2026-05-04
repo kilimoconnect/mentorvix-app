@@ -256,15 +256,21 @@ export default function DriversPage() {
 
   const closePicker = () => { setOpenItemPicker(null); setCustomMode(null); };
 
-  /* ── Update one item's seasonality → stored in revenue_streams.item_overrides ── */
-  // Writing to item_overrides (migration 010) instead of stream_items.seasonality_preset
-  // (migration 004) ensures apply/page.tsx getItemParams always sees it — overrides have
-  // the highest priority in the resolution chain.
-  const updateItemSeason = useCallback(async (
+  /* ── Update one item's seasonality ─────────────────────────────────────────── */
+  // Dual-write strategy for reliability:
+  //   1. revenue_streams.item_overrides  (migration 010 — highest priority in getItemParams)
+  //   2. stream_items.seasonality_preset (migration 004 — fallback in getItemParams)
+  // If migration 010 hasn't been applied the first write fails silently; the second
+  // write ensures the apply page can still read the value via its fallback chain.
+  const updateItemSeason = useCallback((
     itemId: string, itemName: string, streamId: string,
     preset: SeasonalityPreset | null,
     multipliers?: number[] | null,
   ) => {
+    // Capture the resolved newOverrides outside setStreams so we can use them in the
+    // DB writes below (setStreams updater may run asynchronously in React 18).
+    let resolvedOverrides: GrowthOverride[] = [];
+
     setStreams((prev) => prev.map((s) => {
       if (s.id !== streamId) return s;
 
@@ -274,8 +280,7 @@ export default function DriversPage() {
 
       let newOverrides: GrowthOverride[];
       if (preset === null) {
-        // "Stream default" — clear seasonality from override; remove override if it has
-        // no other fields worth keeping (growth rates, launch/sunset).
+        // "Stream default" — strip seasonality; remove override if nothing else is on it.
         if (existing) {
           const stripped = { ...existing, seasonalityPreset: null, seasonalityMultipliers: null };
           const hasOther = stripped.volumeGrowthPct != null || stripped.annualPriceGrowthPct != null
@@ -287,14 +292,12 @@ export default function DriversPage() {
           newOverrides = s.overrides;
         }
       } else if (existing) {
-        // Update seasonality on the existing override (preserves growth-rate fields)
         newOverrides = s.overrides.map((o) =>
           o === existing
             ? { ...o, seasonalityPreset: preset, seasonalityMultipliers: preset === "custom" ? (multipliers ?? null) : null }
             : o
         );
       } else {
-        // Create a new seasonality-only override
         const newOvr: GrowthOverride = {
           id:          crypto.randomUUID(),
           scope:       "item",
@@ -306,14 +309,37 @@ export default function DriversPage() {
         newOverrides = [...s.overrides, newOvr];
       }
 
-      // Fire-and-forget DB persist (optimistic update done above in setStreams)
-      const dbVal = newOverrides.length > 0 ? (newOverrides as unknown[]) : null;
-      updateStreamDb(sb, streamId, { item_overrides: dbVal }).catch((e) =>
-        console.error("[drivers] updateItemSeason persist:", e)
-      );
-
+      resolvedOverrides = newOverrides;
       return { ...s, overrides: newOverrides };
     }));
+
+    // ── DB write 1: revenue_streams.item_overrides (migration 010, primary) ──
+    const dbVal = resolvedOverrides.length > 0 ? (resolvedOverrides as unknown[]) : null;
+    updateStreamDb(sb, streamId, { item_overrides: dbVal }).catch((e) =>
+      console.error("[drivers] item_overrides write failed (migration 010 applied?):", e)
+    );
+
+    // ── DB write 2: stream_items.seasonality_preset (migration 004, fallback) ──
+    // This is the column apply/page.tsx reads via getItemParams' fallback chain
+    // (it.seasonalityPreset), so it works even when migration 010 is missing.
+    (async () => {
+      const { error } = await sb
+        .from("stream_items")
+        .update({ seasonality_preset: preset ?? null })
+        .eq("id", itemId);
+      if (error) {
+        console.error("[drivers] stream_items seasonality_preset write failed:", error);
+        return;
+      }
+      // Also try to write seasonality_multipliers (migration 009 — optional column)
+      if (preset === "custom" && multipliers) {
+        const { error: mErr } = await sb
+          .from("stream_items")
+          .update({ seasonality_multipliers: multipliers })
+          .eq("id", itemId);
+        if (mErr) console.error("[drivers] stream_items seasonality_multipliers write (migration 009 applied?):", mErr);
+      }
+    })();
   }, [sb]);
 
   /* ── Optimistic update + debounced save ───────────────────── */
