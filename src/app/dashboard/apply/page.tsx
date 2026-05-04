@@ -231,6 +231,21 @@ function effectiveMonthlyGrowth(volPct: number, annualPricePct: number): number 
   return parseFloat((volPct + annualPricePct / 12).toFixed(2));
 }
 
+/**
+ * Derive the growth scenario purely from vol + price rates — do NOT rely on
+ * stream.scenario which is set by the UI preset buttons and may lag behind
+ * engine-extracted rates written directly to the DB.
+ */
+function effectiveScenario(volPct: number, annualPricePct: number): GrowthScenario {
+  const r     = effectiveMonthlyGrowth(volPct, annualPricePct);
+  const cRate = effectiveMonthlyGrowth(0.5, 2.0);   // conservative
+  const gRate = effectiveMonthlyGrowth(3.0, 8.0);   // growth
+  if (r === 0)                     return "base";
+  if (Math.abs(r - cRate) < 0.05) return "conservative";
+  if (Math.abs(r - gRate) < 0.1)  return "growth";
+  return "custom";
+}
+
 const COL_LABELS: Record<StreamType, { vol: string; price: string; rev: string }> = {
   product:      { vol: "Units/mo",       price: "Unit Price",     rev: "Monthly Rev"   },
   service:      { vol: "Clients/mo",     price: "Avg Fee",        rev: "Monthly Rev"   },
@@ -2919,7 +2934,8 @@ function ForecastView({
 
   const buildSnapshot = (src: RevenueStream[]): Map<string, DriverSnap> => {
     const map = new Map<string, DriverSnap>();
-    src.filter(s => s.scenario === "custom").forEach(s => {
+    // Use rate-based classification — s.scenario may lag behind engine-written DB rates
+    src.filter(s => effectiveScenario(s.volumeGrowthPct, s.annualPriceGrowthPct) === "custom").forEach(s => {
       map.set(s.id, {
         volumeGrowthPct:      s.volumeGrowthPct      ?? 0,
         annualPriceGrowthPct: s.annualPriceGrowthPct ?? 0,
@@ -2936,7 +2952,7 @@ function ForecastView({
 
   // Keep the snapshot up-to-date when streams change after mount (engine update, inline edit, etc.)
   useEffect(() => {
-    const customStreams = streams.filter(s => s.scenario === "custom");
+    const customStreams = streams.filter(s => effectiveScenario(s.volumeGrowthPct, s.annualPriceGrowthPct) === "custom");
     if (customStreams.length === 0) return;
     setSavedDriversSnapshot(prev => {
       const next = new Map(prev);
@@ -2996,9 +3012,14 @@ function ForecastView({
     ? ((Math.pow(years[years.length - 1].total / years[0].total, 1 / (years.length - 1)) - 1) * 100)
     : null;
 
-  // Dominant scenario across all streams
-  // "custom" wins if ANY stream has engine-defined rates (not a named preset)
-  const scenarioCounts = streams.reduce((acc, s) => { acc[s.scenario] = (acc[s.scenario] ?? 0) + 1; return acc; }, {} as Partial<Record<GrowthScenario, number>>);
+  // Dominant scenario — derived from RATES (effectiveScenario), not s.scenario.
+  // s.scenario is set by the UI preset buttons and may lag behind engine-extracted rates
+  // written to DB. effectiveScenario() classifies purely from vol/price which is always current.
+  const scenarioCounts = streams.reduce((acc, s) => {
+    const sc = effectiveScenario(s.volumeGrowthPct, s.annualPriceGrowthPct);
+    acc[sc] = (acc[sc] ?? 0) + 1;
+    return acc;
+  }, {} as Partial<Record<GrowthScenario, number>>);
   const dominantScenario: GrowthScenario =
     (scenarioCounts["custom"] ?? 0) > 0
       ? "custom"
@@ -4052,7 +4073,8 @@ function ForecastView({
                     {streamTotals.map((s, si) => {
                       const pct    = grandTotal > 0 ? Math.round((s.projTotal / grandTotal) * 100) : 0;
                       const sCagr  = years.length > 1 && s.yr1 > 0 ? ((Math.pow(s.yrN / s.yr1, 1 / (years.length - 1)) - 1) * 100) : null;
-                      const scCol  = s.scenario === "growth" ? "#059669" : s.scenario === "conservative" ? "#b45309" : s.scenario === "custom" ? "#7c3aed" : "#0e7490";
+                      const effSc  = effectiveScenario(s.volumeGrowthPct, s.annualPriceGrowthPct);
+                      const scCol  = effSc === "growth" ? "#059669" : effSc === "conservative" ? "#b45309" : effSc === "custom" ? "#7c3aed" : "#0e7490";
                       const hasSeasOvr = (s.overrides ?? []).some((o) => o.seasonalityPreset);
                       const hasItemSeas = s.items.some((it) => it.seasonalityPreset);
                       return (
@@ -4065,7 +4087,7 @@ function ForecastView({
                           </td>
                           <td className="px-3 py-2.5 text-right">
                             <span className="text-[11px] font-bold px-1.5 py-0.5 rounded-full" style={{ color: scCol, background: `${scCol}18` }}>
-                              {s.scenario === "custom" ? "Custom" : GROWTH_PRESETS[s.scenario as Exclude<GrowthScenario, "custom">].label}
+                              {effSc === "custom" ? "Custom" : GROWTH_PRESETS[effSc as Exclude<GrowthScenario, "custom">].label}
                             </span>
                           </td>
                           {/* Vol/mo — inline editable */}
