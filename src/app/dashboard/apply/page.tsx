@@ -406,7 +406,7 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
       // growth/pricing priority: item override > category override > stream default
       const getItemParams = (it: StreamItem) => {
         const ovrs    = s.overrides ?? [];
-        const itemOvr = ovrs.find((o) => o.scope === "item"     && o.targetId === it.id);
+        const itemOvr = ovrs.find((o) => o.scope === "item" && (o.targetId === it.id || o.targetName === it.name));
         const normCat = it.category || "General";
         const catOvr  = ovrs.find((o) => o.scope === "category" && (o.targetId || "General") === normCat);
         const ovr     = itemOvr ?? catOvr ?? null;
@@ -740,11 +740,16 @@ function ItemRow({
   const upN = (k: keyof StreamItem, v: string | number) => onChange({ ...item, [k]: v });
   const rev = itemMonthlyRev(item, type);
   const catLabel = (!item.category || item.category === "General") ? (streamName ?? "General") : item.category;
+  const [pickerOpen, setPickerOpen] = useState(false);
 
-  // Override is authoritative — show badge whenever any active override rule applies to this item.
-  // The select only shows when no override is in effect (item controls its own seasonality).
+  // Override is authoritative when active; item's own preset is editable via the picker when no override applies.
   const effectiveSeason: SeasonalityPreset | "" = overrideSeason ?? item.seasonalityPreset ?? "";
-  const fromOverride = !!overrideSeason;
+  const fromOverride = !!overrideSeason || effectiveSeason === "custom";
+
+  // Multipliers for the mini chart in the picker
+  const pickerMults = item.seasonalityPreset && item.seasonalityPreset !== "custom"
+    ? SEASONALITY_PRESETS[item.seasonalityPreset]?.months
+    : null;
 
   return (
     <tr className="group border-t border-slate-100 hover:bg-slate-50 transition-colors">
@@ -768,13 +773,13 @@ function ItemRow({
             className="w-20 text-xs text-right text-slate-700 bg-transparent border-b border-transparent group-hover:border-slate-200 focus:border-cyan-400 outline-none" />
         </div>
       </td>
+
+      {/* ── Season cell ── */}
       <td className="px-2 py-2 text-center">
-        {(fromOverride || effectiveSeason === "custom") ? (
-          /* Override rule is driving seasonality — show as a read-only badge.
-             "custom" can only be set via Advanced Override (not in the dropdown),
-             so always render a badge when it appears. */
+        {fromOverride ? (
+          /* Active override rule — read-only badge */
           <span
-            title="Set via Advanced Override rule"
+            title="Controlled by an Advanced Override rule"
             className="text-[9px] font-semibold text-cyan-700 bg-cyan-50 border border-cyan-200 px-1.5 py-0.5 rounded-full whitespace-nowrap cursor-default"
           >
             {effectiveSeason === "custom"
@@ -782,23 +787,71 @@ function ItemRow({
               : SEASONALITY_PRESETS[effectiveSeason as SeasonalityPreset]?.label ?? effectiveSeason}
           </span>
         ) : (
-          <select
-            value={item.seasonalityPreset ?? ""}
-            onChange={(e) => {
-              const val = e.target.value as SeasonalityPreset | "";
-              onChange({ ...item, seasonalityPreset: val || undefined });
-            }}
-            title="Per-item seasonality — overrides stream default"
-            className="text-[9px] text-slate-400 bg-transparent border-b border-transparent group-hover:border-slate-200 focus:border-cyan-400 outline-none cursor-pointer hover:text-slate-600 transition-colors max-w-[72px]">
-            <option value="">Stream</option>
-            {(Object.keys(SEASONALITY_PRESETS) as SeasonalityPreset[])
-              .filter((p) => p !== "custom")
-              .map((p) => (
-                <option key={p} value={p}>{SEASONALITY_PRESETS[p].label}</option>
-              ))}
-          </select>
+          /* Editable per-item seasonality picker */
+          <div className="relative flex justify-center">
+            <button
+              onClick={() => setPickerOpen((o) => !o)}
+              className={`text-[9px] font-medium px-2 py-0.5 rounded-full border transition-colors whitespace-nowrap ${
+                item.seasonalityPreset
+                  ? "text-slate-700 bg-slate-100 border-slate-300 hover:bg-slate-200"
+                  : "text-slate-400 bg-transparent border-transparent hover:border-slate-200 hover:bg-slate-50"
+              }`}
+            >
+              {item.seasonalityPreset
+                ? SEASONALITY_PRESETS[item.seasonalityPreset]?.label ?? item.seasonalityPreset
+                : "Stream"}
+            </button>
+
+            {pickerOpen && (
+              <div className="absolute z-50 bottom-full mb-1.5 left-1/2 -translate-x-1/2 bg-white border border-slate-200 rounded-2xl shadow-2xl p-3 w-52"
+                style={{ minWidth: 208 }}>
+                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-2">Item Seasonality</p>
+
+                {/* Preset list */}
+                <div className="space-y-0.5 max-h-40 overflow-y-auto mb-2">
+                  <button
+                    onClick={() => { onChange({ ...item, seasonalityPreset: undefined, seasonalityMultipliers: undefined }); setPickerOpen(false); }}
+                    className={`w-full text-left text-[10px] px-2 py-1 rounded-lg transition-colors ${
+                      !item.seasonalityPreset ? "bg-cyan-50 text-cyan-700 font-semibold" : "text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    Stream default
+                  </button>
+                  {(Object.keys(SEASONALITY_PRESETS) as SeasonalityPreset[])
+                    .filter((p) => p !== "custom")
+                    .map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => { onChange({ ...item, seasonalityPreset: p, seasonalityMultipliers: undefined }); setPickerOpen(false); }}
+                        className={`w-full text-left text-[10px] px-2 py-1 rounded-lg transition-colors ${
+                          item.seasonalityPreset === p ? "bg-cyan-50 text-cyan-700 font-semibold" : "text-slate-600 hover:bg-slate-50"
+                        }`}
+                      >
+                        {SEASONALITY_PRESETS[p].label}
+                        <span className="block text-[8px] text-slate-400 font-normal leading-tight">{SEASONALITY_PRESETS[p].desc}</span>
+                      </button>
+                    ))}
+                </div>
+
+                {/* Mini chart preview */}
+                {pickerMults && (
+                  <div className="border-t border-slate-100 pt-2">
+                    <SeasonalityBarChart multipliers={pickerMults} height={56} />
+                  </div>
+                )}
+
+                <button
+                  onClick={() => setPickerOpen(false)}
+                  className="w-full mt-1.5 text-[9px] text-slate-400 hover:text-slate-600 transition-colors"
+                >
+                  Close
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </td>
+
       <td className="px-3 py-2 text-right">
         <span className="text-xs font-semibold" style={{ color: "#0e7490" }}>{fmt(rev)}</span>
       </td>
@@ -1704,7 +1757,7 @@ function ItemTable({ stream, onUpdate, onApplySeasonalityToAll, fmt, currencySym
                     {catItems.map((item) => {
                       const catNorm  = item.category || "General";
                       const itemOvr  = (stream.overrides ?? []).find(
-                        (o) => o.scope === "item" && o.targetId === item.id && o.seasonalityPreset
+                        (o) => o.scope === "item" && (o.targetId === item.id || o.targetName === item.name) && o.seasonalityPreset
                       );
                       const catOvr   = (stream.overrides ?? []).find(
                         (o) => o.scope === "category" && (o.targetId || "General") === catNorm && o.seasonalityPreset
@@ -6066,13 +6119,11 @@ function ApplyPageInner() {
                                   if (Object.keys(idMap).length > 0) {
                                     resolvedStreams = streams.map((s) => ({ ...s, id: idMap[s.id] ?? s.id }));
                                   }
-                                  setStreams(resolvedStreams);
-                                  // Save items — only persist user-explicitly-set presets.
-                                  // Override seasonality is stored in stream.item_overrides and
-                                  // resolved at forecast time by getItemParams (override > item preset).
+                                  // Save items — capture returned UUIDs and remap override targetIds.
+                                  const finalStreams: typeof resolvedStreams = [];
                                   for (const s of resolvedStreams) {
                                     if (isDbId(s.id) && s.items.length > 0) {
-                                      await saveStreamItems(sb, s.id, userId, s.items.map((it, pos) => ({
+                                      const savedItems = await saveStreamItems(sb, s.id, userId, s.items.map((it, pos) => ({
                                         name: it.name, category: it.category ?? "General",
                                         volume: it.volume, price: it.price,
                                         unit: it.unit ?? "", note: it.note ?? "",
@@ -6081,8 +6132,31 @@ function ApplyPageInner() {
                                         seasonalityMultipliers: it.seasonalityMultipliers ?? null,
                                         position: pos,
                                       })));
+                                      // Remap item-scope override targetIds: old ID → new UUID from DB
+                                      const itemIdMap: Record<string, string> = {};
+                                      s.items.forEach((it, i) => {
+                                        const saved = savedItems[i];
+                                        if (saved && it.id !== saved.id) itemIdMap[it.id] = saved.id;
+                                      });
+                                      const updatedItems = s.items.map((it, i) => savedItems[i] ? { ...it, id: savedItems[i].id } : it);
+                                      if (Object.keys(itemIdMap).length > 0 && (s.overrides ?? []).some(o => o.scope === "item")) {
+                                        const updatedOverrides = (s.overrides ?? []).map((o) =>
+                                          o.scope === "item" && itemIdMap[o.targetId]
+                                            ? { ...o, targetId: itemIdMap[o.targetId] }
+                                            : o
+                                        );
+                                        await updateStreamDb(sb, s.id, {
+                                          item_overrides: updatedOverrides.length > 0 ? updatedOverrides as unknown[] : null,
+                                        } as Parameters<typeof updateStreamDb>[2]);
+                                        finalStreams.push({ ...s, items: updatedItems, overrides: updatedOverrides });
+                                      } else {
+                                        finalStreams.push({ ...s, items: updatedItems });
+                                      }
+                                    } else {
+                                      finalStreams.push(s);
                                     }
                                   }
+                                  setStreams(finalStreams);
                                   await updateApplicationFlags(sb, appId, { drivers_done: true });
                                 }
                                 go(3);
