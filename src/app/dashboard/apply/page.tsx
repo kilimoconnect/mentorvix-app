@@ -4279,20 +4279,21 @@ function ApplyPageInner() {
         type:                s.type as StreamType,
         confidence:          s.confidence as Confidence,
         // Growth fields — DB only stores combined monthly rate; decompose on restore
-        monthlyGrowthPct:    Number(s.monthly_growth_pct),
-        volumeGrowthPct:     Number(s.monthly_growth_pct), // treat stored rate as volume growth
-        annualPriceGrowthPct: 0,                            // price growth unknown — default 0
-        // Scenario: only classify as a named preset if the stored rate exactly matches one.
-        // Custom growth rates (e.g. 1.25%/mo) fall back to "base" (neutral) so clicking
-        // the scenario buttons doesn't silently overwrite the user's custom rate.
+        // Growth — prefer decomposed columns (migration-008); fall back to combined rate for old records
+        volumeGrowthPct:      s.volume_growth_pct       != null ? Number(s.volume_growth_pct)       : Number(s.monthly_growth_pct),
+        annualPriceGrowthPct: s.annual_price_growth_pct != null ? Number(s.annual_price_growth_pct) : 0,
+        monthlyGrowthPct:     Number(s.monthly_growth_pct),
+        // Scenario: only match a named preset if the effective rate is exact; custom rates → "base"
         scenario: (() => {
-          const r = Number(s.monthly_growth_pct);
+          const volPct   = s.volume_growth_pct       != null ? Number(s.volume_growth_pct)       : Number(s.monthly_growth_pct);
+          const pricePct = s.annual_price_growth_pct != null ? Number(s.annual_price_growth_pct) : 0;
+          const r = effectiveMonthlyGrowth(volPct, pricePct);
           const cRate = effectiveMonthlyGrowth(GROWTH_PRESETS.conservative.volPct, GROWTH_PRESETS.conservative.pricePct);
           const gRate = effectiveMonthlyGrowth(GROWTH_PRESETS.growth.volPct,       GROWTH_PRESETS.growth.pricePct);
           if (r === 0)                          return "base"         as GrowthScenario;
           if (Math.abs(r - cRate) < 0.05)      return "conservative" as GrowthScenario;
           if (Math.abs(r - gRate) < 0.1)       return "growth"       as GrowthScenario;
-          return "base" as GrowthScenario; // custom rate — show neutral Base label
+          return "base" as GrowthScenario; // custom rate — neutral label
         })(),
         subNewPerMonth:      Number(s.sub_new_per_month),
         subChurnPct:         Number(s.sub_churn_pct),
@@ -6117,12 +6118,14 @@ function ApplyPageInner() {
                           for (let i = 0; i < savedStreams.length; i++) {
                             const local = streams[i]; const db = savedStreams[i];
                             if (local && db) {
-                              // Persist seasonality on the stream row (migration-007 columns).
-                              // saveStreams only writes base columns, so we need a separate call.
+                              // Persist seasonality (007) + growth decomposition (008).
+                              // saveStreams only writes base columns, so we use a separate call.
                               updateStreamDb(sb, db.id, {
                                 seasonality_preset:      local.seasonalityPreset ?? "none",
-                                seasonality_multipliers: local.seasonalityMultipliers ?? null, // always write actual array
-                              }).catch(e => console.error("[save&continue] seasonality:", e));
+                                seasonality_multipliers: local.seasonalityMultipliers ?? null,
+                                volume_growth_pct:       local.volumeGrowthPct,
+                                annual_price_growth_pct: local.annualPriceGrowthPct,
+                              }).catch(e => console.error("[save&continue] growth+seasonality:", e));
 
                               if (local.items?.length) {
                                 await saveStreamItems(sb, db.id, userId, local.items.map((it, pos) => ({

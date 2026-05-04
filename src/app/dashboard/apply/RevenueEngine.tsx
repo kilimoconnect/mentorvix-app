@@ -1764,9 +1764,13 @@ export function RevenueEngine({
         const g    = pendingGrowthRef.current;
         const seas = pendingSeasonalityRef.current;
 
-        /* Call 1 — always safe: base-schema columns only */
+        /* Call 1 — base schema: driver_done + combined monthly rate */
         const basePatch: Parameters<typeof updateStream>[2] = { driver_done: true };
-        if (g) basePatch.monthly_growth_pct = g.monthlyVolumePct + g.annualPricePct / 12;
+        if (g) {
+          basePatch.monthly_growth_pct     = g.monthlyVolumePct + g.annualPricePct / 12;
+          basePatch.volume_growth_pct      = g.monthlyVolumePct;   // migration-008
+          basePatch.annual_price_growth_pct = g.annualPricePct;    // migration-008
+        }
         updateStream(sb, sid, basePatch).catch((e) =>
           console.error("[engine] updateStream (base):", e)
         );
@@ -1818,11 +1822,12 @@ export function RevenueEngine({
       for (const s of streamsRef.current) {
         if (!s.id || s.id.startsWith("local-")) continue;
 
-        /* Call 1 — base schema: driver_done + monthly_growth_pct */
+        /* Call 1 — base schema: driver_done + growth columns */
         const basePatch: Parameters<typeof updateStream>[2] = { driver_done: true };
         if (s.growth) {
-          basePatch.monthly_growth_pct =
-            s.growth.monthlyVolumePct + s.growth.annualPricePct / 12;
+          basePatch.monthly_growth_pct      = s.growth.monthlyVolumePct + s.growth.annualPricePct / 12;
+          basePatch.volume_growth_pct       = s.growth.monthlyVolumePct;  // migration-008
+          basePatch.annual_price_growth_pct = s.growth.annualPricePct;    // migration-008
         }
         updateStream(sb, s.id, basePatch).catch((e) =>
           console.error("[engine] confirm_model base:", s.name, e)

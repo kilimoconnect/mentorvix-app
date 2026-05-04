@@ -68,6 +68,8 @@ export interface DbRevenueStream {
   position: number;
   seasonality_preset: string | null;        // e.g. "none" | "q4_peak" | "custom"
   seasonality_multipliers: number[] | null; // 12-element array; null = use preset defaults
+  volume_growth_pct:       number | null;   // vol % per month (migration 008); null = old record
+  annual_price_growth_pct: number | null;   // price % per year (migration 008); null = old record
   created_at: string;
   updated_at: string;
 }
