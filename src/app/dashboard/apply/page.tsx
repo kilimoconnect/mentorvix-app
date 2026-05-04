@@ -4287,6 +4287,7 @@ function ApplyPageInner() {
           category:          it.category,
           volume:            Number(it.volume),
           price:             Number(it.price),
+          costPrice:         it.cost_price != null ? Number(it.cost_price) : undefined,
           unit:              it.unit,
           note:              it.note ?? undefined,
           seasonalityPreset: (it.seasonality_preset as SeasonalityPreset | null) ?? undefined,
@@ -4324,9 +4325,16 @@ function ApplyPageInner() {
       const ws = app.wizard_step ?? 0;
 
       if (ws === 0) {
-        // User was inside the Revenue Engine — restore there
-        setSituationDone(true); // ensure the engine renders
-        setStep(0);
+        // wizard_step=0 means the engine was mid-conversation.
+        // BUT if drivers_done=true (all streams confirmed), the engine finished and
+        // wizard_step just hadn't synced yet — jump straight to forecast.
+        if (app.drivers_done && restored.length > 0) {
+          setDir(1);
+          setStep(3);
+        } else {
+          setSituationDone(true); // ensure the engine renders
+          setStep(0);
+        }
         return;
       }
 

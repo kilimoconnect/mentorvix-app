@@ -6,7 +6,7 @@ import React, {
 import { Mic, MicOff, Send as SendIcon } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
-  saveStreams, saveStreamItems,
+  saveStreams, saveStreamItems, updateStream,
   saveIntakeConversation, saveDriverConversation,
   updateApplicationFlags,
 } from "@/lib/supabase/revenue";
@@ -1698,6 +1698,16 @@ export function RevenueEngine({
     /* ── confirm_growth (ConfirmGrowthCard confirmed) ── */
     if (action === "confirm_growth") {
       resolveCard(cardId, "Growth confirmed");
+      /* persist growth rate to DB so it survives refresh */
+      const g = pendingGrowthRef.current;
+      if (g) {
+        const sid = streamsRef.current[idx!]?.id;
+        const ui  = userIdRef.current;
+        if (sid && ui && !sid.startsWith("local-")) {
+          const effectiveMonthly = g.monthlyVolumePct + g.annualPricePct / 12;
+          updateStream(sb, sid, { monthly_growth_pct: effectiveMonthly }).catch(console.error);
+        }
+      }
       await advanceStreamPhase(idx!, "seasonality");
       return;
     }
@@ -1737,6 +1747,10 @@ export function RevenueEngine({
       const s = streamsRef.current[idx];
       resolveCard(cardId, `${s.name} done`);
       addFeedItem({ kind: "divider", text: `${s.name} complete`, color: "emerald" });
+      /* mark stream driver_done=true in DB so restore can detect completion */
+      if (s.id && !s.id.startsWith("local-")) {
+        updateStream(sb, s.id, { driver_done: true }).catch(console.error);
+      }
 
       const nextIdx = idx + 1;
       if (nextIdx < streamsRef.current.length) {
