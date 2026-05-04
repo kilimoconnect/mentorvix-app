@@ -1270,6 +1270,14 @@ export function RevenueEngine({
   const pendingGrowthRef = useRef<GrowthProfile | null>(null);
   /* pending seasonality buffer */
   const pendingSeasonalityRef = useRef<SeasonalityProfile | null>(null);
+  /* prop refs — keep latest prop values accessible inside stale useCallback closures */
+  const userIdRef           = useRef<string | null>(null);
+  const appIdRef            = useRef<string | null>(null);
+  const onItemsSavedRef     = useRef(onItemsSaved);
+  const onStreamsDetectedRef = useRef(onStreamsDetected);
+  const onForecastYearsRef  = useRef(onForecastYears);
+  const onForecastStartRef  = useRef(onForecastStart);
+  const onCompleteRef       = useRef(onComplete);
 
   const feedEndRef = useRef<HTMLDivElement>(null);
   const inputRef   = useRef<HTMLInputElement>(null);
@@ -1280,6 +1288,14 @@ export function RevenueEngine({
   /* mirror inputVal in a ref so beforeunload can read the latest value */
   const inputValRef = useRef(inputVal);
   useEffect(() => { inputValRef.current = inputVal; }, [inputVal]);
+  /* Keep prop refs in sync so stale useCallback closures always get latest values */
+  useEffect(() => { userIdRef.current           = userId;           }, [userId]);
+  useEffect(() => { appIdRef.current            = appId;            }, [appId]);
+  useEffect(() => { onItemsSavedRef.current     = onItemsSaved;     }, [onItemsSaved]);
+  useEffect(() => { onStreamsDetectedRef.current = onStreamsDetected; }, [onStreamsDetected]);
+  useEffect(() => { onForecastYearsRef.current  = onForecastYears;  }, [onForecastYears]);
+  useEffect(() => { onForecastStartRef.current  = onForecastStart;  }, [onForecastStart]);
+  useEffect(() => { onCompleteRef.current       = onComplete;       }, [onComplete]);
 
   const saveSession = useCallback((feedSnap: FeedItem[]) => {
     if (!STORAGE_KEY) return;
@@ -1419,14 +1435,16 @@ export function RevenueEngine({
 
   /* ── save streams to DB ── */
   async function dbSaveStreams(detected: DetectedStream[]): Promise<void> {
-    if (!appId || !userId) return;
+    const _appId  = appIdRef.current;
+    const _userId = userIdRef.current;
+    if (!_appId || !_userId) return;
     try {
       const rows = detected.map((d, i) => ({
         name: d.name, type: d.type, confidence: d.confidence,
         monthly_growth_pct: 0, sub_new_per_month: 0, sub_churn_pct: 0,
         rental_occupancy_pct: 0, driver_done: false, position: i,
       }));
-      const saved = await saveStreams(sb, appId, userId, rows);
+      const saved = await saveStreams(sb, _appId, _userId, rows);
       /* Build updated streams with real UUIDs from the current ref snapshot */
       const updated = streamsRef.current.map((ws, i) => ({
         ...ws,
@@ -1434,10 +1452,8 @@ export function RevenueEngine({
       }));
       /* Update engine state (pure — no side effects inside updater) */
       setStreamsSync(() => updated);
-      /* CRITICAL: tell the page about real UUIDs OUTSIDE the state updater.
-         The page's onStreamsDetected detects a same-length re-call and only
-         updates IDs, preserving any items already set by onItemsSaved. */
-      onStreamsDetected(updated);
+      /* CRITICAL: tell the page about real UUIDs OUTSIDE the state updater */
+      onStreamsDetectedRef.current(updated);
     } catch (e) {
       console.error("saveStreams error", e);
     }
@@ -1445,13 +1461,15 @@ export function RevenueEngine({
 
   /* ── save items to DB ── */
   async function dbSaveItems(streamId: string, streamName: string, items: ParsedItem[]): Promise<void> {
-    if (!userId) return;
+    /* Always notify page first — forecast needs items even if DB save fails */
+    onItemsSavedRef.current(streamId, streamName, items);
+    const _userId = userIdRef.current;
+    if (!_userId) return;
     try {
-      await saveStreamItems(sb, streamId, userId, items.map(it => ({
+      await saveStreamItems(sb, streamId, _userId, items.map(it => ({
         name: it.name, category: it.category, volume: it.volume,
         price: it.price, costPrice: it.costPrice, unit: it.unit, note: it.note,
       })));
-      onItemsSaved(streamId, streamName, items);
     } catch (e) {
       console.error("saveStreamItems error", e);
     }
@@ -1560,12 +1578,14 @@ export function RevenueEngine({
         items: [], growth: null, seasonality: null, status: "pending",
       }));
       setStreamsSync(() => ws);
-      onStreamsDetected(ws);
+      onStreamsDetectedRef.current(ws);
       await dbSaveStreams(detected);
       /* save intake conversation */
-      if (appId && userId) {
-        saveIntakeConversation(sb, appId, userId, intakeMsgsRef.current, null, true).catch(console.error);
-        updateApplicationFlags(sb, appId, { intake_done: true }).catch(console.error);
+      const _appId  = appIdRef.current;
+      const _userId = userIdRef.current;
+      if (_appId && _userId) {
+        saveIntakeConversation(sb, _appId, _userId, intakeMsgsRef.current, null, true).catch(console.error);
+        updateApplicationFlags(sb, _appId, { intake_done: true }).catch(console.error);
       }
       /* start first stream */
       setPhase({ kind: "stream", idx: 0, phase: "intro" });
@@ -1651,9 +1671,8 @@ export function RevenueEngine({
       const s = streamsRef.current[idx];
       resolveCard(cardId, `${items.length} items confirmed`);
       await dbSaveItems(s.id, s.name, items);
-      if (appId && userId) {
-        saveDriverConversation(sb, appId, userId, s.id, driverMsgsRef.current, null, false).catch(console.error);
-      }
+      { const ai = appIdRef.current, ui = userIdRef.current;
+        if (ai && ui) saveDriverConversation(sb, ai, ui, s.id, driverMsgsRef.current, null, false).catch(console.error); }
       await advanceStreamPhase(idx, "growth");
       return;
     }
@@ -1746,13 +1765,12 @@ export function RevenueEngine({
     /* ── confirm_model ── */
     if (action === "confirm_model") {
       resolveCard(cardId, "Model confirmed");
-      if (appId && userId) {
-        updateApplicationFlags(sb, appId, { drivers_done: true }).catch(console.error);
-      }
+      { const ai = appIdRef.current, ui = userIdRef.current;
+        if (ai && ui) updateApplicationFlags(sb, ai, { drivers_done: true }).catch(console.error); }
       setPhase("done");
       /* clear the saved session — workflow is complete */
       if (STORAGE_KEY) { try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ } }
-      onComplete();
+      onCompleteRef.current();
       return;
     }
 
@@ -1789,8 +1807,8 @@ export function RevenueEngine({
         const detected = parseStreams(reply);
         const fy = parseForecastYears(reply);
         const fs = parseForecastStart(reply);
-        if (fy) onForecastYears(fy);
-        if (fs) onForecastStart(fs.year, fs.month);
+        if (fy) onForecastYearsRef.current(fy);
+        if (fs) onForecastStartRef.current(fs.year, fs.month);
 
         const tagIdx = reply.indexOf("[STREAMS_DETECTED]");
         const clean = (tagIdx !== -1 ? reply.slice(0, tagIdx) : reply).trim();
@@ -1827,8 +1845,8 @@ export function RevenueEngine({
 
         const fy = parseForecastYears(reply);
         const fs = parseForecastStart(reply);
-        if (fy) onForecastYears(fy);
-        if (fs) onForecastStart(fs.year, fs.month);
+        if (fy) onForecastYearsRef.current(fy);
+        if (fs) onForecastStartRef.current(fs.year, fs.month);
 
         const chatCleanIdx = reply.indexOf("[ITEMS_DETECTED]");
         const chatClean = (chatCleanIdx !== -1 ? reply.slice(0, chatCleanIdx) : reply).trim();
