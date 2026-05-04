@@ -315,53 +315,78 @@ interface PasteDataCardProps {
 function PasteDataCard({ streamName, onExtract }: PasteDataCardProps) {
   const [text, setText] = useState("");
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-      <h3 className="font-semibold text-slate-800 mb-0.5">Import Product Data</h3>
-      <p className="text-xs text-slate-400 mb-4">{streamName}</p>
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
 
-      {/* Format guide */}
-      <div className="bg-slate-50 rounded-xl p-3 mb-4 text-xs text-slate-600">
-        <p className="font-semibold text-slate-700 mb-2">Enter one product per line with these details:</p>
-        <div className="grid grid-cols-3 gap-2 mb-3">
-          <div className="bg-white rounded-lg p-2 border border-slate-200">
-            <p className="font-bold text-cyan-700 text-[11px] uppercase tracking-wide mb-0.5">Product Name</p>
-            <p className="text-slate-500">What you sell<br/><em>e.g. Interior Paint 4L</em></p>
+      {/* header */}
+      <div className="px-5 pt-4 pb-3 border-b border-slate-100">
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-sm font-bold text-slate-800">Paste Your Products</h3>
+          <span className="text-[11px] text-slate-400 truncate max-w-[55%] text-right">{streamName}</span>
+        </div>
+        <p className="text-[11px] text-slate-500 leading-relaxed">
+          One product per line. Use any format that feels natural — the AI will extract the data.
+        </p>
+      </div>
+
+      {/* format strip */}
+      <div className="px-5 pt-3 pb-2">
+        <div className="flex items-center gap-1.5 font-mono text-[11px] bg-slate-50 rounded-lg px-3 py-2 border border-slate-100 select-none">
+          <span className="font-bold text-cyan-700">Product name</span>
+          <span className="text-slate-300">·</span>
+          <span className="font-semibold text-slate-600">monthly qty</span>
+          <span className="text-slate-300">·</span>
+          <span className="font-semibold text-slate-600">selling price</span>
+          <span className="text-slate-300">·</span>
+          <span className="text-slate-400 italic">cost (optional)</span>
+        </div>
+      </div>
+
+      {/* examples — two accepted styles */}
+      <div className="px-5 pb-3">
+        <p className="text-[10px] uppercase tracking-widest text-slate-300 mb-1.5 font-semibold">Accepted formats</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Columns (pipe or tab)</p>
+            <div className="font-mono text-[11px] text-slate-500 space-y-0.5 leading-relaxed">
+              <p>Item A &nbsp;| 50 | 25,000 | 18,000</p>
+              <p>Item B &nbsp;| 30 | 18,000</p>
+              <p>Item C &nbsp;| 20 | 45,000 | 32,000</p>
+            </div>
           </div>
-          <div className="bg-white rounded-lg p-2 border border-slate-200">
-            <p className="font-bold text-cyan-700 text-[11px] uppercase tracking-wide mb-0.5">Monthly Volume</p>
-            <p className="text-slate-500">Units sold per month<br/><em>e.g. 120</em></p>
-          </div>
-          <div className="bg-white rounded-lg p-2 border border-slate-200">
-            <p className="font-bold text-cyan-700 text-[11px] uppercase tracking-wide mb-0.5">Selling Price</p>
-            <p className="text-slate-500">Price per unit<br/><em>e.g. 18,500</em></p>
+          <div className="bg-slate-50 rounded-lg px-3 py-2 border border-slate-100">
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-1">Commas or free text</p>
+            <div className="font-mono text-[11px] text-slate-500 space-y-0.5 leading-relaxed">
+              <p>Item A, 50 units, 25000</p>
+              <p>Item B — 30/mo at 18,000</p>
+              <p>50 bags of Item C at 45k</p>
+            </div>
           </div>
         </div>
-        <p className="text-slate-400 text-[11px]">Optional 4th column: <span className="font-medium text-slate-500">Cost Price</span> (what you pay per unit — for profit calculation)</p>
       </div>
 
-      {/* Example */}
-      <div className="bg-slate-50 rounded-lg px-3 py-2 mb-3 font-mono text-[11px] text-slate-500 border border-dashed border-slate-200">
-        <p className="text-slate-400 mb-1">Example:</p>
-        <p>Interior White 4L &nbsp;| &nbsp;120 &nbsp;| &nbsp;18,500 &nbsp;| &nbsp;12,000</p>
-        <p>Exterior Gloss 4L &nbsp;| &nbsp;80 &nbsp;&nbsp;| &nbsp;22,000</p>
-        <p>Primer 5L &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;| &nbsp;45 &nbsp;&nbsp;| &nbsp;15,000 &nbsp;| &nbsp;9,500</p>
+      {/* textarea */}
+      <div className="px-5 pb-3">
+        <textarea
+          value={text}
+          onChange={e => setText(e.target.value)}
+          rows={7}
+          className="w-full border border-slate-200 rounded-xl px-3 py-3 text-sm text-slate-700 placeholder-slate-300 focus:outline-none focus:ring-2 focus:ring-cyan-300 resize-none"
+          placeholder={"Type or paste your products here…\nEstimates are fine — round numbers work."}
+        />
       </div>
 
-      <textarea
-        value={text}
-        onChange={e => setText(e.target.value)}
-        rows={7}
-        className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-300 resize-none font-mono"
-        placeholder={"Product Name | Monthly Volume | Selling Price | Cost Price (optional)\n...\n...\nEstimates are fine — round numbers work"}
-      />
-      <div className="flex items-center justify-between mt-3">
-        <p className="text-[11px] text-slate-400">You can also paste directly from Excel or Google Sheets</p>
+      {/* footer */}
+      <div className="px-5 pb-4 flex items-center justify-between gap-3">
+        <p className="text-[11px] text-slate-400 leading-snug">
+          Works with Excel copy-paste, Google Sheets,<br/>
+          or anything you type in your own words.
+        </p>
         <button
           onClick={() => { if (text.trim()) onExtract(text.trim()); }}
           disabled={!text.trim()}
-          className="px-4 py-2 bg-cyan-600 text-white rounded-lg text-sm font-semibold hover:bg-cyan-700 transition-colors disabled:opacity-40"
+          className="flex-shrink-0 px-5 py-2 bg-cyan-600 text-white rounded-xl text-sm font-bold hover:bg-cyan-700 transition-colors disabled:opacity-40 shadow-sm shadow-cyan-200"
         >
-          Extract Data →
+          Extract →
         </button>
       </div>
     </div>
