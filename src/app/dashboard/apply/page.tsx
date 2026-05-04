@@ -402,28 +402,29 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
         : 1;
 
       // Per-item override resolver:
-      // seasonality priority: item.seasonalityPreset > item override > category override > stream default
+      // seasonality priority: active override (item > category) > item's own preset > stream default
       // growth/pricing priority: item override > category override > stream default
       const getItemParams = (it: StreamItem) => {
-        const ovrs = s.overrides ?? [];
+        const ovrs    = s.overrides ?? [];
         const itemOvr = ovrs.find((o) => o.scope === "item"     && o.targetId === it.id);
         const normCat = it.category || "General";
         const catOvr  = ovrs.find((o) => o.scope === "category" && (o.targetId || "General") === normCat);
-        const ovr = itemOvr ?? catOvr ?? null;
-        // Item-level seasonality preset is highest priority (but "none" means flat, not "inherit")
-        // "custom" uses the item's own seasonalityMultipliers (persisted via DB migration 009)
-        const itemSeasonMults: number[] | null =
-          it.seasonalityPreset
-            ? (it.seasonalityPreset === "none"
-                ? Array(12).fill(1) as number[]
-                : it.seasonalityPreset === "custom"
-                  ? (it.seasonalityMultipliers ?? Array(12).fill(1) as number[])
-                  : SEASONALITY_PRESETS[it.seasonalityPreset]?.months ?? null)
-            : null;
+        const ovr     = itemOvr ?? catOvr ?? null;
+        // Seasonality priority: active override (item > category) > item's own preset > stream default
+        // Override rules are authoritative; item preset is fallback when no override applies.
+        const resolvedPreset = ovr?.seasonalityPreset ?? it.seasonalityPreset ?? null;
+        const resolvedMults  = ovr?.seasonalityMultipliers ?? it.seasonalityMultipliers ?? null;
+        const itemSeasonMults: number[] | null = resolvedPreset
+          ? (resolvedPreset === "none"
+              ? Array(12).fill(1) as number[]
+              : resolvedPreset === "custom"
+                ? (resolvedMults ?? Array(12).fill(1) as number[])
+                : SEASONALITY_PRESETS[resolvedPreset]?.months ?? null)
+          : null;
         return {
           volPct:      ovr?.volumeGrowthPct      ?? s.volumeGrowthPct      ?? 0,
           pricePct:    ovr?.annualPriceGrowthPct ?? s.annualPriceGrowthPct ?? 0,
-          seasonMults: itemSeasonMults ?? ovr?.seasonalityMultipliers ?? s.seasonalityMultipliers ?? (Array(12).fill(1) as number[]),
+          seasonMults: itemSeasonMults ?? s.seasonalityMultipliers ?? (Array(12).fill(1) as number[]),
           launchMonth: ovr?.launchMonth ?? null,
           sunsetMonth: ovr?.sunsetMonth ?? null,
         };
@@ -740,9 +741,10 @@ function ItemRow({
   const rev = itemMonthlyRev(item, type);
   const catLabel = (!item.category || item.category === "General") ? (streamName ?? "General") : item.category;
 
-  // Effective season: direct item preset > override rule preset > stream default
-  const effectiveSeason: SeasonalityPreset | "" = item.seasonalityPreset ?? overrideSeason ?? "";
-  const fromOverride = !item.seasonalityPreset && !!overrideSeason;
+  // Override is authoritative — show badge whenever any active override rule applies to this item.
+  // The select only shows when no override is in effect (item controls its own seasonality).
+  const effectiveSeason: SeasonalityPreset | "" = overrideSeason ?? item.seasonalityPreset ?? "";
+  const fromOverride = !!overrideSeason;
 
   return (
     <tr className="group border-t border-slate-100 hover:bg-slate-50 transition-colors">
@@ -1028,45 +1030,23 @@ function AdvancedGrowthModal({
       sunsetMonth: b.sunset !== "" ? Math.max(0, parseInt(b.sunset, 10) - 1) : null,
     };
 
-    // ── Propagate seasonality directly onto affected items so it persists to DB ──
-    // Item seasonalityPreset (+ seasonalityMultipliers for "custom") is saved via
-    // saveStreamItems → stream_items.seasonality_preset / .seasonality_multipliers.
-    // Without this, overrides only live in memory and vanish before the forecast runs.
+    // Clear item's own preset when an override rule is applied.
+    // Override rules are authoritative — getItemParams now prioritises override > item preset.
+    // Clearing prevents stale user-set presets from shadowing the active override.
     let updatedItems = stream.items;
-    if (season) {
-      const itemPreset   = season as SeasonalityPreset;
-      const itemMults    = season === "custom" ? [...b.customMults] : undefined;
-      if (ovr.scope === "item") {
-        updatedItems = stream.items.map((it) =>
-          it.id === ovr.targetId
-            ? { ...it, seasonalityPreset: itemPreset, ...(itemMults ? { seasonalityMultipliers: itemMults } : { seasonalityMultipliers: undefined }) }
-            : it
-        );
-      } else {
-        // category scope — apply to every item whose category matches
-        const normTarget = ovr.targetId || "General";
-        updatedItems = stream.items.map((it) =>
-          (it.category || "General") === normTarget
-            ? { ...it, seasonalityPreset: itemPreset, ...(itemMults ? { seasonalityMultipliers: itemMults } : { seasonalityMultipliers: undefined }) }
-            : it
-        );
-      }
+    if (ovr.scope === "item") {
+      updatedItems = stream.items.map((it) =>
+        it.id === ovr.targetId
+          ? { ...it, seasonalityPreset: undefined, seasonalityMultipliers: undefined }
+          : it
+      );
     } else {
-      // Seasonality cleared — remove preset from affected items so they inherit stream default
-      if (ovr.scope === "item") {
-        updatedItems = stream.items.map((it) =>
-          it.id === ovr.targetId
-            ? { ...it, seasonalityPreset: undefined, seasonalityMultipliers: undefined }
-            : it
-        );
-      } else {
-        const normTarget = ovr.targetId || "General";
-        updatedItems = stream.items.map((it) =>
-          (it.category || "General") === normTarget
-            ? { ...it, seasonalityPreset: undefined, seasonalityMultipliers: undefined }
-            : it
-        );
-      }
+      const normTarget = ovr.targetId || "General";
+      updatedItems = stream.items.map((it) =>
+        (it.category || "General") === normTarget
+          ? { ...it, seasonalityPreset: undefined, seasonalityMultipliers: undefined }
+          : it
+      );
     }
 
     const updatedStream = { ...stream, items: updatedItems };
@@ -1722,9 +1702,14 @@ function ItemTable({ stream, onUpdate, onApplySeasonalityToAll, fmt, currencySym
                       <td />
                     </tr>
                     {catItems.map((item) => {
-                      const itemOvr = (stream.overrides ?? []).find(
+                      const catNorm  = item.category || "General";
+                      const itemOvr  = (stream.overrides ?? []).find(
                         (o) => o.scope === "item" && o.targetId === item.id && o.seasonalityPreset
                       );
+                      const catOvr   = (stream.overrides ?? []).find(
+                        (o) => o.scope === "category" && (o.targetId || "General") === catNorm && o.seasonalityPreset
+                      );
+                      const activeOvr = itemOvr ?? catOvr;
                       return (
                         <ItemRow
                           key={item.id}
@@ -1735,7 +1720,7 @@ function ItemTable({ stream, onUpdate, onApplySeasonalityToAll, fmt, currencySym
                           fmt={fmt}
                           currencySymbol={currencySymbol}
                           streamName={stream.name}
-                          overrideSeason={itemOvr?.seasonalityPreset ?? null}
+                          overrideSeason={activeOvr?.seasonalityPreset ?? null}
                         />
                       );
                     })}
@@ -4370,8 +4355,9 @@ function ApplyPageInner() {
   // Currency-aware number formatter used everywhere outside ForecastView/RevenueMix
   const fmt = makeFmt(currency);
 
-  // Progress bar: 0=Setup, 1=Revenue Model (steps 0-2), 2=Forecast (step 3)
-  const displayStep = !situationDone ? 0 : step <= 2 ? 1 : 2;
+  // Progress bar: 0=Setup, 1=Revenue Model (steps 0-1), 2=Forecast (step 3)
+  // Step 2 (Revenue Driver Inputs) is now accessed via Edit Drivers on the forecast page.
+  const displayStep = !situationDone ? 0 : step <= 1 ? 1 : 2;
 
   // Intake chat
   const [messages,  setMessages]  = useState<ChatMessage[]>([]);
@@ -4592,7 +4578,7 @@ function ApplyPageInner() {
       setDir(1);
       setStep(targetStep);
 
-      // For Revenue Data: resume at the first stream that still needs items
+      // For Revenue Driver Inputs: resume at the first stream that still needs items
       if (targetStep === 2) {
         const firstPending = restored.findIndex((s) => !s.driverDone);
         setStreamIdx(firstPending >= 0 ? firstPending : 0);
@@ -5656,7 +5642,7 @@ function ApplyPageInner() {
                                 }
                                 await updateApplicationFlags(sb, appId, { intake_done: true });
                               }
-                              setStreamIdx(0); setDriverModes({}); go(2);
+                              go(3);
                             } catch (e) {
                               console.error("[Collect Revenue Data] save failed:", e);
                               setSaveError(e instanceof Error ? e.message : (e as {message?: string}).message ?? "Save failed — please retry");
@@ -6079,56 +6065,21 @@ function ApplyPageInner() {
                                   if (Object.keys(idMap).length > 0) {
                                     resolvedStreams = streams.map((s) => ({ ...s, id: idMap[s.id] ?? s.id }));
                                   }
-                                  // Merge override seasonality into items so the forecast state
-                                  // matches what will be written to DB (idempotent: if commitRule
-                                  // already propagated, item already has the preset).
-                                  resolvedStreams = resolvedStreams.map((s) => {
-                                    const ovrs = s.overrides ?? [];
-                                    if (!ovrs.some((o) => o.seasonalityPreset)) return s;
-                                    return {
-                                      ...s,
-                                      items: s.items.map((it) => {
-                                        if (it.seasonalityPreset) return it; // already set
-                                        const normCat = it.category || "General";
-                                        const itemOvr = ovrs.find((o) => o.scope === "item"     && o.targetId === it.id             && o.seasonalityPreset);
-                                        const catOvr  = ovrs.find((o) => o.scope === "category" && (o.targetId || "General") === normCat && o.seasonalityPreset);
-                                        const ovr = itemOvr ?? catOvr;
-                                        if (!ovr?.seasonalityPreset) return it;
-                                        return { ...it, seasonalityPreset: ovr.seasonalityPreset, seasonalityMultipliers: ovr.seasonalityMultipliers ?? undefined };
-                                      }),
-                                    };
-                                  });
                                   setStreams(resolvedStreams);
-                                  // Save items for every stream that has them.
-                                  // Effective seasonality = item's own preset (set by commitRule)
-                                  // OR fall back to any matching override rule in stream.overrides —
-                                  // this covers overrides that were created before the commitRule fix.
+                                  // Save items — only persist user-explicitly-set presets.
+                                  // Override seasonality is stored in stream.item_overrides and
+                                  // resolved at forecast time by getItemParams (override > item preset).
                                   for (const s of resolvedStreams) {
                                     if (isDbId(s.id) && s.items.length > 0) {
-                                      const ovrs = s.overrides ?? [];
-                                      await saveStreamItems(sb, s.id, userId, s.items.map((it, pos) => {
-                                        let effectivePreset      = it.seasonalityPreset ?? null;
-                                        let effectiveMults       = it.seasonalityMultipliers ?? null;
-                                        if (!effectivePreset) {
-                                          const normCat  = it.category || "General";
-                                          const itemOvr  = ovrs.find((o) => o.scope === "item"     && o.targetId === it.id             && o.seasonalityPreset);
-                                          const catOvr   = ovrs.find((o) => o.scope === "category" && (o.targetId || "General") === normCat && o.seasonalityPreset);
-                                          const ovr      = itemOvr ?? catOvr;
-                                          if (ovr?.seasonalityPreset) {
-                                            effectivePreset = ovr.seasonalityPreset;
-                                            effectiveMults  = ovr.seasonalityMultipliers;
-                                          }
-                                        }
-                                        return {
-                                          name: it.name, category: it.category ?? "General",
-                                          volume: it.volume, price: it.price,
-                                          unit: it.unit ?? "", note: it.note ?? "",
-                                          costPrice: it.costPrice ?? null,
-                                          seasonalityPreset:      effectivePreset,
-                                          seasonalityMultipliers: effectiveMults,
-                                          position: pos,
-                                        };
-                                      }));
+                                      await saveStreamItems(sb, s.id, userId, s.items.map((it, pos) => ({
+                                        name: it.name, category: it.category ?? "General",
+                                        volume: it.volume, price: it.price,
+                                        unit: it.unit ?? "", note: it.note ?? "",
+                                        costPrice: it.costPrice ?? null,
+                                        seasonalityPreset:      it.seasonalityPreset ?? null,
+                                        seasonalityMultipliers: it.seasonalityMultipliers ?? null,
+                                        position: pos,
+                                      })));
                                     }
                                   }
                                   await updateApplicationFlags(sb, appId, { drivers_done: true });
@@ -6314,7 +6265,7 @@ function ApplyPageInner() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                   <button onClick={() => go(2)}
                     className="flex items-center justify-center gap-2 py-3.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
-                    <ArrowLeft className="w-4 h-4" /> Adjust Numbers
+                    <ArrowLeft className="w-4 h-4" /> Edit Drivers
                   </button>
                   <button
                     disabled={isSaving}
