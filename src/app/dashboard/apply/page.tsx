@@ -4314,11 +4314,23 @@ function ApplyPageInner() {
       }
 
       // ── Determine which step to restore ────────────────────────────────────
-      // wizard_step in DB is written by the auto-save useEffect as the React
-      // `step` variable value (0=intake,1=confirm,2=revenue,3=forecast).
-      // When streams exist the user must be at least on Confirm Structure (step≥1).
+      // wizard_step in DB mirrors the React `step` value (0=Revenue Engine,
+      // 1=confirm structure, 2=revenue drivers, 3=forecast).
+      //
+      // wizard_step === 0 means the user was mid-Revenue-Engine conversation.
+      // The engine saves streams to DB during that flow, so we must NOT
+      // floor to step 1 just because streams exist — restore step 0 and let
+      // the engine's own localStorage session handle the conversation replay.
       const ws = app.wizard_step ?? 0;
-      const targetStep = Math.min(Math.max(ws, 1), 3);
+
+      if (ws === 0) {
+        // User was inside the Revenue Engine — restore there
+        setSituationDone(true); // ensure the engine renders
+        setStep(0);
+        return;
+      }
+
+      const targetStep = Math.min(ws, 3);
       setDir(1);
       setStep(targetStep);
 
