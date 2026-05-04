@@ -1756,9 +1756,21 @@ export function RevenueEngine({
       const s = streamsRef.current[idx];
       resolveCard(cardId, `${s.name} done`);
       addFeedItem({ kind: "divider", text: `${s.name} complete`, color: "emerald" });
-      /* mark stream driver_done=true in DB so restore can detect completion */
+      /* Authoritative final write — includes growth + seasonality so they survive
+         refresh even if the individual confirm_growth / confirm_seasonality writes
+         failed silently (e.g. migration 007 wasn't applied at that point). */
       if (s.id && !s.id.startsWith("local-")) {
-        updateStream(sb, s.id, { driver_done: true }).catch(console.error);
+        const g    = pendingGrowthRef.current;
+        const seas = pendingSeasonalityRef.current;
+        const patch: Parameters<typeof updateStream>[2] = { driver_done: true };
+        if (g) {
+          patch.monthly_growth_pct = g.monthlyVolumePct + g.annualPricePct / 12;
+        }
+        if (seas) {
+          patch.seasonality_preset      = seas.preset;
+          patch.seasonality_multipliers = seas.preset === "custom" ? seas.multipliers : null;
+        }
+        updateStream(sb, s.id, patch).catch(console.error);
       }
 
       const nextIdx = idx + 1;

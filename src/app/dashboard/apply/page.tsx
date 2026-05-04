@@ -4378,7 +4378,7 @@ function ApplyPageInner() {
             .select("*")
             .eq("id", targetAppId)
             .eq("user_id", user.id) // security: only own apps
-            .single();
+            .maybeSingle();
           if (error || !data) {
             // Fallback: load/create the latest draft
             app = await getOrCreateApplication(sb, user.id);
