@@ -1809,6 +1809,35 @@ export function RevenueEngine({
     /* ── confirm_model ── */
     if (action === "confirm_model") {
       resolveCard(cardId, "Model confirmed");
+
+      /* ── Final authoritative DB write for growth + seasonality ──────────────
+         streamsRef holds every stream with .growth and .seasonality already set
+         (populated during stream_summary phase). Two independent calls per
+         stream: base-schema columns first (always safe), then migration-007
+         seasonality columns (can fail without killing the growth write). */
+      for (const s of streamsRef.current) {
+        if (!s.id || s.id.startsWith("local-")) continue;
+
+        /* Call 1 — base schema: driver_done + monthly_growth_pct */
+        const basePatch: Parameters<typeof updateStream>[2] = { driver_done: true };
+        if (s.growth) {
+          basePatch.monthly_growth_pct =
+            s.growth.monthlyVolumePct + s.growth.annualPricePct / 12;
+        }
+        updateStream(sb, s.id, basePatch).catch((e) =>
+          console.error("[engine] confirm_model base:", s.name, e)
+        );
+
+        /* Call 2 — migration-007: seasonality_preset + seasonality_multipliers */
+        if (s.seasonality) {
+          updateStream(sb, s.id, {
+            seasonality_preset:      s.seasonality.preset,
+            seasonality_multipliers: s.seasonality.preset === "custom"
+              ? s.seasonality.multipliers : null,
+          }).catch((e) => console.error("[engine] confirm_model seasonality:", s.name, e));
+        }
+      }
+
       { const ai = appIdRef.current, ui = userIdRef.current;
         if (ai && ui) updateApplicationFlags(sb, ai, { drivers_done: true }).catch(console.error); }
       setPhase("done");
