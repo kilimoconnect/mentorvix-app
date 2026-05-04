@@ -886,7 +886,7 @@ function OverrideRow({
                 {(ovr.seasonalityMultipliers ?? Array(12).fill(1) as number[]).map((v, mi) => (
                   <div key={mi} className="flex items-center gap-2">
                     <span className="text-[9px] text-slate-400 w-7 text-right shrink-0">{months12[mi]}</span>
-                    <input type="range" min={0} max={3} step={0.05} value={v}
+                    <input type="range" min={0} max={5} step={0.05} value={v}
                       onChange={(e) => {
                         const mults = [...(ovr.seasonalityMultipliers ?? Array(12).fill(1) as number[])];
                         mults[mi] = parseFloat(e.target.value);
@@ -1162,7 +1162,7 @@ function AdvancedGrowthModal({
                       {stream.seasonalityMultipliers.map((v, mi) => (
                         <div key={mi} className="flex items-center gap-2">
                           <span className="text-[9px] text-slate-400 w-7 text-right shrink-0">{months12[mi]}</span>
-                          <input type="range" min={0} max={3} step={0.05} value={v}
+                          <input type="range" min={0} max={5} step={0.05} value={v}
                             onChange={(e) => { const m2 = [...stream.seasonalityMultipliers]; m2[mi] = parseFloat(e.target.value); onUpdate({ ...stream, seasonalityMultipliers: m2 }); }}
                             className="flex-1 h-1 appearance-none cursor-pointer rounded-full" style={{ accentColor: "#0e7490" }} />
                           <span className="text-[9px] font-bold text-slate-600 w-8 text-right shrink-0">{v.toFixed(2)}×</span>
@@ -1253,27 +1253,7 @@ function AdvancedGrowthModal({
                     {/* Bar preview — shown whenever a preset is selected */}
                     {b.seasonality && (() => {
                       const mults = b.seasonality === "custom" ? b.customMults : SEASONALITY_PRESETS[b.seasonality]?.months ?? Array(12).fill(1) as number[];
-                      const maxV = Math.max(...mults, 1);
-                      return (
-                        <div className="mt-2">
-                          <div className="flex items-end gap-px" style={{ height: 28 }}>
-                            {mults.map((v, mi) => (
-                              <div key={mi} className="flex-1 flex flex-col justify-end" style={{ height: 28 }}
-                                title={`${months12[mi]}: ${v.toFixed(2)}×`}>
-                                <div className="w-full rounded-t-sm transition-all duration-300"
-                                  style={{ height: `${Math.max((v / maxV) * 100, 5)}%`, background: v >= 1 ? "#0e7490" : "#cbd5e1", opacity: 0.85 }} />
-                              </div>
-                            ))}
-                          </div>
-                          <div className="flex gap-px mt-0.5">
-                            {["J","F","M","A","M","J","J","A","S","O","N","D"].map((m, mi) => (
-                              <div key={mi} className="flex-1 text-center">
-                                <span className="text-[7px] text-slate-300">{m}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      );
+                      return <div className="mt-2"><SeasonalityBarChart multipliers={mults} height={140} /></div>;
                     })()}
                   </div>
 
@@ -1301,7 +1281,7 @@ function AdvancedGrowthModal({
                       {b.customMults.map((v, mi) => (
                         <div key={mi} className="flex items-center gap-2">
                           <span className="text-[9px] text-slate-400 w-7 text-right shrink-0">{months12[mi]}</span>
-                          <input type="range" min={0} max={20} step={0.1} value={v}
+                          <input type="range" min={0} max={5} step={0.05} value={v}
                             onChange={(e) => {
                               const m2 = [...b.customMults]; m2[mi] = parseFloat(e.target.value); setB({ customMults: m2 });
                             }}
@@ -1537,7 +1517,7 @@ function ItemTable({ stream, onUpdate, onApplySeasonalityToAll, fmt, currencySym
                   <span className="text-[9px] text-slate-400 w-7 text-right shrink-0">
                     {["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][mi]}
                   </span>
-                  <input type="range" min={0} max={20} step={0.1} value={v}
+                  <input type="range" min={0} max={5} step={0.05} value={v}
                     onChange={(e) => {
                       const m2 = [...stream.seasonalityMultipliers];
                       m2[mi] = parseFloat(e.target.value);
