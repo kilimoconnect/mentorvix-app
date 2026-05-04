@@ -407,7 +407,8 @@ function projectRevenue(streams: RevenueStream[], totalMonths: number, startDate
       const getItemParams = (it: StreamItem) => {
         const ovrs = s.overrides ?? [];
         const itemOvr = ovrs.find((o) => o.scope === "item"     && o.targetId === it.id);
-        const catOvr  = ovrs.find((o) => o.scope === "category" && o.targetId === it.category);
+        const normCat = it.category || "General";
+        const catOvr  = ovrs.find((o) => o.scope === "category" && (o.targetId || "General") === normCat);
         const ovr = itemOvr ?? catOvr ?? null;
         // Item-level seasonality preset is highest priority (but "none" means flat, not "inherit")
         const itemSeasonMults: number[] | null =
@@ -3607,7 +3608,7 @@ function ForecastView({
                             <td className="pl-8 pr-3 py-2 text-[10px] text-slate-500 sticky left-0 bg-slate-50/30">
                               <span className="flex items-center gap-1.5">
                                 <span className="w-1 h-1 rounded-full bg-slate-300 shrink-0" />
-                                {it.name}{it.category ? ` · ${it.category}` : ""}
+                                {it.name}{(it.category && it.category !== "General") ? ` · ${it.category}` : ""}
                               </span>
                             </td>
                             {years.map((y, i) => (
@@ -3787,7 +3788,7 @@ function ForecastView({
                                 <td className="pl-8 pr-3 py-1.5 text-[10px] text-slate-500 sticky left-0 bg-slate-50/30">
                                   <span className="flex items-center gap-1.5">
                                     <span className="w-1 h-1 rounded-full bg-slate-300 shrink-0" />
-                                    {it.name}{it.category ? ` · ${it.category}` : ""}
+                                    {it.name}{(it.category && it.category !== "General") ? ` · ${it.category}` : ""}
                                   </span>
                                 </td>
                                 {quarters.map((q) => (
@@ -4484,7 +4485,7 @@ function ApplyPageInner() {
         items: (state.itemsByStream[s.id] ?? []).map((it) => ({
           id:                it.id,
           name:              it.name,
-          category:          it.category,
+          category:          it.category ?? "General",
           volume:            Number(it.volume),
           price:             Number(it.price),
           costPrice:         it.cost_price != null ? Number(it.cost_price) : undefined,
