@@ -164,6 +164,30 @@ function parseForecastStart(text: string): { year: number; month: number } | nul
   return { year, month };
 }
 
+/* ─────────────────────────────────── session persistence ── */
+interface SavedSession {
+  feed: FeedItem[];
+  streams: WorkingStream[];
+  phase: EnginePhase;
+  intakeMsgs: ChatMsg[];
+  driverMsgs: ChatMsg[];
+  intakeCtx: string;
+  pendingItems: ParsedItem[];
+  pendingGrowth: GrowthProfile | null;
+  pendingSeasonality: SeasonalityProfile | null;
+  inputVal: string;
+  savedAt: number;
+}
+
+function inputLockForPhase(phase: EnginePhase): boolean {
+  if (phase === "done" || phase === "confirm_streams" || phase === "confirm_model") return true;
+  if (typeof phase === "object" && phase.kind === "stream") {
+    const sp = phase.phase;
+    return sp !== "collect_chat" && sp !== "collect_paste";
+  }
+  return false; /* detecting — input is active for intake chat */
+}
+
 /* ─────────────────────────────────── uid helper ── */
 let _uid = 0;
 function uid() { return ++_uid; }
@@ -978,6 +1002,56 @@ export function RevenueEngine({
   const inputRef   = useRef<HTMLInputElement>(null);
   const sb = createClient();
 
+  /* ── session persistence ── */
+  const STORAGE_KEY = appId ? `mentorvix-engine-${appId}` : null;
+  /* mirror inputVal in a ref so beforeunload can read the latest value */
+  const inputValRef = useRef(inputVal);
+  useEffect(() => { inputValRef.current = inputVal; }, [inputVal]);
+
+  const saveSession = useCallback((feedSnap: FeedItem[]) => {
+    if (!STORAGE_KEY) return;
+    try {
+      const session: SavedSession = {
+        feed: feedSnap,
+        streams: streamsRef.current,
+        phase: phaseRef.current,
+        intakeMsgs: intakeMsgsRef.current,
+        driverMsgs: driverMsgsRef.current,
+        intakeCtx: intakeCtxRef.current,
+        pendingItems: pendingItemsRef.current,
+        pendingGrowth: pendingGrowthRef.current,
+        pendingSeasonality: pendingSeasonalityRef.current,
+        inputVal: inputValRef.current,
+        savedAt: Date.now(),
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+    } catch { /* storage quota or SSR */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [STORAGE_KEY]);
+
+  /* auto-save on every feed update */
+  useEffect(() => {
+    if (feed.length > 0) saveSession(feed);
+  }, [feed, saveSession]);
+
+  /* also capture in-flight inputVal on page unload (covers mid-type refresh) */
+  useEffect(() => {
+    if (!STORAGE_KEY) return;
+    const onUnload = () => {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw) as SavedSession;
+          parsed.inputVal = inputValRef.current;
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+        }
+      } catch { /* ignore */ }
+    };
+    window.addEventListener("beforeunload", onUnload);
+    return () => window.removeEventListener("beforeunload", onUnload);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [STORAGE_KEY]);
+
   /* ── helpers ── */
   const addFeedItem = useCallback((item: FeedItemInput) => {
     const id = uid();
@@ -1380,6 +1454,8 @@ export function RevenueEngine({
         updateApplicationFlags(sb, appId, { drivers_done: true }).catch(console.error);
       }
       setPhase("done");
+      /* clear the saved session — workflow is complete */
+      if (STORAGE_KEY) { try { localStorage.removeItem(STORAGE_KEY); } catch { /* ignore */ } }
       onComplete();
       return;
     }
@@ -1513,6 +1589,40 @@ export function RevenueEngine({
   }
 
   useEffect(() => {
+    /* try to restore a saved session first */
+    if (STORAGE_KEY) {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const s = JSON.parse(raw) as SavedSession;
+          const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+          if (Date.now() - s.savedAt < SEVEN_DAYS && s.feed && s.feed.length > 0) {
+            /* strip in-flight typing indicators */
+            const cleanFeed = s.feed.filter(f => f.kind !== "typing");
+            /* re-seed the uid counter above the highest existing id */
+            if (cleanFeed.length > 0) {
+              _uid = Math.max(...cleanFeed.map(f => f.id));
+            }
+            /* restore all state */
+            setFeed(cleanFeed);
+            setStreams(s.streams ?? []);
+            streamsRef.current       = s.streams ?? [];
+            phaseRef.current         = s.phase ?? "detecting";
+            intakeMsgsRef.current    = s.intakeMsgs ?? [];
+            driverMsgsRef.current    = s.driverMsgs ?? [];
+            intakeCtxRef.current     = s.intakeCtx ?? "";
+            pendingItemsRef.current  = s.pendingItems ?? [];
+            pendingGrowthRef.current = s.pendingGrowth ?? null;
+            pendingSeasonalityRef.current = s.pendingSeasonality ?? null;
+            setInputVal(s.inputVal ?? "");
+            setInputLocked(inputLockForPhase(s.phase ?? "detecting"));
+            return; /* skip startIntake */
+          } else {
+            localStorage.removeItem(STORAGE_KEY); /* expired */
+          }
+        }
+      } catch { /* corrupt data — fall through to fresh start */ }
+    }
     startIntake();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
