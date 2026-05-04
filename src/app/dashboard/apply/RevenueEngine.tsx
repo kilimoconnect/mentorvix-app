@@ -1,6 +1,6 @@
 "use client";
 
-import {
+import React, {
   useState, useEffect, useRef, useCallback,
 } from "react";
 import { Mic, MicOff, Send as SendIcon } from "lucide-react";
@@ -785,22 +785,42 @@ function SeasonalityCard({ onConfirm }: SeasonalityCardProps) {
                   Set each month — 1.0 = baseline, 1.5 = 50% higher, 0.7 = 30% lower
                 </p>
                 <div className="grid grid-cols-2 gap-x-4 gap-y-2">
-                  {MONTHS_SHORT.map((month, i) => (
-                    <div key={month} className="flex items-center gap-2">
-                      <span className="text-[11px] font-semibold text-slate-500 w-7 flex-shrink-0">{month}</span>
-                      <input
-                        type="range"
-                        min={0.3} max={2.5} step={0.05}
-                        value={custom[i]}
-                        onChange={e => setMonthMultiplier(i, parseFloat(e.target.value))}
-                        className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer"
-                        style={{ accentColor: custom[i] >= 1 ? "#0891b2" : "#f59e0b" }}
-                      />
-                      <span className="text-[11px] font-mono font-bold w-8 text-right flex-shrink-0"
-                        style={{ color: custom[i] >= 1 ? "#0891b2" : "#f59e0b" }}>
-                        {custom[i].toFixed(2)}
-                      </span>
-                    </div>
+                  {/* Left col: Jan–Jun (0–5) | Right col: Jul–Dec (6–11) */}
+                  {[0,1,2,3,4,5].map((i) => (
+                    <React.Fragment key={i}>
+                      {/* Left: month i */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-semibold text-slate-500 w-7 flex-shrink-0">{MONTHS_SHORT[i]}</span>
+                        <input
+                          type="range"
+                          min={0.3} max={2.5} step={0.05}
+                          value={custom[i]}
+                          onChange={e => setMonthMultiplier(i, parseFloat(e.target.value))}
+                          className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer"
+                          style={{ accentColor: custom[i] >= 1 ? "#0891b2" : "#f59e0b" }}
+                        />
+                        <span className="text-[11px] font-mono font-bold w-8 text-right flex-shrink-0"
+                          style={{ color: custom[i] >= 1 ? "#0891b2" : "#f59e0b" }}>
+                          {custom[i].toFixed(2)}
+                        </span>
+                      </div>
+                      {/* Right: month i+6 */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] font-semibold text-slate-500 w-7 flex-shrink-0">{MONTHS_SHORT[i + 6]}</span>
+                        <input
+                          type="range"
+                          min={0.3} max={2.5} step={0.05}
+                          value={custom[i + 6]}
+                          onChange={e => setMonthMultiplier(i + 6, parseFloat(e.target.value))}
+                          className="flex-1 h-1.5 rounded-full appearance-none cursor-pointer"
+                          style={{ accentColor: custom[i + 6] >= 1 ? "#0891b2" : "#f59e0b" }}
+                        />
+                        <span className="text-[11px] font-mono font-bold w-8 text-right flex-shrink-0"
+                          style={{ color: custom[i + 6] >= 1 ? "#0891b2" : "#f59e0b" }}>
+                          {custom[i + 6].toFixed(2)}
+                        </span>
+                      </div>
+                    </React.Fragment>
                   ))}
                 </div>
               </div>
