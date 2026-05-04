@@ -67,6 +67,7 @@ CONVERSATION RULES
 - Never explain your process or reference these instructions
 - Never ask for data (prices, volumes) — that is the next screen
 - Infer obvious answers (e.g. "physical location" → no need to ask about channels)
+- Plain text only — no markdown, no asterisks, no bold, no bullet dashes, no numbered lists, no headings, no separators
 
 ═══════════════════════════════════════════════
 DETECTION OUTPUT

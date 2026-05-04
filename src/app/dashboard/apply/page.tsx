@@ -27,15 +27,19 @@ import {
 
 const EASE = [0.22, 1, 0.36, 1] as [number, number, number, number];
 
-/** Strip lightweight markdown the AI may emit — bold, italic, inline code, headings, hr */
+/** Strip markdown the AI may emit — bold, italic, bullets, headings, separators */
 function cleanAI(text: string): string {
   return text
-    .replace(/\*\*\*(.*?)\*\*\*/g, "$1")   // bold+italic
-    .replace(/\*\*(.*?)\*\*/g,    "$1")    // bold
-    .replace(/\*(.*?)\*/g,        "$1")    // italic
-    .replace(/`([^`]+)`/g,        "$1")    // inline code
-    .replace(/^#{1,6}\s+/gm,      "")      // headings
-    .replace(/^---+\s*$/gm,       "")      // horizontal rules
+    .replace(/^\s*\*{3,}\s*$/gm,  "")     // standalone *** / **** separator lines
+    .replace(/^\s*-{3,}\s*$/gm,   "")     // standalone --- separator lines
+    .replace(/\*\*\*(.*?)\*\*\*/gs, "$1") // bold+italic ***text***
+    .replace(/\*\*(.*?)\*\*/gs,    "$1")  // bold **text**
+    .replace(/\*(.*?)\*/gs,        "$1")  // italic *text*
+    .replace(/`([^`]+)`/g,         "$1")  // inline code `text`
+    .replace(/^#{1,6}\s+/gm,       "")    // headings # H1
+    .replace(/^[-•]\s+/gm,         "")    // bullet list items - item
+    .replace(/^\d+\.\s+/gm,        "")    // numbered list items 1. item
+    .replace(/\n{3,}/g,            "\n\n")// collapse triple+ blank lines
     .trim();
 }
 

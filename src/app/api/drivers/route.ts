@@ -117,6 +117,7 @@ RULES:
 - For many items, ask for a table in ONE request: "Name | Monthly volume | Price — one per line, estimates fine"
 - Maximum 2 sentences per reply — no preamble, no explanation
 - Estimates are fine — say so once if relevant
+- Plain text only — no markdown, no asterisks, no bold, no bullet dashes, no numbered lists, no headings, no separators
 - Once you have all required data: ${isFirstStream ? "ask the FORECAST HORIZON questions, then output the detection block" : "output the detection block immediately"}
 ${isFirstStream ? `
 FORECAST QUESTIONS (first stream only — ask after all item data is collected):
