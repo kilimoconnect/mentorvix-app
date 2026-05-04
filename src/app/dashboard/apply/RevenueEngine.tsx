@@ -35,7 +35,11 @@ interface GrowthProfile {
   annualPricePct: number;
 }
 
-type SeasonalityPreset = "none" | "q4_peak" | "q1_slow" | "summer_peak" | "end_of_year" | "construction" | "custom";
+type SeasonalityPreset =
+  | "none"
+  | "q4_peak" | "q1_slow" | "summer_peak" | "end_of_year" | "construction"
+  | "wet_season" | "harvest" | "school_term" | "tourism_high" | "ramadan" | "back_to_school" | "mid_year_slow" | "agri_planting"
+  | "custom";
 
 interface SeasonalityProfile {
   variation: "none" | "mild" | "strong";
@@ -104,13 +108,23 @@ interface RevenueEngineProps {
 /* ─────────────────────────────────── constants ── */
 
 const SEASONALITY_PRESETS: Record<SeasonalityPreset, { label: string; multipliers: number[] }> = {
-  none:         { label: "No seasonal variation",   multipliers: Array(12).fill(1) },
-  q4_peak:      { label: "Q4 Retail Peak",          multipliers: [0.82,0.80,0.90,0.92,0.95,0.98,0.95,0.92,1.00,1.05,1.20,1.51] },
-  q1_slow:      { label: "Q1 Slow Start",           multipliers: [0.75,0.78,0.95,1.05,1.10,1.12,1.12,1.08,1.02,1.02,1.00,1.01] },
-  summer_peak:  { label: "Summer Peak",             multipliers: [0.80,0.82,0.90,1.00,1.08,1.20,1.28,1.22,1.10,0.98,0.90,0.72] },
-  end_of_year:  { label: "Year-End Corporate",      multipliers: [0.88,0.88,0.92,0.95,1.00,1.00,0.92,0.95,1.05,1.10,1.18,1.17] },
-  construction: { label: "Dry Season Peak",         multipliers: [1.15,1.18,1.20,1.10,1.05,0.85,0.80,0.82,0.90,1.00,1.05,0.90] },
-  custom:       { label: "Custom",                  multipliers: Array(12).fill(1) },
+  none:          { label: "No seasonal variation",  multipliers: Array(12).fill(1) },
+  // ── Original 5 ──
+  q4_peak:       { label: "Q4 Retail Peak",         multipliers: [0.82,0.80,0.90,0.92,0.95,0.98,0.95,0.92,1.00,1.05,1.20,1.51] },
+  q1_slow:       { label: "Q1 Slow Start",          multipliers: [0.75,0.78,0.95,1.05,1.10,1.12,1.12,1.08,1.02,1.02,1.00,1.01] },
+  summer_peak:   { label: "Summer Peak",            multipliers: [0.80,0.82,0.90,1.00,1.08,1.20,1.28,1.22,1.10,0.98,0.90,0.72] },
+  end_of_year:   { label: "Year-End Corporate",     multipliers: [0.88,0.88,0.92,0.95,1.00,1.00,0.92,0.95,1.05,1.10,1.18,1.17] },
+  construction:  { label: "Dry Season Peak",        multipliers: [1.15,1.18,1.20,1.10,1.05,0.85,0.80,0.82,0.90,1.00,1.05,0.90] },
+  // ── New patterns ──
+  wet_season:    { label: "Wet Season Slowdown",    multipliers: [1.10,1.05,1.00,0.90,0.75,0.65,0.60,0.65,0.80,1.00,1.10,1.15] },  // dry months peak, rainy months slow
+  harvest:       { label: "Harvest Season",         multipliers: [0.85,0.82,0.90,0.95,1.00,0.95,0.90,0.95,1.05,1.25,1.35,1.03] },  // Oct–Nov harvest spike
+  school_term:   { label: "School Term Peak",       multipliers: [1.00,1.05,1.10,1.05,1.05,0.70,0.65,0.70,1.20,1.25,1.15,0.80] },  // holidays dip, term peaks
+  tourism_high:  { label: "Tourism High Season",    multipliers: [1.30,1.25,1.15,1.05,0.90,0.80,0.85,0.90,0.95,1.00,1.10,1.35] },  // Jan + Dec peak
+  ramadan:       { label: "Ramadan / Eid Surge",    multipliers: [0.95,0.95,1.50,1.60,1.20,0.90,0.85,0.88,0.90,0.92,0.95,1.40] },  // Mar–Apr surge, Dec festive
+  back_to_school:{ label: "Back-to-School Spike",   multipliers: [1.10,1.05,0.95,0.92,0.90,0.80,0.80,1.45,1.35,1.10,0.92,0.72] },  // Aug–Sep spike
+  mid_year_slow: { label: "Mid-Year Slowdown",      multipliers: [1.10,1.05,1.02,0.95,0.85,0.75,0.72,0.78,0.95,1.10,1.15,1.18] },  // Jun–Aug trough
+  agri_planting: { label: "Agri Planting Cycle",    multipliers: [0.80,0.82,1.10,1.30,1.20,0.90,0.75,0.80,0.85,1.00,1.05,0.93] },  // Mar–May planting spend
+  custom:        { label: "Custom",                 multipliers: Array(12).fill(1) },
 };
 
 const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -693,12 +707,20 @@ function SeasonalityCard({ onConfirm }: SeasonalityCardProps) {
   const [custom, setCustom] = useState<number[]>(Array(12).fill(1));
 
   const presetOptions: Array<{ value: SeasonalityPreset; label: string }> = [
-    { value: "q4_peak",      label: "Q4 Retail Peak" },
-    { value: "q1_slow",      label: "Q1 Slow Start" },
-    { value: "summer_peak",  label: "Summer Peak" },
-    { value: "end_of_year",  label: "Year-End Corporate" },
-    { value: "construction", label: "Dry Season Peak" },
-    { value: "custom",       label: "Custom ✏️" },
+    { value: "q4_peak",        label: "Q4 Retail Peak" },
+    { value: "q1_slow",        label: "Q1 Slow Start" },
+    { value: "summer_peak",    label: "Summer Peak" },
+    { value: "end_of_year",    label: "Year-End Corporate" },
+    { value: "construction",   label: "Dry Season Peak" },
+    { value: "wet_season",     label: "Wet Season Slowdown" },
+    { value: "harvest",        label: "Harvest Season" },
+    { value: "school_term",    label: "School Term Peak" },
+    { value: "tourism_high",   label: "Tourism High Season" },
+    { value: "ramadan",        label: "Ramadan / Eid Surge" },
+    { value: "back_to_school", label: "Back-to-School Spike" },
+    { value: "mid_year_slow",  label: "Mid-Year Slowdown" },
+    { value: "agri_planting",  label: "Agri Planting Cycle" },
+    { value: "custom",         label: "Custom ✏️" },
   ];
 
   const activeMultipliers = preset === "custom" ? custom : SEASONALITY_PRESETS[preset].multipliers;
@@ -750,7 +772,7 @@ function SeasonalityCard({ onConfirm }: SeasonalityCardProps) {
           <>
             <div>
               <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Seasonality Pattern</p>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {presetOptions.map(o => (
                   <button
                     key={o.value}
