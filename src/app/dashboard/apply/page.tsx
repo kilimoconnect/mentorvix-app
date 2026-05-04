@@ -5137,6 +5137,19 @@ function ApplyPageInner() {
                         s.name === streamName ? { ...s, items: mapped, driverDone: true } : s
                       );
                     });
+                    /* Belt-and-suspenders DB save from the page.
+                       The page's `streams` state already has real UUIDs (from onStreamsDetected
+                       UUID sync which fires before the driver chat even starts), and the page
+                       creates a fresh Supabase client — no stale-closure risk. */
+                    const realId = (streams.find(s => s.id === streamId) ?? streams.find(s => s.name === streamName))?.id;
+                    if (realId && !realId.startsWith("local-") && appId && userId) {
+                      const sbPage = createClient();
+                      saveStreamItems(sbPage, realId, userId, items.map(it => ({
+                        name: it.name, category: it.category ?? "General",
+                        volume: it.volume, price: it.price,
+                        costPrice: it.costPrice, unit: it.unit, note: it.note,
+                      }))).catch(e => console.error("[page] saveStreamItems:", e));
+                    }
                   }}
                   onForecastYears={setForecastHorizon}
                   onForecastStart={(y, m) => { setForecastStartYear(y); setForecastStartMonth(m); }}
