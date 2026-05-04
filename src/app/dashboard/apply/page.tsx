@@ -730,11 +730,16 @@ function StreamTypeControls({ stream, onUpdate }: { stream: RevenueStream; onUpd
 
 /* ═══════════════════════════════════════ ItemRow ══ */
 function ItemRow({
-  item, type, onChange, onDelete, fmt, currencySymbol, streamName,
-}: { item: StreamItem; type: StreamType; onChange: (i: StreamItem) => void; onDelete: () => void; fmt: (n: number) => string; currencySymbol: string; streamName?: string }) {
+  item, type, onChange, onDelete, fmt, currencySymbol, streamName, overrideSeason,
+}: { item: StreamItem; type: StreamType; onChange: (i: StreamItem) => void; onDelete: () => void; fmt: (n: number) => string; currencySymbol: string; streamName?: string; overrideSeason?: SeasonalityPreset | null }) {
   const upN = (k: keyof StreamItem, v: string | number) => onChange({ ...item, [k]: v });
   const rev = itemMonthlyRev(item, type);
   const catLabel = (!item.category || item.category === "General") ? (streamName ?? "General") : item.category;
+
+  // Effective season: direct item preset > override rule preset > stream default
+  const effectiveSeason: SeasonalityPreset | "" = item.seasonalityPreset ?? overrideSeason ?? "";
+  const fromOverride = !item.seasonalityPreset && !!overrideSeason;
+
   return (
     <tr className="group border-t border-slate-100 hover:bg-slate-50 transition-colors">
       <td className="px-3 py-2">
@@ -758,21 +763,33 @@ function ItemRow({
         </div>
       </td>
       <td className="px-2 py-2 text-center">
-        <select
-          value={item.seasonalityPreset ?? ""}
-          onChange={(e) => {
-            const val = e.target.value as SeasonalityPreset | "";
-            onChange({ ...item, seasonalityPreset: val || undefined });
-          }}
-          title="Per-item seasonality — overrides stream default"
-          className="text-[9px] text-slate-400 bg-transparent border-b border-transparent group-hover:border-slate-200 focus:border-cyan-400 outline-none cursor-pointer hover:text-slate-600 transition-colors max-w-[72px]">
-          <option value="">Stream</option>
-          {(Object.keys(SEASONALITY_PRESETS) as SeasonalityPreset[])
-            .filter((p) => p !== "custom")
-            .map((p) => (
-              <option key={p} value={p}>{SEASONALITY_PRESETS[p].label}</option>
-            ))}
-        </select>
+        {fromOverride ? (
+          /* Override rule is driving seasonality — show as a read-only badge */
+          <span
+            title="Set via Advanced Override rule"
+            className="text-[9px] font-semibold text-cyan-700 bg-cyan-50 border border-cyan-200 px-1.5 py-0.5 rounded-full whitespace-nowrap cursor-default"
+          >
+            {effectiveSeason === "custom"
+              ? "Custom"
+              : SEASONALITY_PRESETS[effectiveSeason as SeasonalityPreset]?.label ?? effectiveSeason}
+          </span>
+        ) : (
+          <select
+            value={item.seasonalityPreset ?? ""}
+            onChange={(e) => {
+              const val = e.target.value as SeasonalityPreset | "";
+              onChange({ ...item, seasonalityPreset: val || undefined });
+            }}
+            title="Per-item seasonality — overrides stream default"
+            className="text-[9px] text-slate-400 bg-transparent border-b border-transparent group-hover:border-slate-200 focus:border-cyan-400 outline-none cursor-pointer hover:text-slate-600 transition-colors max-w-[72px]">
+            <option value="">Stream</option>
+            {(Object.keys(SEASONALITY_PRESETS) as SeasonalityPreset[])
+              .filter((p) => p !== "custom")
+              .map((p) => (
+                <option key={p} value={p}>{SEASONALITY_PRESETS[p].label}</option>
+              ))}
+          </select>
+        )}
       </td>
       <td className="px-3 py-2 text-right">
         <span className="text-xs font-semibold" style={{ color: "#0e7490" }}>{fmt(rev)}</span>
@@ -1655,18 +1672,24 @@ function ItemTable({ stream, onUpdate, onApplySeasonalityToAll, fmt, currencySym
                       </td>
                       <td />
                     </tr>
-                    {catItems.map((item) => (
-                      <ItemRow
-                        key={item.id}
-                        item={item}
-                        type={stream.type}
-                        onChange={updateItem}
-                        onDelete={() => deleteItem(item.id)}
-                        fmt={fmt}
-                        currencySymbol={currencySymbol}
-                        streamName={stream.name}
-                      />
-                    ))}
+                    {catItems.map((item) => {
+                      const itemOvr = (stream.overrides ?? []).find(
+                        (o) => o.scope === "item" && o.targetId === item.id && o.seasonalityPreset
+                      );
+                      return (
+                        <ItemRow
+                          key={item.id}
+                          item={item}
+                          type={stream.type}
+                          onChange={updateItem}
+                          onDelete={() => deleteItem(item.id)}
+                          fmt={fmt}
+                          currencySymbol={currencySymbol}
+                          streamName={stream.name}
+                          overrideSeason={itemOvr?.seasonalityPreset ?? null}
+                        />
+                      );
+                    })}
                   </>
                 );
               })}
