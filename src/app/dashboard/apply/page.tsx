@@ -4578,11 +4578,12 @@ function ApplyPageInner() {
       setDir(1);
       setStep(targetStep);
 
-      // For Revenue Driver Inputs: resume at the first stream that still needs items
+      // Revenue Driver Inputs (step 2) is now a standalone page at /dashboard/drivers.
+      // Any saved wizard_step === 2 lands on the forecast instead.
       if (targetStep === 2) {
-        const firstPending = restored.findIndex((s) => !s.driverDone);
-        setStreamIdx(firstPending >= 0 ? firstPending : 0);
-        setDriverModes({});
+        setDir(1);
+        setStep(3);
+        return;
       }
       return;
     }
@@ -6245,7 +6246,7 @@ function ApplyPageInner() {
                   startMonth={forecastStartMonth}
                   onStartChange={(y, m) => { setForecastStartYear(y); setForecastStartMonth(m); }}
                   currency={currency}
-                  onEditDrivers={() => go(2)}
+                  onEditDrivers={() => router.push("/dashboard/drivers")}
                   actuals={situation === "existing" && Object.keys(actualsByStream).length > 0
                     ? (() => {
                         // Aggregate all streams' actuals by month
@@ -6263,7 +6264,7 @@ function ApplyPageInner() {
                 />
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                  <button onClick={() => go(2)}
+                  <button onClick={() => router.push("/dashboard/drivers")}
                     className="flex items-center justify-center gap-2 py-3.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
                     <ArrowLeft className="w-4 h-4" /> Edit Drivers
                   </button>
