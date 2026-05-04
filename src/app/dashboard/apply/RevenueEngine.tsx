@@ -118,20 +118,25 @@ const STREAM_META: Record<StreamType, { label: string; color: string; bg: string
 /* ─────────────────────────────────── parse helpers ── */
 
 function parseStreams(text: string): DetectedStream[] | null {
-  const match = text.match(/\[STREAMS_DETECTED\]([\s\S]*?)\[\/STREAMS_DETECTED\]/);
-  if (!match) return null;
+  const idx = text.indexOf("[STREAMS_DETECTED]");
+  if (idx === -1) return null;
   try {
-    const parsed = JSON.parse(match[1].trim());
+    const jsonStr = text.slice(idx + "[STREAMS_DETECTED]".length).trim();
+    const parsed = JSON.parse(jsonStr);
     if (Array.isArray(parsed)) return parsed as DetectedStream[];
   } catch { /* fall through */ }
   return null;
 }
 
 function parseItems(text: string): ParsedItem[] | null {
-  const match = text.match(/\[ITEMS_DETECTED\]([\s\S]*?)\[\/ITEMS_DETECTED\]/);
-  if (!match) return null;
+  const idx = text.indexOf("[ITEMS_DETECTED]");
+  if (idx === -1) return null;
   try {
-    const parsed = JSON.parse(match[1].trim());
+    let jsonStr = text.slice(idx + "[ITEMS_DETECTED]".length).trim();
+    // Strip trailing detection tags so JSON.parse doesn't choke
+    const nextTag = jsonStr.search(/\[FORECAST_YEARS\]|\[FORECAST_START\]/);
+    if (nextTag !== -1) jsonStr = jsonStr.slice(0, nextTag).trim();
+    const parsed = JSON.parse(jsonStr);
     if (Array.isArray(parsed)) {
       return (parsed as ParsedItem[]).map((it, i) => ({
         ...it,
@@ -961,8 +966,9 @@ export function RevenueEngine({
       body: JSON.stringify({ messages: msgs, situation }),
     });
     if (!res.ok) throw new Error(`Intake API error ${res.status}`);
-    const data = await res.json() as { message?: string; content?: string };
-    return data.message ?? data.content ?? "";
+    const data = await res.json() as { text?: string; error?: string };
+    if (data.error) throw new Error(data.error);
+    return data.text ?? "";
   }
 
   /* ── API: drivers ── */
@@ -980,8 +986,9 @@ export function RevenueEngine({
       }),
     });
     if (!res.ok) throw new Error(`Drivers API error ${res.status}`);
-    const data = await res.json() as { message?: string; content?: string };
-    return data.message ?? data.content ?? "";
+    const data = await res.json() as { text?: string; error?: string };
+    if (data.error) throw new Error(data.error);
+    return data.text ?? "";
   }
 
   /* ── save streams to DB ── */
@@ -1169,8 +1176,9 @@ export function RevenueEngine({
         const reply = await callDrivers(msgs, idx);
         removeTyping(typingId);
         driverMsgsRef.current = [...msgs, { role: "assistant", content: reply }];
-        const clean = reply.replace(/\[.*?\]/g, "").trim();
-        if (clean) addFeedItem({ kind: "ai", text: clean });
+        const pasteCleanIdx = reply.indexOf("[ITEMS_DETECTED]");
+        const pasteClean = (pasteCleanIdx !== -1 ? reply.slice(0, pasteCleanIdx) : reply).trim();
+        if (pasteClean) addFeedItem({ kind: "ai", text: pasteClean });
 
         const items = parseItems(reply);
         if (items && items.length > 0) {
@@ -1333,7 +1341,8 @@ export function RevenueEngine({
         if (fy) onForecastYears(fy);
         if (fs) onForecastStart(fs.year, fs.month);
 
-        const clean = reply.replace(/\[STREAMS_DETECTED\][\s\S]*?\[\/STREAMS_DETECTED\]/g, "").trim();
+        const tagIdx = reply.indexOf("[STREAMS_DETECTED]");
+        const clean = (tagIdx !== -1 ? reply.slice(0, tagIdx) : reply).trim();
         if (clean) addFeedItem({ kind: "ai", text: clean });
 
         if (detected && detected.length > 0) {
@@ -1370,8 +1379,9 @@ export function RevenueEngine({
         if (fy) onForecastYears(fy);
         if (fs) onForecastStart(fs.year, fs.month);
 
-        const clean = reply.replace(/\[.*?\]/g, "").trim();
-        if (clean) addFeedItem({ kind: "ai", text: clean });
+        const chatCleanIdx = reply.indexOf("[ITEMS_DETECTED]");
+        const chatClean = (chatCleanIdx !== -1 ? reply.slice(0, chatCleanIdx) : reply).trim();
+        if (chatClean) addFeedItem({ kind: "ai", text: chatClean });
 
         const items = parseItems(reply);
         if (items && items.length > 0) {
@@ -1396,26 +1406,29 @@ export function RevenueEngine({
   /* ── start intake on mount ── */
   async function startIntake() {
     setPhase("detecting");
+    setInputLocked(true);
     const typingId = addFeedItem({ kind: "typing" });
     try {
-      const initMsg: ChatMsg = {
-        role: "user",
-        content: situation
-          ? `My situation: ${situation}. Please start by asking me about my revenue streams.`
-          : "Please start by asking me about my revenue streams.",
-      };
-      intakeMsgsRef.current = [initMsg];
-      const reply = await callIntake([initMsg]);
+      // Send empty messages — the API uses the situation context to generate the correct opening
+      const reply = await callIntake([]);
       removeTyping(typingId);
-      intakeMsgsRef.current = [initMsg, { role: "assistant", content: reply }];
+      intakeMsgsRef.current = [{ role: "assistant", content: reply }];
       intakeCtxRef.current = reply;
-      const clean = reply.replace(/\[STREAMS_DETECTED\][\s\S]*?\[\/STREAMS_DETECTED\]/g, "").trim();
-      if (clean) addFeedItem({ kind: "ai", text: clean });
-      setInputLocked(false);
+      const streams = parseStreams(reply);
+      if (streams && streams.length > 0) {
+        // Rare: AI detected streams immediately
+        const clean = reply.slice(0, reply.indexOf("[STREAMS_DETECTED]")).trim();
+        if (clean) addFeedItem({ kind: "ai", text: clean });
+        addFeedItem({ kind: "card", resolved: false, card: { type: "confirm_streams", streams } });
+        setInputLocked(true);
+      } else {
+        addFeedItem({ kind: "ai", text: reply });
+        setInputLocked(false);
+      }
     } catch (e) {
       removeTyping(typingId);
-      console.error(e);
-      addFeedItem({ kind: "ai", text: "Welcome! Tell me about your business and revenue streams." });
+      console.error("[RevenueEngine] startIntake:", e);
+      addFeedItem({ kind: "ai", text: "Welcome! Tell me about your business and how it generates revenue." });
       setInputLocked(false);
     }
   }
