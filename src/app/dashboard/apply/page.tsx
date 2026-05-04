@@ -5064,24 +5064,31 @@ function ApplyPageInner() {
                   userId={userId}
                   currency={currency}
                   onStreamsDetected={(detected) => {
-                    // Map WorkingStream[] to the page's RevenueStream[]
-                    setStreams(detected.map(ws => ({
-                      id: ws.id, name: ws.name, type: ws.type, confidence: ws.confidence,
-                      items: ws.items.map(it => ({
-                        id: it.id, name: it.name, category: it.category,
-                        volume: it.volume, price: it.price, costPrice: it.costPrice,
-                        unit: it.unit, note: it.note,
-                      })),
-                      scenario: "base" as const,
-                      volumeGrowthPct: ws.growth?.monthlyVolumePct ?? 0,
-                      annualPriceGrowthPct: ws.growth?.annualPricePct ?? 0,
-                      monthlyGrowthPct: (ws.growth?.monthlyVolumePct ?? 0) + (ws.growth?.annualPricePct ?? 0) / 12,
-                      subNewPerMonth: 0, subChurnPct: 0, rentalOccupancyPct: 100,
-                      seasonalityPreset: (ws.seasonality?.preset ?? "none") as SeasonalityPreset,
-                      seasonalityMultipliers: ws.seasonality?.multipliers ?? Array(12).fill(1),
-                      expansionMonth: null, expansionMultiplier: 1.5,
-                      overrides: [], driverMessages: [], driverDone: ws.status === "completed",
-                    })));
+                    setStreams(prev => {
+                      // Second call with same count = DB UUID sync after saveStreams resolves.
+                      // Only update IDs — preserve any items already written by onItemsSaved.
+                      if (prev.length === detected.length && detected.length > 0) {
+                        return prev.map((s, i) => ({ ...s, id: detected[i].id }));
+                      }
+                      // Fresh detection — build full RevenueStream objects
+                      return detected.map(ws => ({
+                        id: ws.id, name: ws.name, type: ws.type, confidence: ws.confidence,
+                        items: ws.items.map(it => ({
+                          id: it.id, name: it.name, category: it.category,
+                          volume: it.volume, price: it.price, costPrice: it.costPrice,
+                          unit: it.unit, note: it.note,
+                        })),
+                        scenario: "base" as const,
+                        volumeGrowthPct: ws.growth?.monthlyVolumePct ?? 0,
+                        annualPriceGrowthPct: ws.growth?.annualPricePct ?? 0,
+                        monthlyGrowthPct: (ws.growth?.monthlyVolumePct ?? 0) + (ws.growth?.annualPricePct ?? 0) / 12,
+                        subNewPerMonth: 0, subChurnPct: 0, rentalOccupancyPct: 100,
+                        seasonalityPreset: (ws.seasonality?.preset ?? "none") as SeasonalityPreset,
+                        seasonalityMultipliers: ws.seasonality?.multipliers ?? Array(12).fill(1),
+                        expansionMonth: null, expansionMultiplier: 1.5,
+                        overrides: [], driverMessages: [], driverDone: ws.status === "completed",
+                      }));
+                    });
                   }}
                   onItemsSaved={(streamId, items) => {
                     setStreams(prev => prev.map(s =>

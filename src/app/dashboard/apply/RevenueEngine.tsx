@@ -1427,11 +1427,16 @@ export function RevenueEngine({
         rental_occupancy_pct: 0, driver_done: false, position: i,
       }));
       const saved = await saveStreams(sb, appId, userId, rows);
-      /* map real UUIDs back */
-      setStreamsSync(prev => prev.map((ws, i) => ({
-        ...ws,
-        id: saved[i]?.id ?? ws.id,
-      })));
+      /* map real UUIDs back into engine state */
+      setStreamsSync(prev => {
+        const updated = prev.map((ws, i) => ({ ...ws, id: saved[i]?.id ?? ws.id }));
+        /* CRITICAL: also tell the page about the real UUIDs so onItemsSaved
+           can match by ID later. We call onStreamsDetected a second time with
+           the real-UUID streams. The page handler detects a same-length re-call
+           and only updates IDs, preserving any items already set. */
+        onStreamsDetected(updated);
+        return updated;
+      });
     } catch (e) {
       console.error("saveStreams error", e);
     }
