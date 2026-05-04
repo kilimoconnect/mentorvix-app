@@ -14,6 +14,7 @@ import {
   type DbApplication, type ApplicationState, type DbBusinessProfile,
 } from "@/lib/supabase/revenue";
 import { RevenueEngine } from "./RevenueEngine";
+import { SeasonalityBarChart } from "@/components/SeasonalityBarChart";
 import { CURRENCIES, getCurrencySymbol, makeFmt } from "@/lib/utils/currency";
 import {
   ArrowLeft, ArrowRight, Plus, Trash2, Edit3, Check, X,
@@ -1514,28 +1515,7 @@ function ItemTable({ stream, onUpdate, onApplySeasonalityToAll, fmt, currencySym
           </div>
 
           {/* Bar preview — always visible */}
-          <div>
-            <div className="flex items-end gap-px" style={{ height: 32 }}>
-              {stream.seasonalityMultipliers.map((v, mi) => {
-                const maxV = Math.max(...stream.seasonalityMultipliers, 1);
-                const barH = Math.max((v / maxV) * 100, 5);
-                return (
-                  <div key={mi} className="flex-1 flex flex-col justify-end" style={{ height: 32 }}
-                    title={`${["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][mi]}: ${v.toFixed(2)}×`}>
-                    <div className="w-full rounded-t-sm transition-all duration-300"
-                      style={{ height: `${barH}%`, background: v >= 1 ? "#0e7490" : "#cbd5e1", opacity: 0.85 }} />
-                  </div>
-                );
-              })}
-            </div>
-            <div className="flex gap-px mt-0.5">
-              {["J","F","M","A","M","J","J","A","S","O","N","D"].map((m, mi) => (
-                <div key={mi} className="flex-1 text-center">
-                  <span className="text-[7px] text-slate-300 font-medium">{m}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          <SeasonalityBarChart multipliers={stream.seasonalityMultipliers} height={160} />
 
           {(stream.seasonalityPreset ?? "none") === "custom" ? (
             <div className="space-y-1.5 p-3 bg-slate-50 rounded-xl border border-slate-200">
