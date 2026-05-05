@@ -170,9 +170,11 @@ function SeasonBar({ mults, color }: { mults: number[]; color: string }) {
 const c = {
   TH:  { padding: "7px 10px", fontSize: 9,  fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "#64748b", background: "#f8fafc", borderBottom: "2px solid #e2e8f0", whiteSpace: "nowrap" as const, textAlign: "left" as const },
   THR: { padding: "7px 10px", fontSize: 9,  fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase" as const, color: "#64748b", background: "#f8fafc", borderBottom: "2px solid #e2e8f0", whiteSpace: "nowrap" as const, textAlign: "right" as const },
-  TD:  { padding: "6px 10px", fontSize: 11, borderBottom: "1px solid #f1f5f9", color: "#334155", verticalAlign: "middle" as const },
+  // Name column: caps width so number columns always have room
+  TD:  { padding: "6px 10px", fontSize: 11, borderBottom: "1px solid #f1f5f9", color: "#334155", verticalAlign: "middle" as const, maxWidth: 180, overflow: "hidden" as const, textOverflow: "ellipsis" as const, whiteSpace: "nowrap" as const },
+  // Number column: nowrap so digits stay on one line; Scrollable handles overflow
   TDR: { padding: "6px 10px", fontSize: 11, borderBottom: "1px solid #f1f5f9", color: "#334155", textAlign: "right" as const, fontVariantNumeric: "tabular-nums" as const, verticalAlign: "middle" as const, whiteSpace: "nowrap" as const },
-  TF:  { padding: "8px 10px", fontSize: 10, fontWeight: 700, color: "#1e293b", background: "#f0f9ff", borderTop: "2px solid #cbd5e1", whiteSpace: "nowrap" as const },
+  TF:  { padding: "8px 10px", fontSize: 10, fontWeight: 700, color: "#1e293b", background: "#f0f9ff", borderTop: "2px solid #cbd5e1", whiteSpace: "nowrap" as const, overflow: "hidden" as const, textOverflow: "ellipsis" as const },
   TFR: { padding: "8px 10px", fontSize: 10, fontWeight: 700, color: "#1e293b", background: "#f0f9ff", borderTop: "2px solid #cbd5e1", textAlign: "right" as const, fontVariantNumeric: "tabular-nums" as const, whiteSpace: "nowrap" as const },
 };
 
@@ -197,7 +199,11 @@ function Card({ children, style }: { children: React.ReactNode; style?: React.CS
 }
 
 function Scrollable({ children }: { children: React.ReactNode }) {
-  return <div style={{ overflowX: "auto", width: "100%" }}>{children}</div>;
+  return (
+    <div data-scroll style={{ overflowX: "auto", width: "100%", minWidth: 0 }}>
+      {children}
+    </div>
+  );
 }
 
 /* ─────────────────────────────── inner component (uses useSearchParams) ── */
@@ -305,7 +311,7 @@ function ReportInner({ appId }: { appId: string }) {
           </div>
 
           <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 9, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 6 }}>Revenue Forecast Report</p>
-          <h1 style={{ color: "#fff", fontSize: 26, fontWeight: 800, lineHeight: 1.2, marginBottom: 20 }}>{app.name ?? "Revenue Model"}</h1>
+          <h1 style={{ color: "#fff", fontSize: 26, fontWeight: 800, lineHeight: 1.2, marginBottom: 20, overflowWrap: "break-word", wordBreak: "break-word", maxWidth: "100%" }}>{app.name ?? "Revenue Model"}</h1>
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 0, borderTop: "1px solid rgba(255,255,255,0.18)", paddingTop: 16 }}>
             {[
@@ -338,7 +344,7 @@ function ReportInner({ appId }: { appId: string }) {
               <div key={i} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px 13px", ...colorAdjust }}>
                 <div style={{ width: 28, height: 3, background: k.accent, borderRadius: 2, marginBottom: 10, ...colorAdjust }} />
                 <p style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" as const, color: "#94a3b8", marginBottom: 5 }}>{k.label}</p>
-                <p style={{ fontSize: 24, fontWeight: 800, color: "#0f172a", fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{k.value}</p>
+                <p style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", fontVariantNumeric: "tabular-nums", lineHeight: 1.1, overflowWrap: "break-word", wordBreak: "break-all", minWidth: 0 }}>{k.value}</p>
                 <p style={{ fontSize: 10, color: "#94a3b8", marginTop: 7 }}>{k.note}</p>
               </div>
             ))}
@@ -525,10 +531,10 @@ function ReportInner({ appId }: { appId: string }) {
                 <Card key={s.id}>
                   {/* stream header */}
                   <div style={{ padding: "13px 16px 11px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14, borderBottom: "1px solid #f1f5f9", background: `${col}0c`, ...colorAdjust }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: 1 }}>
                       <div style={{ width: 10, height: 10, borderRadius: "50%", background: col, flexShrink: 0, marginTop: 2, ...colorAdjust }} />
-                      <div>
-                        <p style={{ fontWeight: 700, fontSize: 13, color: "#0f172a", lineHeight: 1.3 }}>{s.name}</p>
+                      <div style={{ minWidth: 0 }}>
+                        <p style={{ fontWeight: 700, fontSize: 13, color: "#0f172a", lineHeight: 1.3, overflowWrap: "break-word", wordBreak: "break-word" }}>{s.name}</p>
                         <p style={{ fontSize: 10, color: "#94a3b8", marginTop: 3 }}>
                           {TYPE_LABEL[s.type]} · {s.items.length} item{s.items.length !== 1 ? "s" : ""}
                           {s.seasonalityPreset !== "none" && ` · ${SEA[s.seasonalityPreset]?.label} pattern`}
@@ -536,7 +542,7 @@ function ReportInner({ appId }: { appId: string }) {
                       </div>
                     </div>
                     <div style={{ textAlign: "right", flexShrink: 0 }}>
-                      <p style={{ fontSize: 20, fontWeight: 800, color: "#0f172a", fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
+                      <p style={{ fontSize: 18, fontWeight: 800, color: "#0f172a", fontVariantNumeric: "tabular-nums", lineHeight: 1.1, overflowWrap: "break-word", wordBreak: "break-all", minWidth: 0, maxWidth: 220 }}>
                         {fmt(mrr)}<span style={{ fontSize: 10, fontWeight: 400, color: "#94a3b8" }}>/mo</span>
                       </p>
                       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
@@ -639,6 +645,13 @@ export default function ReportPage() {
             print-color-adjust: exact !important;
             color-adjust: exact !important;
           }
+
+          /* Shrink table text further in print so large numbers never push columns off-page */
+          table { font-size: 9px !important; }
+          th, td { padding: 4px 7px !important; font-size: 9px !important; white-space: nowrap !important; }
+
+          /* Allow scrollable wrappers to expand fully in print (no clipping) */
+          [data-scroll] { overflow: visible !important; }
 
           /* Prevent awkward mid-card page breaks */
           .avoid-break { page-break-inside: avoid !important; }
