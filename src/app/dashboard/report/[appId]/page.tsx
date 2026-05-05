@@ -117,7 +117,28 @@ function streamMRR(s: RevenueStream) {
 
 function makeFmt(currency: string | null) {
   const code = currency ?? "USD";
-  return (n: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: code, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(n);
+  const full  = new Intl.NumberFormat("en-US", { style: "currency", currency: code, minimumFractionDigits: 0, maximumFractionDigits: 0 });
+
+  // Extract symbol position once
+  const parts    = full.formatToParts(1000);
+  const sym      = parts.find((p) => p.type === "currency")?.value ?? "";
+  const isPrefix = parts[0]?.type === "currency";
+
+  const abbr = (val: number, sign: string, suffix: string) => {
+    const d = val >= 100 ? 0 : val >= 10 ? 1 : 2;
+    const num = val.toFixed(d);
+    return isPrefix ? `${sign}${sym}${num}${suffix}` : `${sign}${num}${suffix} ${sym}`;
+  };
+
+  return (n: number): string => {
+    const abs  = Math.abs(n);
+    const sign = n < 0 ? "-" : "";
+    if (abs >= 1e12) return abbr(abs / 1e12, sign, "T");
+    if (abs >= 1e9)  return abbr(abs / 1e9,  sign, "B");
+    if (abs >= 1e6)  return abbr(abs / 1e6,  sign, "M");
+    if (abs >= 1e3)  return abbr(abs / 1e3,  sign, "K");
+    return full.format(n);
+  };
 }
 
 function dbToStream(s: DbRevenueStream, items: DbStreamItem[]): RevenueStream {
@@ -344,7 +365,7 @@ function ReportInner({ appId }: { appId: string }) {
               <div key={i} style={{ background: "#fff", border: "1px solid #e2e8f0", borderRadius: 10, padding: "16px 18px 13px", ...colorAdjust }}>
                 <div style={{ width: 28, height: 3, background: k.accent, borderRadius: 2, marginBottom: 10, ...colorAdjust }} />
                 <p style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase" as const, color: "#94a3b8", marginBottom: 5 }}>{k.label}</p>
-                <p style={{ fontSize: 22, fontWeight: 800, color: "#0f172a", fontVariantNumeric: "tabular-nums", lineHeight: 1.1, overflowWrap: "break-word", wordBreak: "break-all", minWidth: 0 }}>{k.value}</p>
+                <p style={{ fontSize: 24, fontWeight: 800, color: "#0f172a", fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{k.value}</p>
                 <p style={{ fontSize: 10, color: "#94a3b8", marginTop: 7 }}>{k.note}</p>
               </div>
             ))}
@@ -542,7 +563,7 @@ function ReportInner({ appId }: { appId: string }) {
                       </div>
                     </div>
                     <div style={{ textAlign: "right", flexShrink: 0 }}>
-                      <p style={{ fontSize: 18, fontWeight: 800, color: "#0f172a", fontVariantNumeric: "tabular-nums", lineHeight: 1.1, overflowWrap: "break-word", wordBreak: "break-all", minWidth: 0, maxWidth: 220 }}>
+                      <p style={{ fontSize: 20, fontWeight: 800, color: "#0f172a", fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
                         {fmt(mrr)}<span style={{ fontSize: 10, fontWeight: 400, color: "#94a3b8" }}>/mo</span>
                       </p>
                       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
