@@ -240,7 +240,8 @@ export default function DriversPage() {
   // Pending (un-confirmed) preset selection inside the modal
   const [pendingPreset,  setPendingPreset]  = useState<SeasonalityPreset | null>(null);
   // Custom seasonality editor
-  const [customMults, setCustomMults] = useState<number[]>(Array(12).fill(1) as number[]);
+  const [customMults,       setCustomMults]       = useState<number[]>(Array(12).fill(1) as number[]);
+  const [customInputStrings, setCustomInputStrings] = useState<string[]>(Array(12).fill("1.00") as string[]);
   const [customMode,  setCustomMode]  = useState<string | null>(null);
 
   const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -249,7 +250,9 @@ export default function DriversPage() {
     if (openItemPicker === itemId) { setOpenItemPicker(null); setCustomMode(null); return; }
     setOpenItemPicker(itemId);
     setCustomMode(null);
-    setCustomMults(existingMults ?? Array(12).fill(1) as number[]);
+    const mults = existingMults ?? Array(12).fill(1) as number[];
+    setCustomMults(mults);
+    setCustomInputStrings(mults.map(v => v.toFixed(2)));
     // Initialise pending to the item's current preset so the chart preview shows immediately
     setPendingPreset((currentPreset ?? null) as SeasonalityPreset | null);
   };
@@ -960,11 +963,22 @@ export default function DriversPage() {
                         <div key={m} className="flex flex-col items-center gap-1">
                           <span className="text-[11px] font-semibold text-slate-400">{m}</span>
                           <input
-                            type="number" step="0.05" min="0" max="5"
-                            value={customMults[i].toFixed(2)}
+                            type="text"
+                            inputMode="decimal"
+                            value={customInputStrings[i]}
                             onChange={(e) => {
+                              const raw = e.target.value;
+                              // Update display string immediately so the user can type freely
+                              setCustomInputStrings((prev) => { const n = [...prev]; n[i] = raw; return n; });
+                              // Also update the numeric state for the chart
+                              const v = Math.max(0, Math.min(5, parseFloat(raw) || 0));
+                              setCustomMults((prev) => { const n = [...prev]; n[i] = v; return n; });
+                            }}
+                            onBlur={(e) => {
+                              // On blur normalise the display to 2 decimal places
                               const v = Math.max(0, Math.min(5, parseFloat(e.target.value) || 0));
                               setCustomMults((prev) => { const n = [...prev]; n[i] = v; return n; });
+                              setCustomInputStrings((prev) => { const n = [...prev]; n[i] = v.toFixed(2); return n; });
                             }}
                             className="w-full text-center text-sm font-medium border border-slate-200 rounded-xl px-1 py-2.5 outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-300/30"
                           />
