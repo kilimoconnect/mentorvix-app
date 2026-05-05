@@ -459,7 +459,7 @@ export default function DashboardPage() {
         </motion.header>
 
         {/* ── content ── */}
-        <main className="flex-1 overflow-y-auto">
+        <main className="flex-1 overflow-y-auto pb-20 md:pb-0">
           <div className="max-w-6xl mx-auto px-4 lg:px-6 py-6 space-y-5">
 
             {/* ══ Emotional trigger ══ */}

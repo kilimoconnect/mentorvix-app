@@ -687,8 +687,8 @@ export default function DriversPage() {
                         open={isAovOpen}
                         onToggle={() => toggleSection(stream.id, "overrides")}
                       >
-                        <div className="overflow-x-auto -mx-1">
-                          <table className="w-full text-[11px] text-slate-600 border-collapse">
+                        <div className="overflow-x-auto -mx-3 px-3">
+                          <table className="min-w-[480px] w-full text-[11px] text-slate-600 border-collapse">
                             <thead>
                               <tr className="border-b border-slate-100">
                                 <th className="text-left font-semibold text-slate-400 pb-2 pr-3">Item / Name</th>

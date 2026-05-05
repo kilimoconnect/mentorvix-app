@@ -1135,13 +1135,13 @@ function AdvancedGrowthModal({
   const overrides = stream.overrides ?? [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto">
+    <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto">
       <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm" onClick={onClose} />
 
-      <div className="relative w-full max-w-xl mx-4 my-10 bg-white rounded-2xl shadow-2xl flex flex-col">
+      <div className="relative w-full max-w-xl mx-2 sm:mx-4 my-4 sm:my-10 bg-white rounded-2xl shadow-2xl flex flex-col">
 
         {/* ── Header ── */}
-        <div className="px-7 pt-7 pb-5">
+        <div className="px-4 sm:px-7 pt-5 sm:pt-7 pb-4 sm:pb-5">
           <div className="flex items-start justify-between">
             <div>
               <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Advanced Revenue Drivers</p>
@@ -1156,7 +1156,7 @@ function AdvancedGrowthModal({
           </div>
         </div>
 
-        <div className="px-7 pb-7 space-y-7">
+        <div className="px-4 sm:px-7 pb-5 sm:pb-7 space-y-5 sm:space-y-7">
 
           {/* ─────── § 1  Base Assumptions ─────── */}
           <section>
@@ -1202,7 +1202,7 @@ function AdvancedGrowthModal({
                 </div>
 
                 {/* Vol + Price */}
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <div>
                     <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Volume Growth</p>
                     <div className="flex items-center gap-1.5">
@@ -1265,7 +1265,7 @@ function AdvancedGrowthModal({
 
             <div className="bg-slate-50 rounded-xl p-4 space-y-4">
               {/* Apply To row */}
-              <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-2 flex-wrap w-full">
                 <span className="text-xs font-semibold text-slate-500 shrink-0">Apply to</span>
                 <div className="flex items-center gap-0.5 bg-white border border-slate-200 p-0.5 rounded-lg">
                   {(["category", "item"] as const).map((sc) => (
@@ -1276,7 +1276,7 @@ function AdvancedGrowthModal({
                   ))}
                 </div>
                 <select value={b.targetId} onChange={(e) => setB({ targetId: e.target.value })}
-                  className="text-xs font-semibold border border-slate-200 bg-white rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:border-cyan-400">
+                  className="flex-1 min-w-0 text-xs font-semibold border border-slate-200 bg-white rounded-lg px-2.5 py-1.5 text-slate-700 focus:outline-none focus:border-cyan-400">
                   <option value="">— select {b.scope} —</option>
                   {targetOptions.map((opt) => (
                     <option key={opt.id} value={opt.id} disabled={usedTargets.has(opt.id)}>
@@ -1289,7 +1289,7 @@ function AdvancedGrowthModal({
               {b.targetId ? (
                 <>
                   {/* Growth + Price */}
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Growth / mo</p>
                       <div className="flex items-center gap-1.5">
@@ -1442,7 +1442,7 @@ function AdvancedGrowthModal({
         </div>
 
         {/* ── Footer ── */}
-        <div className="px-7 py-4 border-t border-slate-100 flex justify-end">
+        <div className="px-4 sm:px-7 py-3 sm:py-4 border-t border-slate-100 flex justify-end">
           <button onClick={onClose}
             className="px-6 py-2 text-sm font-bold text-white rounded-xl transition-all hover:opacity-90"
             style={{ background: "#0e7490" }}>
@@ -4987,7 +4987,7 @@ function ApplyPageInner() {
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-6 sm:py-10">
+      <div className="flex-1 overflow-y-auto px-4 py-6 sm:py-10 pb-24 md:pb-10">
         <div className="w-full max-w-6xl mx-auto">
           <AnimatePresence mode="wait" custom={dir}>
 
@@ -5550,8 +5550,8 @@ function ApplyPageInner() {
                               </div>
 
                               {/* Card detail row */}
-                              <div className="px-4 pb-3 ml-12 border-t border-slate-50 pt-2.5">
-                                <div className="grid grid-cols-3 gap-3">
+                              <div className="px-4 pb-3 ml-8 sm:ml-12 border-t border-slate-50 pt-2.5">
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
                                   <div>
                                     <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Input Mode</p>
                                     <p className="text-[11px] font-medium text-slate-600">{INPUT_MODE[s.type]}</p>

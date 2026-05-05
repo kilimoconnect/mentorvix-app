@@ -2044,6 +2044,22 @@ export function RevenueEngine({
     <div className="flex gap-6 h-full">
       {/* left: feed */}
       <div className="flex-1 flex flex-col min-w-0">
+
+        {/* Mobile-only: compact progress strip */}
+        {streams.length > 0 && (() => {
+          const completed = streams.filter(s => s.status === "completed").length;
+          const pct = streams.length > 0 ? Math.round((completed / streams.length) * 100) : 0;
+          return (
+            <div className="sm:hidden mb-3 bg-white border border-slate-200 rounded-xl px-3 py-2 flex items-center gap-3">
+              <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide shrink-0">Streams</span>
+              <div className="flex-1 bg-slate-100 rounded-full h-1.5">
+                <div className="bg-emerald-500 h-1.5 rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
+              </div>
+              <span className="text-[10px] font-medium text-slate-600 shrink-0">{completed}/{streams.length}</span>
+            </div>
+          );
+        })()}
+
         {/* feed scroll area */}
         <div
           className="flex-1 overflow-y-auto space-y-3 pb-4 pr-1"
@@ -2095,8 +2111,10 @@ export function RevenueEngine({
         </div>
       </div>
 
-      {/* right: progress panel */}
-      <ProgressPanel streams={streams} />
+      {/* right: progress panel — desktop only */}
+      <div className="hidden sm:block">
+        <ProgressPanel streams={streams} />
+      </div>
     </div>
   );
 }
