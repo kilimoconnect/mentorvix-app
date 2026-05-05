@@ -819,18 +819,25 @@ export default function DriversPage() {
 
         return (
           <>
-            {/* Backdrop */}
-            <div className="fixed inset-0 z-40 bg-black/30 backdrop-blur-sm" onClick={closePicker} />
+            {/* Backdrop — above bottom tab bar (z-50) */}
+            <div className="fixed inset-0 z-[60] bg-black/40 backdrop-blur-sm" onClick={closePicker} />
 
-            {/* Centered modal */}
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-6 pointer-events-none">
-              <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-3xl pointer-events-auto flex flex-col max-h-[85vh]">
+            {/* Modal:
+                Mobile  → bottom sheet (slides up from bottom, rounded top corners, full width)
+                Desktop → centered dialog with max-width                                        */}
+            <div className="fixed inset-x-0 bottom-0 sm:inset-0 z-[70] flex items-end sm:items-center sm:justify-center sm:p-6 pointer-events-none">
+              <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl border-t sm:border border-slate-200 w-full sm:max-w-3xl pointer-events-auto flex flex-col max-h-[92vh] sm:max-h-[85vh]">
+
+                {/* Drag handle — mobile only */}
+                <div className="sm:hidden flex justify-center pt-3 pb-1 shrink-0">
+                  <div className="w-10 h-1 rounded-full bg-slate-200" />
+                </div>
 
                 {/* Header */}
-                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
+                <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-slate-100 shrink-0">
                   <div>
                     <p className="text-sm font-bold text-slate-800">{activeItem.name}</p>
-                    <p className="text-xs text-slate-400 mt-0.5">Select a pattern then click <strong>Done</strong> to apply</p>
+                    <p className="text-xs text-slate-400 mt-0.5">Pick a pattern, then tap <strong>Done</strong></p>
                   </div>
                   <button
                     onClick={closePicker}
@@ -839,16 +846,18 @@ export default function DriversPage() {
                 </div>
 
                 {customMode !== openItemPicker ? (
-                  /* ── Preset picker: two-column layout ── */
-                  <div className="flex flex-1 min-h-0 overflow-hidden">
+                  /* ── Preset picker ──
+                     Mobile:  preset list on top (scrollable, capped height) + chart + buttons below
+                     Desktop: side-by-side two-column                                              */
+                  <div className="flex flex-col sm:flex-row flex-1 min-h-0 overflow-hidden">
 
-                    {/* Left: scrollable preset list */}
-                    <div className="w-64 shrink-0 border-r border-slate-100 overflow-y-auto py-3 px-3 space-y-0.5">
+                    {/* Preset list */}
+                    <div className="sm:w-64 sm:shrink-0 sm:border-r border-b sm:border-b-0 border-slate-100 overflow-y-auto py-2 sm:py-3 px-3 space-y-0.5 max-h-[36vh] sm:max-h-none">
 
                       {/* Stream default */}
                       <button
                         onClick={() => setPendingPreset(null)}
-                        className={`w-full text-left px-3 py-2.5 rounded-xl transition-colors flex items-start justify-between gap-2 ${
+                        className={`w-full text-left px-3 py-2 sm:py-2.5 rounded-xl transition-colors flex items-start justify-between gap-2 ${
                           pendingPreset === null ? "bg-cyan-50 text-cyan-700" : "text-slate-600 hover:bg-slate-50"
                         }`}
                       >
@@ -865,13 +874,13 @@ export default function DriversPage() {
                         .map((p) => (
                           <button key={p}
                             onClick={() => setPendingPreset(p)}
-                            className={`w-full text-left px-3 py-2.5 rounded-xl transition-colors flex items-start justify-between gap-2 ${
+                            className={`w-full text-left px-3 py-2 sm:py-2.5 rounded-xl transition-colors flex items-start justify-between gap-2 ${
                               pendingPreset === p ? "bg-cyan-50 text-cyan-700" : "text-slate-600 hover:bg-slate-50"
                             }`}
                           >
                             <span>
                               <span className="text-sm font-medium block">{SEASONALITY_PRESETS[p].label}</span>
-                              <span className="text-xs text-slate-400 font-normal leading-tight">{SEASONALITY_PRESETS[p].desc}</span>
+                              <span className="text-xs text-slate-400 font-normal leading-tight hidden sm:block">{SEASONALITY_PRESETS[p].desc}</span>
                             </span>
                             {pendingPreset === p && <Check size={14} className="text-cyan-600 mt-0.5 shrink-0" />}
                           </button>
@@ -883,34 +892,35 @@ export default function DriversPage() {
                           setCustomMults((activeItem.seasonality_multipliers as number[] | null) ?? Array(12).fill(1) as number[]);
                           setCustomMode(openItemPicker);
                         }}
-                        className={`w-full text-left px-3 py-2.5 rounded-xl transition-colors flex items-start justify-between gap-2 ${
+                        className={`w-full text-left px-3 py-2 sm:py-2.5 rounded-xl transition-colors flex items-start justify-between gap-2 ${
                           pendingPreset === "custom" ? "bg-cyan-50 text-cyan-700" : "text-slate-600 hover:bg-slate-50"
                         }`}
                       >
                         <span>
                           <span className="text-sm font-medium block">Custom ✦</span>
-                          <span className="text-xs text-slate-400 font-normal">Set your own monthly multipliers</span>
+                          <span className="text-xs text-slate-400 font-normal hidden sm:block">Set your own monthly multipliers</span>
                         </span>
                         {pendingPreset === "custom" && <Check size={14} className="text-cyan-600 mt-0.5 shrink-0" />}
                       </button>
                     </div>
 
-                    {/* Right: chart preview + Done button */}
-                    <div className="flex-1 flex flex-col px-8 py-6 min-h-0">
-                      <div className="flex-1 flex flex-col justify-center">
+                    {/* Chart preview + Done/Cancel */}
+                    <div className="flex-1 flex flex-col px-4 sm:px-8 py-3 sm:py-6 min-h-0">
+                      {/* Chart — hidden on mobile when nothing selected yet to save space */}
+                      <div className="flex-1 flex flex-col justify-center min-h-0">
                         {previewMults ? (
                           <>
-                            <p className="text-sm font-semibold text-slate-700 mb-1">{pendingLabel}</p>
+                            <p className="text-sm font-semibold text-slate-700 mb-0.5">{pendingLabel}</p>
                             {pendingPreset && pendingPreset !== "none" && pendingPreset !== "custom" && (
-                              <p className="text-xs text-slate-400 mb-4">{SEASONALITY_PRESETS[pendingPreset]?.desc}</p>
+                              <p className="text-xs text-slate-400 mb-2 sm:mb-4 hidden sm:block">{SEASONALITY_PRESETS[pendingPreset]?.desc}</p>
                             )}
                             {pendingPreset === null && (
-                              <p className="text-xs text-slate-400 mb-4">Using the stream&apos;s seasonality pattern</p>
+                              <p className="text-xs text-slate-400 mb-2 sm:mb-4 hidden sm:block">Using the stream&apos;s seasonality pattern</p>
                             )}
-                            <SeasonalityBarChart multipliers={previewMults} height={180} />
+                            <SeasonalityBarChart multipliers={previewMults} height={110} />
                           </>
                         ) : (
-                          <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
+                          <div className="hidden sm:flex flex-col items-center justify-center h-full gap-3 text-center">
                             <div className="w-14 h-14 rounded-2xl bg-slate-50 flex items-center justify-center">
                               <BarChart3 size={24} className="text-slate-200" />
                             </div>
@@ -920,10 +930,10 @@ export default function DriversPage() {
                       </div>
 
                       {/* Done / Cancel */}
-                      <div className="flex gap-3 pt-5 border-t border-slate-100 mt-5 shrink-0">
+                      <div className="flex gap-3 pt-3 sm:pt-5 border-t border-slate-100 mt-3 sm:mt-5 shrink-0">
                         <button
                           onClick={closePicker}
-                          className="flex-1 text-sm font-medium py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
+                          className="flex-1 text-sm font-medium py-3 sm:py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
                         >Cancel</button>
                         <button
                           onClick={() => {
@@ -931,7 +941,7 @@ export default function DriversPage() {
                             closePicker();
                           }}
                           disabled={!hasChange}
-                          className="flex-1 text-sm font-semibold py-2.5 rounded-xl text-white transition-colors disabled:opacity-40"
+                          className="flex-1 text-sm font-semibold py-3 sm:py-2.5 rounded-xl text-white transition-colors disabled:opacity-40"
                           style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}
                         >
                           {hasChange ? "Done — Apply" : "No changes"}
@@ -942,12 +952,13 @@ export default function DriversPage() {
 
                 ) : (
                   /* ── Custom editor ── */
-                  <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+                  <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-4 sm:py-5 space-y-4">
                     <p className="text-sm text-slate-500">Set a multiplier for each month — <strong>1.0</strong> = baseline, <strong>0</strong> = no revenue, <strong>5.0</strong> = 5× peak</p>
-                    <SeasonalityBarChart multipliers={customMults} height={140} />
-                    <div className="grid grid-cols-6 gap-3 pt-1">
+                    <SeasonalityBarChart multipliers={customMults} height={110} />
+                    <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 sm:gap-3 pt-1">
                       {MONTHS_SHORT.map((m, i) => (
-                        <div key={m} className="flex flex-col items-center gap-1.5">
+                        <div key={m} className="flex flex-col items-center gap-1">
+                          <span className="text-[11px] font-semibold text-slate-400">{m}</span>
                           <input
                             type="number" step="0.05" min="0" max="5"
                             value={customMults[i].toFixed(2)}
@@ -955,26 +966,25 @@ export default function DriversPage() {
                               const v = Math.max(0, Math.min(5, parseFloat(e.target.value) || 0));
                               setCustomMults((prev) => { const n = [...prev]; n[i] = v; return n; });
                             }}
-                            className="w-full text-center text-sm font-medium border border-slate-200 rounded-xl px-1 py-2 outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-300/30"
+                            className="w-full text-center text-sm font-medium border border-slate-200 rounded-xl px-1 py-2.5 outline-none focus:border-cyan-400 focus:ring-2 focus:ring-cyan-300/30"
                           />
-                          <span className="text-xs text-slate-500 font-medium">{m}</span>
                         </div>
                       ))}
                     </div>
-                    <div className="flex gap-3 pt-2">
+                    <div className="flex gap-3 pt-3">
                       <button
                         onClick={() => setCustomMode(null)}
-                        className="flex-1 text-sm font-medium py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
-                      >← Back to presets</button>
+                        className="flex-1 text-sm font-medium py-3 sm:py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
+                      >← Presets</button>
                       <button
                         onClick={() => {
                           updateItemSeason(openItemPicker, activeItem.name, activeStreamId, "custom", customMults);
                           setPendingPreset("custom");
                           closePicker();
                         }}
-                        className="flex-1 text-sm font-semibold py-2.5 rounded-xl text-white transition-colors"
+                        className="flex-1 text-sm font-semibold py-3 sm:py-2.5 rounded-xl text-white transition-colors"
                         style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}
-                      >Apply Custom Pattern</button>
+                      >Apply Custom</button>
                     </div>
                   </div>
                 )}
