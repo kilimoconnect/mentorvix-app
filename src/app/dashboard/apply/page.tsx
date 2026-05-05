@@ -2942,6 +2942,7 @@ function ForecastView({
   currency,
   onEditDrivers,
   actuals,
+  appId,
 }: {
   streams:          RevenueStream[];
   onUpdateStream:   (s: RevenueStream) => void;
@@ -2953,6 +2954,7 @@ function ForecastView({
   currency:         string | null;
   onEditDrivers?:   () => void;
   actuals?:         ActualMonth[];   // historical revenue for "existing" businesses
+  appId?:           string;
 }) {
   const fmt = makeFmt(currency);
   const [view,           setView]           = useState<"annual" | "monthly" | "sensitivity">("annual");
@@ -3227,13 +3229,27 @@ function ForecastView({
               ))}
             </select>
           </div>
-          <div className="flex bg-slate-100 rounded-lg p-0.5">
-            {(["annual", "monthly", "sensitivity"] as const).map((v) => (
-              <button key={v} onClick={() => setView(v)}
-                className={`text-xs font-semibold px-3 py-1.5 rounded-md transition-all capitalize ${
-                  view === v ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
-                }`}>{v}</button>
-            ))}
+          <div className="flex items-center gap-2">
+            <div className="flex bg-slate-100 rounded-lg p-0.5">
+              {(["annual", "monthly", "sensitivity"] as const).map((v) => (
+                <button key={v} onClick={() => setView(v)}
+                  className={`text-xs font-semibold px-3 py-1.5 rounded-md transition-all capitalize ${
+                    view === v ? "bg-white text-slate-800 shadow-sm" : "text-slate-500 hover:text-slate-700"
+                  }`}>{v}</button>
+              ))}
+            </div>
+            {appId && (
+              <a
+                href={`/dashboard/report/${appId}?horizon=${horizonYears}&year=${startYear}&month=${startMonth}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg shadow-sm transition-opacity hover:opacity-90 shrink-0"
+                style={{ background: "linear-gradient(135deg,#0e7490,#0891b2)" }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6,9 6,2 18,2 18,9"/><path d="M6,18H4a2,2,0,0,1-2-2V11a2,2,0,0,1,2-2H20a2,2,0,0,1,2,2v5a2,2,0,0,1-2,2H18"/><rect x="6" y="14" width="12" height="8"/></svg>
+                <span className="hidden sm:inline">Export PDF</span>
+              </a>
+            )}
           </div>
         </div>
       </div>
@@ -5792,6 +5808,7 @@ function ApplyPageInner() {
                   onStartChange={(y, m) => { setForecastStartYear(y); setForecastStartMonth(m); }}
                   currency={currency}
                   onEditDrivers={() => router.push("/dashboard/drivers")}
+                  appId={appId ?? undefined}
                   actuals={situation === "existing" && Object.keys(actualsByStream).length > 0
                     ? (() => {
                         // Aggregate all streams' actuals by month
