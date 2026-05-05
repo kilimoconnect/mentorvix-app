@@ -10,7 +10,7 @@ export default function SupportPage() {
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       <DashboardSidebar />
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto pb-20 md:pb-0">
         <div className="sticky top-0 z-10 bg-white border-b border-slate-100 px-6 py-4 flex items-center gap-3">
           <button onClick={() => router.back()} className="p-2 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">
             <ArrowLeft size={18} />

@@ -405,10 +405,10 @@ export default function DriversPage() {
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       <DashboardSidebar />
-      <main className="flex-1 overflow-y-auto">
+      <main className="flex-1 overflow-y-auto pb-20 md:pb-0">
 
         {/* ── Header ───────────────────────────────────────────── */}
-        <div className="sticky top-0 z-10 bg-white border-b border-slate-100 px-6 py-4 flex items-center justify-between gap-3">
+        <div className="sticky top-0 z-10 bg-white border-b border-slate-100 px-4 sm:px-6 py-4 flex items-center justify-between gap-3">
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-lg font-bold text-slate-900">Revenue Drivers</h1>
@@ -453,7 +453,7 @@ export default function DriversPage() {
 
         {/* ── Stream cards ─────────────────────────────────────── */}
         {streams.length > 0 && (
-          <div className="max-w-5xl mx-auto px-6 py-6 space-y-5">
+          <div className="max-w-5xl mx-auto px-3 sm:px-6 py-6 space-y-5">
 
             {streams.map((stream) => {
               const scenario      = classifyScenario(stream.volumeGrowthPct, stream.annualPriceGrowthPct);
@@ -514,7 +514,7 @@ export default function DriversPage() {
                     </div>
                   </div>
 
-                  <div className="px-5 py-5 space-y-6">
+                  <div className="px-3 sm:px-5 py-5 space-y-6">
 
                     {/* ── Growth Logic ─────────────────────── */}
                     <div>
@@ -550,49 +550,53 @@ export default function DriversPage() {
                       {/* Sliders */}
                       <div className="space-y-3">
                         {/* Volume growth */}
-                        <div className="flex items-center gap-3">
-                          <label className="text-xs text-slate-500 w-36 shrink-0">Volume Growth</label>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <label className="text-xs text-slate-500">Volume Growth</label>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <input
+                                type="number" min={0} max={30} step={0.25}
+                                value={stream.volumeGrowthPct}
+                                onChange={(e) => {
+                                  const v = Math.max(0, Math.min(30, parseFloat(e.target.value) || 0));
+                                  updateDriver(stream.id, { volumeGrowthPct: v });
+                                }}
+                                className="w-14 text-xs font-bold text-slate-800 border border-slate-200 rounded-lg px-1.5 py-1.5 text-center focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-300/30"
+                              />
+                              <span className="text-[11px] text-slate-400">% / mo</span>
+                            </div>
+                          </div>
                           <input
                             type="range" min={0} max={10} step={0.25}
                             value={stream.volumeGrowthPct}
                             onChange={(e) => updateDriver(stream.id, { volumeGrowthPct: parseFloat(e.target.value) })}
-                            className="flex-1 h-1.5 accent-cyan-600 cursor-pointer"
+                            className="w-full h-1.5 accent-cyan-600 cursor-pointer"
                           />
-                          <div className="flex items-center gap-1 shrink-0">
-                            <input
-                              type="number" min={0} max={30} step={0.25}
-                              value={stream.volumeGrowthPct}
-                              onChange={(e) => {
-                                const v = Math.max(0, Math.min(30, parseFloat(e.target.value) || 0));
-                                updateDriver(stream.id, { volumeGrowthPct: v });
-                              }}
-                              className="w-12 text-xs font-bold text-slate-800 border border-slate-200 rounded-lg px-1.5 py-1.5 text-center focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-300/30"
-                            />
-                            <span className="text-[11px] text-slate-400 w-12">% / month</span>
-                          </div>
                         </div>
 
                         {/* Annual price */}
-                        <div className="flex items-center gap-3">
-                          <label className="text-xs text-slate-500 w-36 shrink-0">Annual Price Increase</label>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between gap-2">
+                            <label className="text-xs text-slate-500">Annual Price Increase</label>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <input
+                                type="number" min={0} max={50} step={0.5}
+                                value={stream.annualPriceGrowthPct}
+                                onChange={(e) => {
+                                  const v = Math.max(0, Math.min(50, parseFloat(e.target.value) || 0));
+                                  updateDriver(stream.id, { annualPriceGrowthPct: v });
+                                }}
+                                className="w-14 text-xs font-bold text-slate-800 border border-slate-200 rounded-lg px-1.5 py-1.5 text-center focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-300/30"
+                              />
+                              <span className="text-[11px] text-slate-400">% / yr</span>
+                            </div>
+                          </div>
                           <input
                             type="range" min={0} max={30} step={0.5}
                             value={stream.annualPriceGrowthPct}
                             onChange={(e) => updateDriver(stream.id, { annualPriceGrowthPct: parseFloat(e.target.value) })}
-                            className="flex-1 h-1.5 accent-cyan-600 cursor-pointer"
+                            className="w-full h-1.5 accent-cyan-600 cursor-pointer"
                           />
-                          <div className="flex items-center gap-1 shrink-0">
-                            <input
-                              type="number" min={0} max={50} step={0.5}
-                              value={stream.annualPriceGrowthPct}
-                              onChange={(e) => {
-                                const v = Math.max(0, Math.min(50, parseFloat(e.target.value) || 0));
-                                updateDriver(stream.id, { annualPriceGrowthPct: v });
-                              }}
-                              className="w-12 text-xs font-bold text-slate-800 border border-slate-200 rounded-lg px-1.5 py-1.5 text-center focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-300/30"
-                            />
-                            <span className="text-[11px] text-slate-400 w-12">% / year</span>
-                          </div>
                         </div>
                       </div>
 
